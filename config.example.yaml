@@ -1,4 +1,4 @@
-# Configuration for the DeerFlow application
+# Configuration for the 财政历史大模型 application
 #
 # Guidelines:
 # - Copy this file to `config.yaml` and customize it for your environment
@@ -298,3 +298,36 @@ memory:
   fact_confidence_threshold: 0.7 # Minimum confidence for storing facts
   injection_enabled: true # Whether to inject memory into system prompt
   max_injection_tokens: 2000 # Maximum tokens for memory injection
+
+# ============================================================================
+# Knowledge Base Configuration
+# ============================================================================
+# RAG-based knowledge base for domain-specific information retrieval
+# Documents are indexed into a Qdrant vector database and searched via the
+# knowledge_search tool. The agent will automatically cite sources.
+#
+# To use:
+# 1. Enable the knowledge base below
+# 2. Add documents to knowledge/docs/ directory
+# 3. Run `make index-knowledge` to build the index
+# 4. The knowledge_search tool will be available to the agent
+
+# knowledge_base:
+#   enabled: true
+#   docs_path: knowledge/docs
+#   qdrant:
+#     mode: local                          # 'local' (embedded) or 'server'
+#     local_path: backend/.deer-flow/qdrant
+#     # url: http://localhost:6333         # For server mode
+#     # api_key: null                      # For server mode
+#     collection_name: knowledge_base
+#   embedding:
+#     use: langchain_openai:OpenAIEmbeddings
+#     model: text-embedding-3-small
+#     api_key: $OPENAI_API_KEY
+#   chunking:
+#     chunk_size: 1000
+#     chunk_overlap: 200
+#   retrieval:
+#     top_k: 5
+#     score_threshold: 0.3

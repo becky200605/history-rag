@@ -152,13 +152,13 @@ export const enUS: Translations = {
 
   // Workspace
   workspace: {
-    officialWebsite: "DeerFlow's official website",
-    githubTooltip: "DeerFlow on Github",
+    officialWebsite: "财政历史大模型's official website",
+    githubTooltip: "财政历史大模型 on Github",
     settingsAndMore: "Settings and more",
-    visitGithub: "DeerFlow on GitHub",
+    visitGithub: "财政历史大模型 on GitHub",
     reportIssue: "Report a issue",
     contactUs: "Contact us",
-    about: "About DeerFlow",
+    about: "About 财政历史大模型",
   },
 
   // Conversation
@@ -174,7 +174,7 @@ export const enUS: Translations = {
 
   // Page titles (document title)
   pages: {
-    appName: "DeerFlow",
+    appName: "财政历史大模型",
     chats: "Chats",
     newChat: "New chat",
     untitled: "Untitled",
@@ -200,7 +200,8 @@ export const enUS: Translations = {
     writeFile: "Write file",
     clickToViewContent: "Click to view file content",
     writeTodos: "Update to-do list",
-    skillInstallTooltip: "Install skill and make it available to DeerFlow",
+    skillInstallTooltip:
+      "Install skill and make it available to 财政历史大模型",
   },
 
   // Subtasks
@@ -216,7 +217,7 @@ export const enUS: Translations = {
   // Settings
   settings: {
     title: "Settings",
-    description: "Adjust how DeerFlow looks and behaves for you.",
+    description: "Adjust how 财政历史大模型 looks and behaves for you.",
     sections: {
       appearance: "Appearance",
       memory: "Memory",
@@ -284,18 +285,18 @@ export const enUS: Translations = {
       createSkill: "Create skill",
       emptyTitle: "No agent skill yet",
       emptyDescription:
-        "Put your agent skill folders under the `/skills/custom` folder under the root folder of DeerFlow.",
+        "Put your agent skill folders under the `/skills/custom` folder under the root folder of 财政历史大模型.",
       emptyButton: "Create Your First Skill",
     },
     notification: {
       title: "Notification",
       description:
-        "DeerFlow only sends a completion notification when the window is not active. This is especially useful for long-running tasks so you can switch to other work and get notified when done.",
+        "财政历史大模型 only sends a completion notification when the window is not active. This is especially useful for long-running tasks so you can switch to other work and get notified when done.",
       requestPermission: "Request notification permission",
       deniedHint:
         "Notification permission was denied. You can enable it in your browser's site settings to receive completion alerts.",
       testButton: "Send test notification",
-      testTitle: "DeerFlow",
+      testTitle: "财政历史大模型",
       testBody: "This is a test notification.",
       notSupported: "Your browser does not support notifications.",
       disableNotification: "Disable notification",

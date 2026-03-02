@@ -1,17 +1,15 @@
-# 🦌 DeerFlow - 2.0
+# 财政历史大模型
 
-DeerFlow (**D**eep **E**xploration and **E**fficient **R**esearch **Flow**) is an open-source **super agent harness** that orchestrates **sub-agents**, **memory**, and **sandboxes** to do almost anything — powered by **extensible skills**.
+财政历史大模型是基于大语言模型的财政历史智能分析平台，集成了**子代理**、**记忆**和**沙箱**等能力，通过**可扩展技能**驱动，几乎可以完成任何任务。
 
 https://github.com/user-attachments/assets/a8bcadc4-e040-4cf2-8fda-dd768b999c18
 
 > [!NOTE]
-> **DeerFlow 2.0 is a ground-up rewrite.** It shares no code with v1. If you're looking for the original Deep Research framework, it's maintained on the [`1.x` branch](https://github.com/bytedance/deer-flow/tree/main-1.x) — contributions there are still welcome. Active development has moved to 2.0.
+> **财政历史大模型 2.0 是全新重写版本。** 与 v1 不共享代码。如果你在寻找原始的深度研究框架，它维护在 [`1.x` 分支](https://github.com/bytedance/deer-flow/tree/main-1.x) — 那里仍然欢迎贡献。活跃开发已转移到 2.0。
 
-## Offiical Website
+## 官方网站
 
-Learn more and see **real demos** on our official website.
-
-**[deerflow.tech](https://deerflow.tech/)**
+了解更多信息并查看**真实演示**。
 
 ---
 
@@ -37,7 +35,7 @@ Learn more and see **real demos** on our official website.
 
 ### Configuration
 
-1. **Clone the DeerFlow repository**
+1. **克隆仓库**
 
    ```bash
    git clone https://github.com/bytedance/deer-flow.git
@@ -139,7 +137,7 @@ If you prefer running services locally:
 ### Advanced
 #### Sandbox Mode
 
-DeerFlow supports multiple sandbox execution modes:
+财政历史大模型支持多种沙箱执行模式：
 - **Local Execution** (runs sandbox code directly on the host machine)
 - **Docker Execution** (runs sandbox code in isolated Docker containers)
 - **Docker Execution with Kubernetes** (runs sandbox code in Kubernetes pods via provisioner service)
@@ -150,18 +148,18 @@ See the [Sandbox Configuration Guide](backend/docs/CONFIGURATION.md#sandbox) to 
 
 #### MCP Server
 
-DeerFlow supports configurable MCP servers and skills to extend its capabilities.
+财政历史大模型支持可配置的 MCP 服务器和技能来扩展其能力。
 See the [MCP Server Guide](backend/docs/MCP_SERVER.md) for detailed instructions.
 
 ## From Deep Research to Super Agent Harness
 
-DeerFlow started as a Deep Research framework — and the community ran with it. Since launch, developers have pushed it far beyond research: building data pipelines, generating slide decks, spinning up dashboards, automating content workflows. Things we never anticipated.
+财政历史大模型最初是一个深度研究框架——社区将其发扬光大。自发布以来，开发者们将其推向了远超研究的领域：构建数据管道、生成幻灯片、搭建仪表板、自动化内容工作流。这些都是我们未曾预料到的。
 
-That told us something important: DeerFlow wasn't just a research tool. It was a **harness** — a runtime that gives agents the infrastructure to actually get work done.
+这告诉我们一个重要的事实：财政历史大模型不仅仅是一个研究工具。它是一个**运行时框架**——为代理提供实际完成工作所需基础设施的运行时。
 
-So we rebuilt it from scratch.
+所以我们从头重建了它。
 
-DeerFlow 2.0 is no longer a framework you wire together. It's a super agent harness — batteries included, fully extensible. Built on LangGraph and LangChain, it ships with everything an agent needs out of the box: a filesystem, memory, skills, sandboxed execution, and the ability to plan and spawn sub-agents for complex, multi-step tasks.
+财政历史大模型 2.0 不再是一个需要你自己组装的框架。它是一个超级代理运行时——开箱即用，完全可扩展。基于 LangGraph 和 LangChain 构建，它自带代理所需的一切：文件系统、记忆、技能、沙箱执行，以及为复杂多步骤任务规划和生成子代理的能力。
 
 Use it as-is. Or tear it apart and make it yours.
 
@@ -169,13 +167,13 @@ Use it as-is. Or tear it apart and make it yours.
 
 ### Skills & Tools
 
-Skills are what make DeerFlow do *almost anything*.
+技能是让财政历史大模型能做*几乎任何事*的关键。
 
-A standard Agent Skill is a structured capability module — a Markdown file that defines a workflow, best practices, and references to supporting resources. DeerFlow ships with built-in skills for research, report generation, slide creation, web pages, image and video generation, and more. But the real power is extensibility: add your own skills, replace the built-in ones, or combine them into compound workflows.
+标准的 Agent Skill 是一个结构化的能力模块——一个定义工作流、最佳实践和支持资源引用的 Markdown 文件。财政历史大模型内置了研究、报告生成、幻灯片创建、网页、图像和视频生成等技能。但真正的力量在于可扩展性：添加你自己的技能、替换内置技能，或将它们组合成复合工作流。
 
-Skills are loaded progressively — only when the task needs them, not all at once. This keeps the context window lean and makes DeerFlow work well even with token-sensitive models.
+技能是渐进式加载的——只在任务需要时加载，而不是一次性全部加载。这保持了上下文窗口的精简，使财政历史大模型即使在对 token 敏感的模型上也能良好运行。
 
-Tools follow the same philosophy. DeerFlow comes with a core toolset — web search, web fetch, file operations, bash execution — and supports custom tools via MCP servers and Python functions. Swap anything. Add anything.
+工具遵循相同的理念。财政历史大模型自带核心工具集——网络搜索、网页获取、文件操作、bash 执行——并支持通过 MCP 服务器和 Python 函数自定义工具。替换任何东西。添加任何东西。
 
 ```
 # Paths inside the sandbox container
@@ -192,15 +190,15 @@ Tools follow the same philosophy. DeerFlow comes with a core toolset — web sea
 
 ### Sub-Agents
 
-Complex tasks rarely fit in a single pass. DeerFlow decomposes them.
+复杂任务很少能一次完成。财政历史大模型会将其分解。
 
-The lead agent can spawn sub-agents on the fly — each with its own scoped context, tools, and termination conditions. Sub-agents run in parallel when possible, report back structured results, and the lead agent synthesizes everything into a coherent output.
+主代理可以即时生成子代理——每个子代理都有自己的作用域上下文、工具和终止条件。子代理在可能时并行运行，返回结构化结果，主代理将所有内容综合成连贯的输出。
 
-This is how DeerFlow handles tasks that take minutes to hours: a research task might fan out into a dozen sub-agents, each exploring a different angle, then converge into a single report — or a website — or a slide deck with generated visuals. One harness, many hands.
+这就是财政历史大模型处理需要几分钟到几小时任务的方式：一个研究任务可能会分散到十几个子代理，每个探索不同的角度，然后汇聚成一份报告——或一个网站——或一个带有生成视觉效果的幻灯片。一个框架，多个助手。
 
 ### Sandbox & File System
 
-DeerFlow doesn't just *talk* about doing things. It has its own computer.
+财政历史大模型不仅仅是*谈论*做事。它有自己的计算机。
 
 Each task runs inside an isolated Docker container with a full filesystem — skills, workspace, uploads, outputs. The agent reads, writes, and edits files. It executes bash commands and codes. It views images. All sandboxed, all auditable, zero contamination between sessions.
 
@@ -218,17 +216,17 @@ This is the difference between a chatbot with tool access and an agent with an a
 
 **Isolated Sub-Agent Context**: Each sub-agent runs in its own isolated context. This means that the sub-agent will not be able to see the context of the main agent or other sub-agents. This is important to ensure that the sub-agent is able to focus on the task at hand and not be distracted by the context of the main agent or other sub-agents.
 
-**Summarization**: Within a session, DeerFlow manages context aggressively — summarizing completed sub-tasks, offloading intermediate results to the filesystem, compressing what's no longer immediately relevant. This lets it stay sharp across long, multi-step tasks without blowing the context window.
+**摘要**: 在会话中，财政历史大模型积极管理上下文——总结已完成的子任务，将中间结果卸载到文件系统，压缩不再直接相关的内容。这使其在长时间、多步骤任务中保持敏锐，而不会超出上下文窗口。
 
 ### Long-Term Memory
 
-Most agents forget everything the moment a conversation ends. DeerFlow remembers.
+大多数代理在对话结束的那一刻就忘记了一切。财政历史大模型会记住。
 
-Across sessions, DeerFlow builds a persistent memory of your profile, preferences, and accumulated knowledge. The more you use it, the better it knows you — your writing style, your technical stack, your recurring workflows. Memory is stored locally and stays under your control.
+跨会话，财政历史大模型构建你的个人资料、偏好和积累知识的持久记忆。你使用得越多，它就越了解你——你的写作风格、你的技术栈、你的常见工作流。记忆存储在本地，完全由你控制。
 
 ## Recommended Models
 
-DeerFlow is model-agnostic — it works with any LLM that implements the OpenAI-compatible API. That said, it performs best with models that support:
+财政历史大模型是模型无关的——它可以与任何实现 OpenAI 兼容 API 的 LLM 配合使用。也就是说，它在支持以下功能的模型上表现最佳：
 
 - **Long context windows** (100k+ tokens) for deep research and multi-step tasks
 - **Reasoning capabilities** for adaptive planning and complex decomposition
@@ -254,23 +252,23 @@ This project is open source and available under the [MIT License](./LICENSE).
 
 ## Acknowledgments
 
-DeerFlow is built upon the incredible work of the open-source community. We are deeply grateful to all the projects and contributors whose efforts have made DeerFlow possible. Truly, we stand on the shoulders of giants.
+财政历史大模型建立在开源社区令人难以置信的工作之上。我们深深感谢所有项目和贡献者，正是他们的努力使财政历史大模型成为可能。我们真正站在巨人的肩膀上。
 
 We would like to extend our sincere appreciation to the following projects for their invaluable contributions:
 
 - **[LangChain](https://github.com/langchain-ai/langchain)**: Their exceptional framework powers our LLM interactions and chains, enabling seamless integration and functionality.
-- **[LangGraph](https://github.com/langchain-ai/langgraph)**: Their innovative approach to multi-agent orchestration has been instrumental in enabling DeerFlow's sophisticated workflows.
+- **[LangGraph](https://github.com/langchain-ai/langgraph)**: Their innovative approach to multi-agent orchestration has been instrumental in enabling 财政历史大模型's sophisticated workflows.
 
 These projects exemplify the transformative power of open-source collaboration, and we are proud to build upon their foundations.
 
 ### Key Contributors
 
-A heartfelt thank you goes out to the core authors of `DeerFlow`, whose vision, passion, and dedication have brought this project to life:
+A heartfelt thank you goes out to the core authors of `财政历史大模型`, whose vision, passion, and dedication have brought this project to life:
 
 - **[Daniel Walnut](https://github.com/hetaoBackend/)**
 - **[Henry Li](https://github.com/magiccube/)**
 
-Your unwavering commitment and expertise have been the driving force behind DeerFlow's success. We are honored to have you at the helm of this journey.
+Your unwavering commitment and expertise have been the driving force behind 财政历史大模型's success. We are honored to have you at the helm of this journey.
 
 ## Star History
 

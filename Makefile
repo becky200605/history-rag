@@ -1,9 +1,9 @@
-# DeerFlow - Unified Development Environment
+# 财政历史大模型 - Unified Development Environment
 
 .PHONY: help config check install dev stop clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway
 
 help:
-	@echo "DeerFlow Development Commands:"
+	@echo "财政历史大模型 Development Commands:"
 	@echo "  make check           - Check if all required tools are installed"
 	@echo "  make install         - Install all dependencies (frontend + backend)"
 	@echo "  make setup-sandbox   - Pre-pull sandbox container image (recommended)"
@@ -99,6 +99,12 @@ check:
 		exit 1; \
 	fi
 
+# Build/rebuild knowledge base index
+index-knowledge:
+	@echo "Building knowledge base index..."
+	@cd backend && PYTHONPATH=. uv run python -m src.community.knowledge_base.indexer
+	@echo "✓ Knowledge base index built"
+
 # Install all dependencies
 install:
 	@echo "Installing backend dependencies..."
@@ -157,7 +163,7 @@ dev:
 	@sleep 1
 	@echo ""
 	@echo "=========================================="
-	@echo "  Starting DeerFlow Development Server"
+	@echo "  Starting 财政历史大模型 Development Server"
 	@echo "=========================================="
 	@echo ""
 	@echo "Services starting up..."
@@ -204,7 +210,7 @@ dev:
 	echo "✓ Nginx started on localhost:2026"; \
 	echo ""; \
 	echo "=========================================="; \
-	echo "  DeerFlow is ready!"; \
+	echo "  财政历史大模型 is ready!"; \
 	echo "=========================================="; \
 	echo ""; \
 	echo "  🌐 Application: http://localhost:2026"; \

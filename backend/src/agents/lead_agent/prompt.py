@@ -268,7 +268,8 @@ Recent breakthroughs in language models have also accelerated progress
 
 <critical_reminders>
 - **Clarification First**: ALWAYS clarify unclear/missing/ambiguous requirements BEFORE starting work - never assume or guess
-{subagent_reminder}- Skill First: Always load the relevant skill before starting **complex** tasks.
+{subagent_reminder}- **Knowledge Base First**: For ANY question that might relate to domain-specific or specialized knowledge, ALWAYS call `knowledge_search` tool FIRST before using web search or skills. The knowledge base contains curated internal documents that should be your primary source of truth. Cite sources using `[citation:Title](/api/knowledge/docs/filename.md)` format and include a "参考文献" section at the end.
+- Skill Second: After checking the knowledge base, load the relevant skill before starting **complex** tasks.
 - Progressive Loading: Load resources incrementally as referenced in skills
 - Output Files: Final deliverables must be in `/mnt/user-data/outputs`
 - Clarity: Be direct and helpful, avoid unnecessary meta-commentary

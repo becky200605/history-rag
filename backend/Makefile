@@ -15,3 +15,6 @@ lint:
 
 format:
 	uvx ruff check . --fix && uvx ruff format .
+
+index-knowledge: ## Build/rebuild knowledge base index
+	PYTHONPATH=. uv run python -m src.community.knowledge_base.indexer

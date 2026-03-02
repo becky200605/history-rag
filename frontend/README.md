@@ -1,6 +1,6 @@
-# DeerFlow Frontend
+# 财政历史大模型 Frontend
 
-Like the original DeerFlow 1.0, we would love to give the community a minimalistic and easy-to-use web interface with a more modern and flexible architecture.
+Like the original version 1.0, we would love to give the community a minimalistic and easy-to-use web interface with a more modern and flexible architecture.
 
 ## Tech Stack
 
@@ -108,15 +108,15 @@ src/
 
 ## Scripts
 
-| Command | Description |
-|---------|-------------|
-| `pnpm dev` | Start development server with Turbopack |
-| `pnpm build` | Build for production |
-| `pnpm start` | Start production server |
-| `pnpm lint` | Run ESLint |
-| `pnpm lint:fix` | Fix ESLint issues |
-| `pnpm typecheck` | Run TypeScript type checking |
-| `pnpm check` | Run both lint and typecheck |
+| Command          | Description                             |
+| ---------------- | --------------------------------------- |
+| `pnpm dev`       | Start development server with Turbopack |
+| `pnpm build`     | Build for production                    |
+| `pnpm start`     | Start production server                 |
+| `pnpm lint`      | Run ESLint                              |
+| `pnpm lint:fix`  | Fix ESLint issues                       |
+| `pnpm typecheck` | Run TypeScript type checking            |
+| `pnpm check`     | Run both lint and typecheck             |
 
 ## Development Notes
 

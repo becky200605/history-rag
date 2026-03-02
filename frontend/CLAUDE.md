@@ -4,21 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DeerFlow Frontend is a Next.js 16 web interface for an AI agent system. It communicates with a LangGraph-based backend to provide thread-based AI conversations with streaming responses, artifacts, and a skills/tools system.
+财政历史大模型 Frontend is a Next.js 16 web interface for an AI agent system. It communicates with a LangGraph-based backend to provide thread-based AI conversations with streaming responses, artifacts, and a skills/tools system.
 
 **Stack**: Next.js 16, React 19, TypeScript 5.8, Tailwind CSS 4, pnpm 10.26.2
 
 ## Commands
 
-| Command | Purpose |
-|---------|---------|
-| `pnpm dev` | Dev server with Turbopack (http://localhost:3000) |
-| `pnpm build` | Production build |
-| `pnpm check` | Lint + type check (run before committing) |
-| `pnpm lint` | ESLint only |
-| `pnpm lint:fix` | ESLint with auto-fix |
-| `pnpm typecheck` | TypeScript type check (`tsc --noEmit`) |
-| `pnpm start` | Start production server |
+| Command          | Purpose                                           |
+| ---------------- | ------------------------------------------------- |
+| `pnpm dev`       | Dev server with Turbopack (http://localhost:3000) |
+| `pnpm build`     | Production build                                  |
+| `pnpm check`     | Lint + type check (run before committing)         |
+| `pnpm lint`      | ESLint only                                       |
+| `pnpm lint:fix`  | ESLint with auto-fix                              |
+| `pnpm typecheck` | TypeScript type check (`tsc --noEmit`)            |
+| `pnpm start`     | Start production server                           |
 
 No test framework is configured.
 
@@ -81,6 +81,7 @@ The frontend is a stateful chat application. Users create **threads** (conversat
 ## Environment
 
 Backend API URLs are optional; an nginx proxy is used by default:
+
 ```
 NEXT_PUBLIC_BACKEND_BASE_URL=http://localhost:8001
 NEXT_PUBLIC_LANGGRAPH_BASE_URL=http://localhost:2024

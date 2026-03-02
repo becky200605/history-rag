@@ -54,14 +54,13 @@ export function Hero({ className }: { className?: string }) {
               "Learn Anything",
             ]}
           />{" "}
-          <div>with DeerFlow</div>
+          <div>with 财政历史大模型</div>
         </h1>
         <p
           className="mt-8 scale-105 text-center text-2xl text-shadow-sm"
           style={{ color: "rgb(184,184,192)" }}
         >
-          An open-source SuperAgent harness that researches, codes, and creates.
-          With
+          基于大语言模型的财政历史智能分析平台，助力研究、分析与创作。 借助
           <br />
           the help of sandboxes, memories, tools, skills and subagents, it
           handles

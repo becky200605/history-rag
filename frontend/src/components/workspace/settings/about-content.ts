@@ -1,67 +1,63 @@
 /**
- * About DeerFlow markdown content. Inlined to avoid raw-loader dependency
+ * About 财政历史大模型 markdown content. Inlined to avoid raw-loader dependency
  * (Turbopack cannot resolve raw-loader for .md imports).
  */
-export const aboutMarkdown = `# 🦌 [About DeerFlow 2.0](https://github.com/bytedance/deer-flow)
+export const aboutMarkdown = `# [关于财政历史大模型](https://github.com/bytedance/deer-flow)
 
-> **From Open Source, Back to Open Source**
+> **源于开源，回馈开源**
 
-DeerFlow (**D**eep **E**xploration and **E**fficient **R**esearch **Flow**) is an open-source **super agent harness** that orchestrates **sub-agents**, **memory**, and **sandboxes** to do almost anything — powered by **extensible skills**.
-
----
-
-## 🚀 Core Features
-
-* **Skills & Tools**: With built-in and extensible skills and tools, DeerFlow can do almost anything.
-* **Sub-Agents**: Sub-Agents help the main agent to do the tasks that are too complex to be done by the main agent.
-* **Sandbox & File System**: Safely execute code and manipulate files in the sandbox.
-* **Context Engineering**: Isolated sub-agent context, summarization to keep the context window sharp.
-* **Long-Term Memory**: Keep recording the user's profile, top of mind, and conversation history.
+财政历史大模型是基于大语言模型的财政历史智能分析平台，集成了**子代理**、**记忆**和**沙箱**等能力，通过**可扩展技能**驱动，几乎可以完成任何任务。
 
 ---
 
-## 🌟 GitHub Repository
+## 🚀 核心功能
+
+* **技能与工具**: 通过内置和可扩展的技能与工具，财政历史大模型几乎可以完成任何任务。
+* **子代理**: 子代理帮助主代理完成过于复杂的任务。
+* **沙箱与文件系统**: 在沙箱中安全地执行代码和操作文件。
+* **上下文工程**: 隔离的子代理上下文，通过摘要保持上下文窗口精简。
+* **长期记忆**: 持续记录用户画像、关注重点和对话历史。
+
+---
+
+## 🌟 GitHub 仓库
 
 ![Star History Chart](https://api.star-history.com/svg?repos=bytedance/deer-flow&type=Date)
 
-Explore DeerFlow on GitHub: [github.com/bytedance/deer-flow](https://github.com/bytedance/deer-flow)
+在 GitHub 上探索: [github.com/bytedance/deer-flow](https://github.com/bytedance/deer-flow)
 
-## 🌐 Official Website
+## 📧 支持
 
-Visit the official website of DeerFlow: [deerflow.tech](https://deerflow.tech/)
-
-## 📧 Support
-
-If you have any questions or need help, please contact us at [support@deerflow.tech](mailto:support@deerflow.tech).
+如有任何问题或需要帮助，请联系我们。
 
 ---
 
-## 📜 License
+## 📜 许可证
 
-DeerFlow is proudly open source and distributed under the **MIT License**.
+财政历史大模型基于 **MIT 许可证** 开源发布。
 
 ---
 
-## 🙌 Acknowledgments
+## 🙌 致谢
 
-We extend our heartfelt gratitude to the open source projects and contributors who have made DeerFlow a reality. We truly stand on the shoulders of giants.
+我们衷心感谢所有开源项目和贡献者，正是他们让财政历史大模型成为现实。我们真正站在巨人的肩膀上。
 
-### Core Frameworks
-- **[LangChain](https://github.com/langchain-ai/langchain)**: A phenomenal framework that powers our LLM interactions and chains.
-- **[LangGraph](https://github.com/langchain-ai/langgraph)**: Enabling sophisticated multi-agent orchestration.
-- **[Next.js](https://nextjs.org/)**: A cutting-edge framework for building web applications.
+### 核心框架
+- **[LangChain](https://github.com/langchain-ai/langchain)**: 驱动我们 LLM 交互和链的卓越框架。
+- **[LangGraph](https://github.com/langchain-ai/langgraph)**: 实现复杂的多代理编排。
+- **[Next.js](https://nextjs.org/)**: 构建 Web 应用的前沿框架。
 
-### UI Libraries
-- **[Shadcn](https://ui.shadcn.com/)**: Minimalistic components that power our UI.
-- **[SToneX](https://github.com/stonexer)**: For his invaluable contribution to token-by-token visual effects.
+### UI 库
+- **[Shadcn](https://ui.shadcn.com/)**: 驱动我们 UI 的极简组件。
+- **[SToneX](https://github.com/stonexer)**: 对逐 token 视觉效果的宝贵贡献。
 
-These outstanding projects form the backbone of DeerFlow and exemplify the transformative power of open source collaboration.
+这些杰出的项目构成了财政历史大模型的基石，展示了开源协作的变革力量。
 
-### Special Thanks
-Finally, we want to express our heartfelt gratitude to the core authors of DeerFlow 1.0 and 2.0:
+### 特别感谢
+最后，我们要向核心作者表达衷心的感谢：
 
 - **[Daniel Walnut](https://github.com/hetaoBackend/)**
 - **[Henry Li](https://github.com/magiccube/)**
 
-Without their vision, passion and dedication, \`DeerFlow\` would not be what it is today.
+没有他们的远见、热情和奉献，财政历史大模型不会有今天的成就。
 `;

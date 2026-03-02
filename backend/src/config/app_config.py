@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config.extensions_config import ExtensionsConfig
+from src.config.knowledge_base_config import KnowledgeBaseConfig, load_knowledge_base_config_from_dict
 from src.config.memory_config import load_memory_config_from_dict
 from src.config.model_config import ModelConfig
 from src.config.sandbox_config import SandboxConfig
@@ -27,6 +28,7 @@ class AppConfig(BaseModel):
     tools: list[ToolConfig] = Field(default_factory=list, description="Available tools")
     tool_groups: list[ToolGroupConfig] = Field(default_factory=list, description="Available tool groups")
     skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills configuration")
+    knowledge_base: KnowledgeBaseConfig = Field(default_factory=KnowledgeBaseConfig, description="Knowledge base configuration")
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig, description="Extensions configuration (MCP servers and skills state)")
     model_config = ConfigDict(extra="allow", frozen=False)
 
@@ -87,6 +89,10 @@ class AppConfig(BaseModel):
         # Load memory config if present
         if "memory" in config_data:
             load_memory_config_from_dict(config_data["memory"])
+
+        # Load knowledge base config if present
+        if "knowledge_base" in config_data:
+            load_knowledge_base_config_from_dict(config_data["knowledge_base"])
 
         # Load subagents config if present
         if "subagents" in config_data:
@@ -198,17 +204,3 @@ def reset_app_config() -> None:
     `get_app_config()` to reload from file. Useful for testing
     or when switching between different configurations.
     """
-    global _app_config
-    _app_config = None
-
-
-def set_app_config(config: AppConfig) -> None:
-    """Set a custom config instance.
-
-    This allows injecting a custom or mock config for testing purposes.
-
-    Args:
-        config: The AppConfig instance to use.
-    """
-    global _app_config
-    _app_config = config

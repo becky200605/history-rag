@@ -2,10 +2,10 @@
 
 ## Supported Versions
 
-As deer-flow doesn't provide an offical release yet, please use the latest version for the security updates.
-Current we have two branches to maintain: 
-* main branch for deer-flow 2.x
-* main-1.x branch for deer-flow 1.x 
+As 财政历史大模型 doesn't provide an offical release yet, please use the latest version for the security updates.
+Current we have two branches to maintain:
+* main branch for 财政历史大模型 2.x
+* main-1.x branch for 财政历史大模型 1.x
 
 ## Reporting a Vulnerability
 

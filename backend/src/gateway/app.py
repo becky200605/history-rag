@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from src.config.app_config import get_app_config
 from src.gateway.config import get_gateway_config
-from src.gateway.routers import artifacts, mcp, memory, models, skills, uploads
+from src.gateway.routers import artifacts, knowledge, mcp, memory, models, skills, uploads
 
 # Configure logging
 logging.basicConfig(
@@ -50,11 +50,11 @@ def create_app() -> FastAPI:
     """
 
     app = FastAPI(
-        title="DeerFlow API Gateway",
+        title="财政历史大模型 API Gateway",
         description="""
-## DeerFlow API Gateway
+## 财政历史大模型 API Gateway
 
-API Gateway for DeerFlow - A LangGraph-based AI agent backend with sandbox execution capabilities.
+API Gateway for 财政历史大模型 - A LangGraph-based AI agent backend with sandbox execution capabilities.
 
 ### Features
 
@@ -101,6 +101,10 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
                 "description": "Upload and manage user files for threads",
             },
             {
+                "name": "knowledge-base",
+                "description": "Knowledge base management and document retrieval",
+            },
+            {
                 "name": "health",
                 "description": "Health check and system status endpoints",
             },
@@ -128,6 +132,9 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
     # Uploads API is mounted at /api/threads/{thread_id}/uploads
     app.include_router(uploads.router)
 
+    # Knowledge Base API is mounted at /api/knowledge
+    app.include_router(knowledge.router)
+
     @app.get("/health", tags=["health"])
     async def health_check() -> dict:
         """Health check endpoint.
@@ -135,7 +142,7 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
         Returns:
             Service health status information.
         """
-        return {"status": "healthy", "service": "deer-flow-gateway"}
+        return {"status": "healthy", "service": "fiscal-history-gateway"}
 
     return app
 

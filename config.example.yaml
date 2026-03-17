@@ -306,9 +306,11 @@ memory:
 # Documents are indexed into a Qdrant vector database and searched via the
 # knowledge_search tool. The agent will automatically cite sources.
 #
+# Supported document formats: .md, .markdown, .txt, .pdf (native support)
+#
 # To use:
 # 1. Enable the knowledge base below
-# 2. Add documents to knowledge/docs/ directory
+# 2. Add documents to knowledge/docs/ directory (supports PDF, Markdown, TXT)
 # 3. Run `make index-knowledge` to build the index
 # 4. The knowledge_search tool will be available to the agent
 
@@ -325,6 +327,8 @@ memory:
 #     use: langchain_openai:OpenAIEmbeddings
 #     model: text-embedding-3-small
 #     api_key: $OPENAI_API_KEY
+#     # Optional: point to OpenRouter or other OpenAI-compatible service
+#     # api_base: https://openrouter.ai/api/v1
 #   chunking:
 #     chunk_size: 1000
 #     chunk_overlap: 200

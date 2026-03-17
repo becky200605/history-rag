@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from src.config.app_config import get_app_config
 from src.gateway.config import get_gateway_config
-from src.gateway.routers import artifacts, knowledge, mcp, memory, models, skills, uploads
+from src.gateway.routers import artifacts, chunked_upload, knowledge, mcp, memory, models, skills, uploads
 
 # Configure logging
 logging.basicConfig(
@@ -134,6 +134,9 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
 
     # Knowledge Base API is mounted at /api/knowledge
     app.include_router(knowledge.router)
+
+    # Chunked Upload API is mounted at /api/knowledge/uploads
+    app.include_router(chunked_upload.router)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict:

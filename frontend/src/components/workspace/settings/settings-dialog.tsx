@@ -7,6 +7,7 @@ import {
   PaletteIcon,
   SparklesIcon,
   WrenchIcon,
+  BookOpenIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -23,12 +24,14 @@ import { MemorySettingsPage } from "@/components/workspace/settings/memory-setti
 import { NotificationSettingsPage } from "@/components/workspace/settings/notification-settings-page";
 import { SkillSettingsPage } from "@/components/workspace/settings/skill-settings-page";
 import { ToolSettingsPage } from "@/components/workspace/settings/tool-settings-page";
+import { KnowledgeSettingsPage } from "@/components/workspace/settings/knowledge-settings-page";
 import { useI18n } from "@/core/i18n/hooks";
 import { cn } from "@/lib/utils";
 
 type SettingsSection =
   | "appearance"
   | "memory"
+  | "knowledge"
   | "tools"
   | "skills"
   | "notification"
@@ -60,6 +63,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
         icon: PaletteIcon,
       },
       {
+        id: "knowledge",
+        label: t.settings.sections.knowledge,
+        icon: BookOpenIcon,
+      },
+      {
         id: "notification",
         label: t.settings.sections.notification,
         icon: BellIcon,
@@ -70,15 +78,15 @@ export function SettingsDialog(props: SettingsDialogProps) {
         icon: BrainIcon,
       },
       { id: "tools", label: t.settings.sections.tools, icon: WrenchIcon },
-      { id: "skills", label: t.settings.sections.skills, icon: SparklesIcon },
-      { id: "about", label: t.settings.sections.about, icon: InfoIcon },
+      { id: "skills", label: t.settings.sections.skills, icon: SparklesIcon }
     ],
     [
       t.settings.sections.appearance,
+      t.settings.sections.knowledge,
+      t.settings.sections.notification,
       t.settings.sections.memory,
       t.settings.sections.tools,
       t.settings.sections.skills,
-      t.settings.sections.notification,
       t.settings.sections.about,
     ],
   );
@@ -126,6 +134,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
             <div className="space-y-8 p-6">
               {activeSection === "appearance" && <AppearanceSettingsPage />}
               {activeSection === "memory" && <MemorySettingsPage />}
+              {activeSection === "knowledge" && <KnowledgeSettingsPage />}
               {activeSection === "tools" && <ToolSettingsPage />}
               {activeSection === "skills" && (
                 <SkillSettingsPage

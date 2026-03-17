@@ -62,7 +62,7 @@ class KnowledgeBaseRetriever:
             query: The search query.
 
         Returns:
-            List of relevant document snippets with metadata.
+            List of relevant document snippets with metadata including page numbers for PDFs.
         """
         results = self.vector_store.similarity_search_with_score(
             query,
@@ -72,14 +72,23 @@ class KnowledgeBaseRetriever:
 
         formatted_results = []
         for doc, score in results:
+            # Extract filename from metadata or source path
+            filename = doc.metadata.get("filename")
+            if not filename:
+                source = doc.metadata.get("source", "")
+                filename = source.split("/")[-1] if source else "unknown"
+            
             formatted_results.append(
                 {
                     "content": doc.page_content,
                     "metadata": doc.metadata,
                     "score": score,
                     "source": doc.metadata.get("source", "Unknown"),
-                    # Assuming filename is available in metadata or needs to be extracted from source path
-                    "filename": doc.metadata.get("filename", doc.metadata.get("source", "").split("/")[-1]),
+                    "filename": filename,
+                    # Page number for PDFs (0-based from PyMuPDFLoader)
+                    "page": doc.metadata.get("page"),
+                    # Source type: pdf, markdown, text
+                    "source_type": doc.metadata.get("source_type", "unknown"),
                 }
             )
 

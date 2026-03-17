@@ -215,6 +215,7 @@ export const zhCN: Translations = {
     sections: {
       appearance: "外观",
       memory: "记忆",
+      knowledge: "知识库",
       tools: "工具",
       skills: "技能",
       notification: "通知",
@@ -253,6 +254,48 @@ export const zhCN: Translations = {
           createdAt: "创建时间",
           view: "查看",
         },
+      },
+    },
+    knowledge: {
+      title: "知识库",
+      description: "管理用于 RAG 检索的本地知识库文档。",
+      status: {
+        enabled: "知识库已启用",
+        disabled: "知识库当前未启用，请在 config.yaml 中开启 knowledge_base。",
+        docsPath: "文档目录",
+        docCount: "向量条目数",
+        collectionName: "Qdrant 集合名",
+      },
+      actions: {
+        reindexTitle: "重新构建索引",
+        reindexDescription:
+          "手动触发对知识库目录中文档的全量索引。这在新增或大规模修改文档后非常有用。",
+        reindex: "重新索引",
+        reindexing: "正在重新索引...",
+        reindexSuccess: "索引任务已触发。",
+        reindexError: "重新索引失败",
+      },
+      upload: {
+        title: "上传文档",
+        description:
+          "支持的格式：PDF、Markdown (.md) 和纯文本 (.txt) 文件。",
+        selectFile: "选择文件",
+        selectedFile: "已选择文件",
+        noFile: "尚未选择文件",
+        autoReindex: "上传后自动重新构建索引",
+        uploadButton: "上传文档",
+        uploading: "正在上传...",
+        success: "上传成功。",
+        error: "上传失败",
+      },
+      docs: {
+        title: "已有文档",
+        description:
+          "当前知识库目录中的文档列表。删除文档后，可根据需要重新构建索引。",
+        empty: "当前知识库目录中还没有文档。",
+        filename: "文件名",
+        size: "大小",
+        actions: "操作",
       },
     },
     appearance: {

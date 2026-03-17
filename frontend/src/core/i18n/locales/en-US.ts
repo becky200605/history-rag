@@ -221,6 +221,7 @@ export const enUS: Translations = {
     sections: {
       appearance: "Appearance",
       memory: "Memory",
+      knowledge: "Knowledge base",
       tools: "Tools",
       skills: "Skills",
       notification: "Notification",
@@ -259,6 +260,50 @@ export const enUS: Translations = {
           createdAt: "CreatedAt",
           view: "View",
         },
+      },
+    },
+    knowledge: {
+      title: "Knowledge base",
+      description:
+        "Manage local knowledge documents used for RAG-based retrieval.",
+      status: {
+        enabled: "Knowledge base is enabled.",
+        disabled:
+          "Knowledge base is currently disabled. Please enable `knowledge_base` in config.yaml.",
+        docsPath: "Docs path",
+        docCount: "Vector entries",
+        collectionName: "Qdrant collection",
+      },
+      actions: {
+        reindexTitle: "Rebuild index",
+        reindexDescription:
+          "Manually trigger a full reindex of all documents in the knowledge docs directory. Useful after adding or updating many documents.",
+        reindex: "Reindex",
+        reindexing: "Reindexing...",
+        reindexSuccess: "Reindex task has been triggered.",
+        reindexError: "Failed to reindex",
+      },
+      upload: {
+        title: "Upload documents",
+        description:
+          "Supported formats: PDF, Markdown (.md), and Text (.txt) files.",
+        selectFile: "Select file",
+        selectedFile: "Selected file",
+        noFile: "No file selected",
+        autoReindex: "Automatically rebuild index after upload",
+        uploadButton: "Upload document",
+        uploading: "Uploading...",
+        success: "Upload succeeded.",
+        error: "Upload failed",
+      },
+      docs: {
+        title: "Existing documents",
+        description:
+          "Documents currently stored in the knowledge docs directory. After deleting files, you may want to rebuild the index.",
+        empty: "No documents found in the knowledge docs directory.",
+        filename: "Filename",
+        size: "Size",
+        actions: "Actions",
       },
     },
     appearance: {

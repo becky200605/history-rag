@@ -53,7 +53,7 @@ export function Hero({ className }: { className?: string }) {
               "Do Anything",
               "Learn Anything",
             ]}
-          />{" "}
+          />
           <div>with 财政历史大模型</div>
         </h1>
         <p
@@ -69,7 +69,7 @@ export function Hero({ className }: { className?: string }) {
         </p>
         <Link href="/workspace">
           <Button className="size-lg mt-8 scale-108" size="lg">
-            <span className="text-md">Get Started with 2.0</span>
+            <span className="text-md">开始使用</span>
             <ChevronRightIcon className="size-4" />
           </Button>
         </Link>

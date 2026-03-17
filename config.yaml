@@ -319,8 +319,8 @@ knowledge_base:
   qdrant:
     # mode: 'local' (embedded, data stored in file) or 'server' (runs as service)
     mode: local
-    # Path for local storage (only used when mode='local')
-    local_path: backend/.deer-flow/qdrant
+    # Path for local storage (相对 backend 目录，索引与检索都从 backend 启动，需一致)
+    local_path: .deer-flow/qdrant
     # Server URL (only used when mode='server')
     # url: http://localhost:6333
     # API key for server (only used when mode='server')
@@ -328,10 +328,12 @@ knowledge_base:
     collection_name: knowledge_base
 
   # Embedding Model Configuration
+  # 使用 OpenAI 兼容的 embedding 模型
   embedding:
     use: langchain_openai:OpenAIEmbeddings
     model: text-embedding-3-small
     api_key: $OPENAI_API_KEY
+    # 可选：指向 OpenRouter 或其他 OpenAI 兼容服务
     api_base: https://openrouter.ai/api/v1
 
   # Text Chunking Configuration

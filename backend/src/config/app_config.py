@@ -17,6 +17,10 @@ from src.config.summarization_config import load_summarization_config_from_dict
 from src.config.title_config import load_title_config_from_dict
 from src.config.tool_config import ToolConfig, ToolGroupConfig
 
+# Load .env: when CWD is backend/, load project root .env first so OPENAI_API_KEY etc. are available
+_cwd = Path(os.getcwd())
+if _cwd.name == "backend" and (_cwd.parent / ".env").exists():
+    load_dotenv(_cwd.parent / ".env")
 load_dotenv()
 
 

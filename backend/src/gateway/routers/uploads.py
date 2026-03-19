@@ -10,9 +10,7 @@ from pydantic import BaseModel
 from src.community.knowledge_base.document_parsers import (
     OFFICE_EXTENSIONS,
     PDF_EXTENSIONS,
-    build_structured_document_from_paddleocr,
     extract_office_text_with_markitdown,
-    extract_pdf_text_with_paddleocr,
 )
 from src.community.knowledge_base.indexer import rebuild_thread_upload_index
 from src.community.knowledge_base.ingestion import (
@@ -27,6 +25,7 @@ from src.community.knowledge_base.ingestion import (
     remove_ingestion_record,
     save_ingestion_record,
 )
+from src.community.knowledge_base.mineru_grpc import build_structured_document_from_mineru_grpc
 from src.community.knowledge_base.structured_document import build_structured_document
 from src.config.paths import VIRTUAL_PATH_PREFIX, get_paths
 from src.sandbox.sandbox_provider import get_sandbox_provider
@@ -161,8 +160,10 @@ async def upload_files(
             # Check if file should be parsed into structured text
             file_ext = file_path.suffix.lower()
             if file_ext in PDF_EXTENSIONS:
+                record["parse_method"] = "ocr_pdf_mineru_grpc"
+                file_info["parse_method"] = record["parse_method"]
                 try:
-                    structured_payload = build_structured_document_from_paddleocr(
+                    structured_payload = build_structured_document_from_mineru_grpc(
                         file_path,
                         title=record["display_title"],
                         parser_name=record["parse_method"],
@@ -171,7 +172,7 @@ async def upload_files(
                     )
                 except Exception as exc:
                     structured_payload = None
-                    logger.error("PaddleOCR failed for %s: %s", file_path.name, exc)
+                    logger.error("MinerU gRPC failed for %s: %s", file_path.name, exc)
                 if structured_payload:
                     structured_filename = persist_thread_structured_document(
                         thread_id,
@@ -195,7 +196,7 @@ async def upload_files(
                     file_info["parse_status"] = record["parse_status"]
                     needs_reindex = True
                 else:
-                    record = mark_record_failed(record, "PaddleOCR returned no text")
+                    record = mark_record_failed(record, "MinerU gRPC returned no structured text")
                     file_info["parse_status"] = record["parse_status"]
                     file_info["error"] = record["error"]
             elif file_ext in OFFICE_EXTENSIONS:

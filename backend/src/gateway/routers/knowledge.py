@@ -9,30 +9,16 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from src.community.knowledge_base.baidu_doc_parser import (
-    build_structured_document_from_baidu_result,
-    download_parse_result,
-    submit_document_parse_task,
-    wait_for_document_parse_result,
-)
 from src.community.knowledge_base.common import resolve_project_path
 from src.community.knowledge_base.document_parsers import (
     OFFICE_EXTENSIONS,
     PDF_EXTENSIONS,
-    build_structured_document_from_paddleocr,
-    choose_pdf_parse_backend,
     extract_office_text_with_markitdown,
-    extract_pdf_text_with_paddleocr,
 )
 from src.community.knowledge_base.indexer import rebuild_global_knowledge_index, rebuild_thread_upload_index
 from src.community.knowledge_base.locator import extract_document_context, locate_document
-from src.community.knowledge_base.oss_storage import (
-    build_oss_download_url,
-    delete_oss_object,
-    upload_file_to_oss,
-)
+from src.community.knowledge_base.mineru_grpc import build_structured_document_from_mineru_grpc
 from src.community.knowledge_base.structured_document import (
-    build_bbox_from_position,
     build_structured_document,
     save_structured_document,
 )
@@ -261,13 +247,6 @@ def _cleanup_global_record_artifacts(record: dict[str, Any], *, remove_source_fi
         if preview_path.exists():
             preview_path.unlink()
 
-    remote_object_key = record.get("remote_object_key")
-    if remote_object_key:
-        try:
-            delete_oss_object(str(remote_object_key))
-        except Exception as exc:
-            logger.warning("Failed to delete OSS object for %s: %s", source_filename or "<unknown>", exc)
-
 
 def _build_global_ingestion_record(
     filename: str,
@@ -313,9 +292,6 @@ def _build_global_ingestion_record(
         "index_target_format": None,
         "hints": hints,
         "error": None,
-        "parser_task_id": None,
-        "remote_object_key": None,
-        "remote_file_url": None,
         "replace_existing_index": False,
     }
 
@@ -421,85 +397,27 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
             file_ext = file_path.suffix.lower()
             if file_ext in PDF_EXTENSIONS:
                 hints = record.get("hints") or {}
-                parse_backend = choose_pdf_parse_backend(hints)
-                record["parse_method"] = "ocr_pdf_local" if parse_backend == "local_paddleocr" else "ocr_pdf_api"
+                record["parse_method"] = "ocr_pdf_mineru_grpc"
                 _save_global_record(safe_filename, record)
-
-                if parse_backend == "local_paddleocr":
-                    try:
-                        structured_payload = build_structured_document_from_paddleocr(
-                            file_path,
-                            title=record["display_title"],
-                            parser_name=record["parse_method"],
-                            hints=hints,
-                            language_hint=hints.get("language_hint"),
-                        )
-                        structured_path = save_structured_document(
-                            ingestion_dir,
-                            safe_filename,
-                            structured_payload,
-                        )
-                        record = _mark_global_record_parsed(
-                            record,
-                            structured_filename=structured_path.name,
-                            structured_path=str(structured_path),
-                        )
-                        needs_reindex = True
-                        parsed_filenames.append(safe_filename)
-                    except Exception as local_exc:
-                        logger.warning("Local PaddleOCR failed for %s, falling back to Baidu API: %s", safe_filename, local_exc)
-                        record["error"] = f"local OCR fallback triggered: {local_exc}"
-                        _save_global_record(safe_filename, record)
-                        parse_backend = "baidu_doc_parser"
-                        record["parse_method"] = "ocr_pdf_api"
-
-                if parse_backend == "baidu_doc_parser":
-                    remote_object_key = record.get("remote_object_key")
-                    if not remote_object_key:
-                        remote_object_key, remote_file_url = upload_file_to_oss(
-                            file_path,
-                            namespace="knowledge",
-                            content_type=record.get("content_type") or "application/pdf",
-                        )
-                        record["remote_object_key"] = remote_object_key
-                        record["remote_file_url"] = remote_file_url
-                        _save_global_record(safe_filename, record)
-                    signed_download_url = build_oss_download_url(str(remote_object_key))
-
-                    task_id = submit_document_parse_task(
-                        file_name=file_path.name,
-                        file_url=signed_download_url,
-                        language_hint=hints.get("language_hint"),
-                    )
-                    record["parser_task_id"] = task_id
-                    record["parse_status"] = "parsing"
-                    _save_global_record(safe_filename, record)
-
-                    task_result = wait_for_document_parse_result(task_id)
-                    parse_result_url = task_result.get("parse_result_url")
-                    if parse_result_url:
-                        parse_result = download_parse_result(str(parse_result_url))
-                        structured_payload = build_structured_document_from_baidu_result(
-                            source_filename=safe_filename,
-                            title=record["display_title"],
-                            parser_name=record["parse_method"],
-                            parse_result=parse_result,
-                            hints=hints,
-                        )
-                        structured_path = save_structured_document(
-                            ingestion_dir,
-                            safe_filename,
-                            structured_payload,
-                        )
-                        record = _mark_global_record_parsed(
-                            record,
-                            structured_filename=structured_path.name,
-                            structured_path=str(structured_path),
-                        )
-                        needs_reindex = True
-                        parsed_filenames.append(safe_filename)
-                    else:
-                        record = _mark_global_record_failed(record, "Baidu parser returned no parse_result_url")
+                structured_payload = build_structured_document_from_mineru_grpc(
+                    file_path,
+                    title=record["display_title"],
+                    parser_name=record["parse_method"],
+                    hints=hints,
+                    language_hint=hints.get("language_hint"),
+                )
+                structured_path = save_structured_document(
+                    ingestion_dir,
+                    safe_filename,
+                    structured_payload,
+                )
+                record = _mark_global_record_parsed(
+                    record,
+                    structured_filename=structured_path.name,
+                    structured_path=str(structured_path),
+                )
+                needs_reindex = True
+                parsed_filenames.append(safe_filename)
             elif file_ext in OFFICE_EXTENSIONS:
                 extracted_text = extract_office_text_with_markitdown(file_path)
                 if extracted_text and extracted_text.strip():
@@ -708,8 +626,6 @@ async def upload_global_knowledge_files(
                 "index_target_filename": record.get("index_target_filename"),
                 "index_target_artifact_url": record.get("index_target_artifact_url"),
                 "hints": hints,
-                "parser_task_id": record.get("parser_task_id"),
-                "remote_file_url": record.get("remote_file_url"),
             }
 
             _save_global_record(safe_filename, record)
@@ -779,8 +695,6 @@ def list_global_knowledge_files() -> dict:
                     "index_target_artifact_url": record.get("index_target_artifact_url"),
                     "hints": record.get("hints", {}),
                     "error": record.get("error"),
-                    "parser_task_id": record.get("parser_task_id"),
-                    "remote_file_url": record.get("remote_file_url"),
                 }
             )
         else:

@@ -344,3 +344,10 @@ memory:
 #   retrieval:
 #     top_k: 5
 #     score_threshold: 0.3
+#   mineru:
+#     enabled: $MINERU_GRPC_ENABLED
+#     target: $MINERU_GRPC_TARGET
+#     use_tls: $MINERU_GRPC_USE_TLS
+#     api_token: $MINERU_API_TOKEN
+#     model_version: $MINERU_MODEL_VERSION
+#     request_timeout: 600

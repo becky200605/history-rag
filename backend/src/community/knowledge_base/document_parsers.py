@@ -45,26 +45,9 @@ def infer_parse_method(filename: str) -> tuple[str, bool]:
 
 
 def choose_pdf_parse_backend(hints: dict[str, str] | None = None) -> str:
-    """Choose the PDF parser backend based on user hints.
-
-    Returns:
-        "local_paddleocr" for low-cost local parsing
-        "baidu_doc_parser" for complex layouts that benefit from remote parsing
-    """
-    hints = hints or {}
-    layout_hint = hints.get("layout_hint")
-    language_hint = hints.get("language_hint")
-    document_type_hint = hints.get("document_type_hint")
-
-    if layout_hint == "horizontal":
-        return "local_paddleocr"
-    if layout_hint in {"vertical", "mixed"}:
-        return "baidu_doc_parser"
-    if document_type_hint in {"ancient_book", "periodical"}:
-        return "baidu_doc_parser"
-    if language_hint == "zh-Hant":
-        return "baidu_doc_parser"
-    return "local_paddleocr"
+    """Return the only supported PDF parser backend."""
+    _ = hints
+    return "mineru_grpc"
 
 
 def _resolve_paddleocr_lang(language_hint: str | None) -> str:

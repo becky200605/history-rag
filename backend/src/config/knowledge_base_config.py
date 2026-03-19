@@ -74,31 +74,31 @@ class RetrievalConfig(BaseModel):
 
 
 class MineruConfig(BaseModel):
-    """Configuration for MinerU HTTP API based PDF conversion."""
+    """Configuration for MinerU gRPC based PDF conversion."""
 
     enabled: bool = Field(
         default=False,
         description="Whether MinerU-based PDF → Markdown conversion is enabled.",
     )
-    base_url: str = Field(
-        default="https://mineru.net",
-        description="Base URL for the MinerU API (e.g. https://mineru.net).",
+    target: str = Field(
+        default="127.0.0.1:50051",
+        description="gRPC target for the internal MinerU service, e.g. host:port.",
     )
-    api_path: str = Field(
-        default="/api/v4/extract/task",
-        description="MinerU extract task API path.",
+    use_tls: bool = Field(
+        default=False,
+        description="Whether to connect to the MinerU gRPC service with TLS.",
     )
     api_token: str | None = Field(
         default=None,
-        description="API token for the MinerU service.",
+        description="Optional bearer token sent as gRPC metadata.",
     )
     model_version: str = Field(
         default="vlm",
-        description="Model version to use when calling MinerU (e.g. 'vlm').",
+        description="Model version passed to MinerU (e.g. 'vlm').",
     )
     request_timeout: int = Field(
-        default=60,
-        description="Timeout in seconds for the HTTP request to MinerU.",
+        default=600,
+        description="Timeout in seconds for the MinerU gRPC request.",
     )
 
 

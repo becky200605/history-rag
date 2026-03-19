@@ -23,8 +23,8 @@ class TestMineruConfig:
             "docs_path": "knowledge/docs",
             "mineru": {
                 "enabled": True,
-                "base_url": "https://example.com",
-                "api_path": "/api/v4/extract/task",
+                "target": "mineru.internal:50051",
+                "use_tls": True,
                 "api_token": "test-token",
                 "model_version": "vlm-test",
                 "request_timeout": 10,
@@ -37,9 +37,8 @@ class TestMineruConfig:
         assert cfg.enabled is True
         assert isinstance(cfg.mineru, MineruConfig)
         assert cfg.mineru.enabled is True
-        assert cfg.mineru.base_url == "https://example.com"
-        assert cfg.mineru.api_path == "/api/v4/extract/task"
+        assert cfg.mineru.target == "mineru.internal:50051"
+        assert cfg.mineru.use_tls is True
         assert cfg.mineru.api_token == "test-token"
         assert cfg.mineru.model_version == "vlm-test"
         assert cfg.mineru.request_timeout == 10
-

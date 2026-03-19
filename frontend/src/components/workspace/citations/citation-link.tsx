@@ -1,6 +1,7 @@
-import { ExternalLinkIcon } from "lucide-react";
-import type { ComponentProps } from "react";
-import { usePathname } from "next/navigation";
+"use client";
+
+import { ExternalLinkIcon, FileTextIcon } from "lucide-react";
+import { useMemo, type ComponentProps, type MouseEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -8,20 +9,63 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
+import { useArtifacts } from "@/components/workspace/artifacts";
 import { cn } from "@/lib/utils";
 
-export function CitationLink({ 
-  href, 
+interface KnowledgeDocInfo {
+  filename: string;
+  isPdf: boolean;
+  page: number | null;
+}
+
+function parseKnowledgeDocUrl(url: string): KnowledgeDocInfo | null {
+  if (!url.startsWith("/api/knowledge/docs/")) return null;
+
+  try {
+    const urlObj = new URL(url, window.location.origin);
+    const pathParts = urlObj.pathname.split("/");
+    const filename = decodeURIComponent(pathParts[pathParts.length - 1] || "");
+    const isPdf = filename.toLowerCase().endsWith(".pdf");
+
+    const pageParam = urlObj.searchParams.get("page");
+    const pdfPageParam = urlObj.searchParams.get("pdf_page_no");
+    let page: number | null = null;
+
+    if (pageParam !== null) {
+      const parsedPage = parseInt(pageParam, 10);
+      page = Number.isNaN(parsedPage) ? null : parsedPage;
+    } else if (pdfPageParam !== null) {
+      const parsedPdfPage = parseInt(pdfPageParam, 10);
+      page =
+        Number.isNaN(parsedPdfPage) || parsedPdfPage <= 0
+          ? null
+          : parsedPdfPage - 1;
+    }
+
+    return {
+      filename,
+      isPdf,
+      page,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function CitationLink({
+  href,
   children,
-  ...props 
+  ...props
 }: ComponentProps<"a">) {
-  const pathname = usePathname();
-  const safeHref = normalizeCitationHref(href);
-  const viewerHref = buildKnowledgeCitationViewerHref(safeHref, pathname);
-  const finalHref = viewerHref ?? safeHref;
-  const domain = extractDomain(safeHref ?? "");
-  
-  // Priority: children > domain
+  const { select, setOpen } = useArtifacts();
+  const domain = extractDomain(href ?? "");
+
+  const knowledgeDocInfo = useMemo(
+    () => (href ? parseKnowledgeDocUrl(href) : null),
+    [href],
+  );
+  const isKnowledgeDoc = knowledgeDocInfo !== null;
+
   const childrenText =
     typeof children === "string"
       ? children.replace(/^citation:\s*/i, "")
@@ -29,23 +73,46 @@ export function CitationLink({
   const isGenericText = childrenText === "Source" || childrenText === "来源";
   const displayText = (!isGenericText && childrenText) ?? domain;
 
+  const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!href) {
+      event.stopPropagation();
+      return;
+    }
+
+    if (isKnowledgeDoc) {
+      event.preventDefault();
+      event.stopPropagation();
+      select(`knowledge-doc:${href}`);
+      setOpen(true);
+      return;
+    }
+
+    event.stopPropagation();
+  };
+
   return (
     <HoverCard closeDelay={0} openDelay={0}>
       <HoverCardTrigger asChild>
-          <a
-          href={finalHref}
-          target="_blank"
-          rel="noopener noreferrer"
+        <a
+          href={href}
+          target={isKnowledgeDoc ? undefined : "_blank"}
+          rel={isKnowledgeDoc ? undefined : "noopener noreferrer"}
           className="inline-flex items-center"
-          onClick={(e) => e.stopPropagation()}
+          onClick={handleClick}
           {...props}
         >
           <Badge
             variant="secondary"
             className="hover:bg-secondary/80 mx-0.5 cursor-pointer gap-1 rounded-full px-2 py-0.5 text-xs font-normal"
           >
+            {knowledgeDocInfo?.isPdf ? <FileTextIcon className="size-3" /> : null}
             {displayText}
-            <ExternalLinkIcon className="size-3" />
+            {knowledgeDocInfo?.isPdf && knowledgeDocInfo.page !== null && (
+              <span className="text-muted-foreground">
+                (第{knowledgeDocInfo.page + 1}页)
+              </span>
+            )}
+            {!isKnowledgeDoc && <ExternalLinkIcon className="size-3" />}
           </Badge>
         </a>
       </HoverCardTrigger>
@@ -57,21 +124,36 @@ export function CitationLink({
                 {displayText}
               </h4>
             )}
-            {href && (
+            {knowledgeDocInfo && (
+              <div className="text-muted-foreground text-xs">
+                <p className="truncate">{knowledgeDocInfo.filename}</p>
+                {knowledgeDocInfo.isPdf && knowledgeDocInfo.page !== null && (
+                  <p>第 {knowledgeDocInfo.page + 1} 页</p>
+                )}
+              </div>
+            )}
+            {!isKnowledgeDoc && href && (
               <p className="truncate break-all text-muted-foreground text-xs">
-                {finalHref}
+                {href}
               </p>
             )}
           </div>
-          <a
-            href={finalHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary mt-2 inline-flex items-center gap-1 text-xs hover:underline"
-          >
-            Visit source
-            <ExternalLinkIcon className="size-3" />
-          </a>
+          {!isKnowledgeDoc && href && (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary mt-2 inline-flex items-center gap-1 text-xs hover:underline"
+            >
+              Visit source
+              <ExternalLinkIcon className="size-3" />
+            </a>
+          )}
+          {isKnowledgeDoc && (
+            <p className="text-muted-foreground mt-2 text-xs">
+              点击在侧边栏中查看
+            </p>
+          )}
         </div>
       </HoverCardContent>
     </HoverCard>
@@ -79,72 +161,23 @@ export function CitationLink({
 }
 
 function extractDomain(url: string): string {
+  if (!url) return "";
+  if (url.startsWith("/")) {
+    try {
+      const urlObj = new URL(url, window.location.origin);
+      const match = /\/api\/knowledge\/docs\/(.+)$/.exec(urlObj.pathname);
+      if (match) {
+        return decodeURIComponent(match[1] ?? "知识库文档");
+      }
+      return "知识库文档";
+    } catch {
+      const match = /\/api\/knowledge\/docs\/([^?]+)/.exec(url);
+      return match ? decodeURIComponent(match[1] ?? "知识库文档") : "知识库文档";
+    }
+  }
   try {
     return new URL(url).hostname.replace(/^www\./i, "");
   } catch {
     return url;
   }
-}
-
-function normalizeCitationHref(url: string | undefined): string | undefined {
-  if (!url) {
-    return url;
-  }
-  try {
-    return encodeURI(decodeURI(url));
-  } catch {
-    try {
-      return encodeURI(url);
-    } catch {
-      return url;
-    }
-  }
-}
-
-function buildKnowledgeCitationViewerHref(
-  url: string | undefined,
-  pathname: string | null,
-): string | undefined {
-  if (!url) {
-    return undefined;
-  }
-  try {
-    const parsed = new URL(url, typeof window !== "undefined" ? window.location.origin : "http://localhost:2026");
-    if (!parsed.pathname.startsWith("/api/knowledge/docs/") || !parsed.pathname.toLowerCase().endsWith(".pdf")) {
-      return undefined;
-    }
-
-    const filename = decodeURIComponent(parsed.pathname.replace("/api/knowledge/docs/", ""));
-    const params = new URLSearchParams();
-    params.set("filename", filename);
-    const pageNo = parsed.searchParams.get("page_no");
-    const pdfPageNo = parsed.searchParams.get("pdf_page_no");
-    const paragraphNo = parsed.searchParams.get("paragraph_no");
-    if (pageNo) {
-      params.set("page_no", pageNo);
-    }
-    if (pdfPageNo) {
-      params.set("pdf_page_no", pdfPageNo);
-    }
-    if (paragraphNo) {
-      params.set("paragraph_no", paragraphNo);
-    }
-    const threadId = extractThreadId(pathname);
-    if (threadId) {
-      params.set("thread_id", threadId);
-    }
-    params.set("source_url", parsed.pathname + parsed.search + parsed.hash);
-    params.set("original_url", parsed.pathname + parsed.search + parsed.hash);
-    return `/workspace/knowledge/view?${params.toString()}`;
-  } catch {
-    return undefined;
-  }
-}
-
-function extractThreadId(pathname: string | null): string | null {
-  if (!pathname) {
-    return null;
-  }
-  const match = pathname.match(/^\/workspace\/chats\/([^/?#]+)/);
-  return match?.[1] ?? null;
 }

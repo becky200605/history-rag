@@ -73,6 +73,35 @@ class RetrievalConfig(BaseModel):
     )
 
 
+class MineruConfig(BaseModel):
+    """Configuration for MinerU HTTP API based PDF conversion."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Whether MinerU-based PDF → Markdown conversion is enabled.",
+    )
+    base_url: str = Field(
+        default="https://mineru.net",
+        description="Base URL for the MinerU API (e.g. https://mineru.net).",
+    )
+    api_path: str = Field(
+        default="/api/v4/extract/task",
+        description="MinerU extract task API path.",
+    )
+    api_token: str | None = Field(
+        default=None,
+        description="API token for the MinerU service.",
+    )
+    model_version: str = Field(
+        default="vlm",
+        description="Model version to use when calling MinerU (e.g. 'vlm').",
+    )
+    request_timeout: int = Field(
+        default=60,
+        description="Timeout in seconds for the HTTP request to MinerU.",
+    )
+
+
 class KnowledgeBaseConfig(BaseModel):
     """Configuration for the Knowledge Base RAG system."""
 
@@ -99,6 +128,10 @@ class KnowledgeBaseConfig(BaseModel):
     retrieval: RetrievalConfig = Field(
         default_factory=RetrievalConfig,
         description="Retrieval parameters.",
+    )
+    mineru: MineruConfig | None = Field(
+        default=None,
+        description="Optional MinerU KIE configuration for PDF → Markdown conversion.",
     )
 
     model_config = ConfigDict(extra="allow")

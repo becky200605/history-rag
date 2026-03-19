@@ -3,10 +3,10 @@ from urllib.parse import quote, urlencode
 from langchain.tools import ToolRuntime, tool
 from langgraph.typing import ContextT
 
+from src.agents.thread_state import ThreadState
 from src.community.knowledge_base.catalog import search_book_catalog
 from src.community.knowledge_base.locator import extract_document_context, locate_document
 from src.community.knowledge_base.retriever import get_retriever
-from src.agents.thread_state import ThreadState
 
 BOOK_SEARCH_TOP_K = 5
 KNOWLEDGE_SEARCH_TOP_K = 3
@@ -36,6 +36,7 @@ def _append_pdf_page_fragment(url: str | None, pdf_page_no: int | None) -> str |
 def _append_location_params(
     url: str | None,
     *,
+    page: int | None = None,
     page_no: int | None = None,
     pdf_page_no: int | None = None,
     paragraph_no: int | None = None,
@@ -44,6 +45,8 @@ def _append_location_params(
         return url
     base, sep, fragment = url.partition("#")
     params: dict[str, int] = {}
+    if page is not None:
+        params["page"] = page
     if page_no:
         params["page_no"] = page_no
     if pdf_page_no:
@@ -60,6 +63,7 @@ def _append_location_params(
 
 def _build_location_text(
     *,
+    page: int | None = None,
     page_no: int | None,
     pdf_page_no: int | None,
     paragraph_no: int | None,
@@ -76,6 +80,8 @@ def _build_location_text(
         if paragraph_no:
             location += f" 第 {paragraph_no} 段"
         return location
+    if page is not None:
+        return f"PDF 第 {page + 1} 页"
     return None
 
 
@@ -84,9 +90,11 @@ def _build_citation_label(
     page_no: int | None,
     pdf_page_no: int | None,
     paragraph_no: int | None,
+    page: int | None = None,
 ) -> str:
     parts = [title]
     location = _build_location_text(
+        page=page,
         page_no=page_no,
         pdf_page_no=pdf_page_no,
         paragraph_no=paragraph_no,
@@ -149,12 +157,16 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
 
 
 @tool("knowledge_search", parse_docstring=True)
-def knowledge_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str, doc_ids: str | None = None) -> str:
+def knowledge_search_tool(
+    runtime: ToolRuntime[ContextT, ThreadState],
+    query: str,
+    doc_ids: str | None = None,
+) -> str:
     """Search the internal knowledge base for domain-specific information.
 
     Use this tool when the user asks questions about specialized domain knowledge,
     internal company information, or topics covered in the knowledge base.
-    
+
     This tool searches through curated internal documents and returns relevant
     knowledge snippets with source document references.
 
@@ -194,10 +206,16 @@ def knowledge_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: st
         page_no = metadata.get("page_no")
         pdf_page_no = metadata.get("pdf_page_no")
         paragraph_no = metadata.get("paragraph_no")
+        page = result.get("page")
+        source_type = result.get("source_type", metadata.get("source_type", "unknown"))
         scope = metadata.get("scope", "global")
+
         if scope == "thread":
             thread_id = metadata.get("thread_id") or runtime.context.get("thread_id")
-            source_virtual_path = metadata.get("source_virtual_path", f"/mnt/user-data/uploads/{filename}")
+            source_virtual_path = metadata.get(
+                "source_virtual_path",
+                f"/mnt/user-data/uploads/{filename}",
+            )
             source_url = (
                 f"/api/threads/{thread_id}/artifacts{source_virtual_path}"
                 if thread_id
@@ -213,32 +231,45 @@ def knowledge_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: st
             source_url = f"/api/knowledge/docs/{filename}"
             origin_filename = metadata.get("origin_filename")
             original_url = f"/api/knowledge/docs/{origin_filename}" if origin_filename else None
-        source_url = _append_pdf_page_fragment(source_url, pdf_page_no)
-        original_url = _append_pdf_page_fragment(original_url, pdf_page_no)
-        source_url = _append_location_params(
-            source_url,
-            page_no=page_no,
-            pdf_page_no=pdf_page_no,
-            paragraph_no=paragraph_no,
-        )
-        original_url = _append_location_params(
-            original_url,
-            page_no=page_no,
-            pdf_page_no=pdf_page_no,
-            paragraph_no=paragraph_no,
-        )
+
+        if source_type == "pdf" and page is not None and pdf_page_no is None:
+            source_url = _append_location_params(source_url, page=page)
+            original_url = _append_location_params(original_url, page=page)
+        else:
+            source_url = _append_pdf_page_fragment(source_url, pdf_page_no)
+            original_url = _append_pdf_page_fragment(original_url, pdf_page_no)
+            source_url = _append_location_params(
+                source_url,
+                page_no=page_no,
+                pdf_page_no=pdf_page_no,
+                paragraph_no=paragraph_no,
+            )
+            original_url = _append_location_params(
+                original_url,
+                page_no=page_no,
+                pdf_page_no=pdf_page_no,
+                paragraph_no=paragraph_no,
+            )
+
         source_url = _encode_source_url(source_url)
         original_url = _encode_source_url(original_url)
-        citation_label = _build_citation_label(title, page_no, pdf_page_no, paragraph_no)
+        citation_label = _build_citation_label(
+            title,
+            page_no,
+            pdf_page_no,
+            paragraph_no,
+            page=page,
+        )
         citation = _build_citation(citation_label, original_url or source_url)
 
-        # Format the output for the agent
         formatted_output += f"### 来源 {i}: {title} - 相关度: {score:.2f}\n"
         if doc_id:
             formatted_output += f"doc_id: {doc_id}\n"
         if citation:
             formatted_output += f"citation: {citation}\n"
+
         location = _build_location_text(
+            page=page,
             page_no=page_no,
             pdf_page_no=pdf_page_no,
             paragraph_no=paragraph_no,
@@ -249,8 +280,7 @@ def knowledge_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: st
             formatted_output += f"定位: 第 {line_start}-{line_end} 行\n"
         elif line_start:
             formatted_output += f"定位: 第 {line_start} 行\n"
-        formatted_output += f"{content}\n"
-        formatted_output += "\n"
+        formatted_output += f"{content}\n\n"
 
     formatted_output += "---\n"
     formatted_output += "使用答案时，直接复制上面的 `citation:` 行，不要自己重写。\n"
@@ -291,7 +321,11 @@ def knowledge_locate_tool(
         return "knowledge_locate requires either doc_id or filename."
 
     try:
-        document = locate_document(runtime.context.get("thread_id"), doc_id=doc_id, filename=filename)
+        document = locate_document(
+            runtime.context.get("thread_id"),
+            doc_id=doc_id,
+            filename=filename,
+        )
     except Exception as e:
         return f"Error locating document: {e}"
     if not document:
@@ -338,5 +372,8 @@ def knowledge_locate_tool(
         lines.append("")
 
     lines.append("---")
-    lines.append("IMPORTANT: Use these excerpts as the follow-up source context. Do not inspect raw PDFs or `.structured.json` files directly.")
+    lines.append(
+        "IMPORTANT: Use these excerpts as the follow-up source context. "
+        "Do not inspect raw PDFs or `.structured.json` files directly."
+    )
     return "\n".join(lines)

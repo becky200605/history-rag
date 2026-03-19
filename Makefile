@@ -99,10 +99,10 @@ check:
 		exit 1; \
 	fi
 
-# Build/rebuild knowledge base index
+# Build/rebuild knowledge base index (loads .env from project root so OPENAI_API_KEY etc. are available in backend)
 index-knowledge:
 	@echo "Building knowledge base index..."
-	@cd backend && PYTHONPATH=. uv run python -m src.community.knowledge_base.indexer
+	@( set -a && [ -f .env ] && . ./.env; set +a ) && cd backend && PYTHONPATH=. uv run python -m src.community.knowledge_base.indexer
 	@echo "✓ Knowledge base index built"
 
 # Install all dependencies
@@ -192,7 +192,7 @@ dev:
 	sleep 3; \
 	echo "✓ LangGraph server started on localhost:2024"; \
 	echo "Starting Gateway API..."; \
-	cd backend && uv run uvicorn src.gateway.app:app --host 0.0.0.0 --port 8001 > ../logs/gateway.log 2>&1 & \
+	cd backend && DEER_FLOW_CONFIG_PATH="$(PWD)/config.yaml" uv run uvicorn src.gateway.app:app --host 0.0.0.0 --port 8001 > ../logs/gateway.log 2>&1 & \
 	sleep 3; \
 	if ! lsof -i :8001 -sTCP:LISTEN -t >/dev/null 2>&1; then \
 		echo "✗ Gateway API failed to start. Last log output:"; \

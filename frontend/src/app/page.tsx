@@ -13,11 +13,11 @@ export default function LandingPage() {
       <Header />
       <main className="flex w-full flex-col">
         <Hero />
-        <CaseStudySection />
-        <SkillsSection />
+        {/* <CaseStudySection /> */}
+        {/* <SkillsSection />
         <SandboxSection />
         <WhatsNewSection />
-        <CommunitySection />
+        <CommunitySection /> */}
       </main>
       <Footer />
     </div>

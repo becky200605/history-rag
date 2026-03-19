@@ -122,6 +122,11 @@ FastAPI application providing REST endpoints for frontend integration:
 | `POST /api/memory/reload` | Force memory reload |
 | `GET /api/memory/config` | Memory configuration |
 | `GET /api/memory/status` | Combined config + data |
+| `GET /api/knowledge/status` | Knowledge base status (enabled flag, docs path, vector count) |
+| `POST /api/knowledge/reindex` | Trigger full knowledge base reindex |
+| `GET /api/knowledge/search` | Search knowledge base via Qdrant retriever |
+| `GET /api/knowledge/docs/{filename}` | Serve a knowledge base document (Markdown or download) |
+| `POST /api/knowledge/docs/upload` | Upload Markdown/PDF to knowledge base (optional MinerU PDF→Markdown) |
 | `POST /api/threads/{id}/uploads` | Upload files (auto-converts PDF/PPT/Excel/Word to Markdown) |
 | `GET /api/threads/{id}/uploads/list` | List uploaded files |
 | `GET /api/threads/{id}/artifacts/{path}` | Serve generated artifacts |

@@ -40,8 +40,7 @@ def get_qdrant_client() -> QdrantClient:
         if not config.qdrant.url:
             raise ValueError("Qdrant URL is required for server mode")
         return QdrantClient(url=config.qdrant.url, api_key=config.qdrant.api_key)
-    else:
-        return QdrantClient(path=config.qdrant.local_path)
+    return QdrantClient(path=config.qdrant.local_path)
 
 
 class KnowledgeBaseRetriever:
@@ -52,7 +51,13 @@ class KnowledgeBaseRetriever:
         self.config = get_knowledge_base_config()
         self.client = get_qdrant_client()
         self.embeddings = get_embedding_model()
-    def _search_collection(self, collection_name: str, query: str, doc_ids: list[str] | None = None) -> list[dict]:
+
+    def _search_collection(
+        self,
+        collection_name: str,
+        query: str,
+        doc_ids: list[str] | None = None,
+    ) -> list[dict]:
         vector_store = QdrantVectorStore(
             client=self.client,
             collection_name=collection_name,
@@ -85,30 +90,41 @@ class KnowledgeBaseRetriever:
                     "metadata": doc.metadata,
                     "score": score,
                     "source": doc.metadata.get("source", "Unknown"),
-                    "filename": doc.metadata.get("filename", doc.metadata.get("source", "").split("/")[-1]),
+                    "filename": doc.metadata.get(
+                        "filename",
+                        doc.metadata.get("source", "").split("/")[-1],
+                    ),
+                    "page": doc.metadata.get("page"),
+                    "source_type": doc.metadata.get("source_type", "unknown"),
                     "collection_name": collection_name,
                 }
             )
 
         return formatted_results
 
-    def search(self, query: str, thread_id: str | None = None, doc_ids: list[str] | None = None) -> list[dict]:
-        """Search for relevant documents.
-
-        Args:
-            query: The search query.
-
-        Returns:
-            List of relevant document snippets with metadata.
-        """
+    def search(
+        self,
+        query: str,
+        thread_id: str | None = None,
+        doc_ids: list[str] | None = None,
+    ) -> list[dict]:
+        """Search for relevant documents."""
         collections = [self.config.qdrant.collection_name]
         if thread_id:
-            collections.insert(0, get_thread_collection_name(self.config.qdrant.collection_name, thread_id))
+            collections.insert(
+                0,
+                get_thread_collection_name(
+                    self.config.qdrant.collection_name,
+                    thread_id,
+                ),
+            )
 
         merged_results: list[dict] = []
         for collection_name in collections:
             try:
-                merged_results.extend(self._search_collection(collection_name, query, doc_ids=doc_ids))
+                merged_results.extend(
+                    self._search_collection(collection_name, query, doc_ids=doc_ids)
+                )
             except Exception:
                 continue
 
@@ -132,8 +148,13 @@ class KnowledgeBaseRetriever:
             metadata = result.get("metadata", {})
             dedupe_key = (
                 result.get("filename", ""),
-                metadata.get("pdf_page_no") or metadata.get("page_no") or metadata.get("line_start"),
-                metadata.get("paragraph_no_in_doc") or metadata.get("paragraph_no") or metadata.get("line_end"),
+                metadata.get("pdf_page_no")
+                or metadata.get("page_no")
+                or metadata.get("page")
+                or metadata.get("line_start"),
+                metadata.get("paragraph_no_in_doc")
+                or metadata.get("paragraph_no")
+                or metadata.get("line_end"),
                 result.get("content", ""),
             )
             if dedupe_key in seen_keys:

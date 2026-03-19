@@ -1,8 +1,11 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.config import get_app_config
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["models"])
 
 
@@ -56,7 +59,14 @@ async def list_models() -> ModelsListResponse:
         }
         ```
     """
-    config = get_app_config()
+    try:
+        config = get_app_config()
+    except Exception as e:
+        logger.exception("Failed to load app config for /api/models")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Configuration unavailable: {e!s}",
+        ) from e
     models = [
         ModelResponse(
             name=model.name,
@@ -97,7 +107,14 @@ async def get_model(model_name: str) -> ModelResponse:
         }
         ```
     """
-    config = get_app_config()
+    try:
+        config = get_app_config()
+    except Exception as e:
+        logger.exception("Failed to load app config for /api/models/%s", model_name)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Configuration unavailable: {e!s}",
+        ) from e
     model = config.get_model_config(model_name)
     if model is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found")

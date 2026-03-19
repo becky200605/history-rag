@@ -1,27 +1,29 @@
 """Index documents into the knowledge base."""
 
-import os
 import json
 from pathlib import Path
 
-from langchain_community.document_loaders import DirectoryLoader, TextLoader, UnstructuredMarkdownLoader
+from langchain_community.document_loaders import DirectoryLoader
+from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_community.document_loaders import TextLoader
+from langchain_community.document_loaders import UnstructuredMarkdownLoader
 from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client.models import Distance, VectorParams
 
-from src.community.knowledge_base.common import get_thread_collection_name
 from src.community.knowledge_base.common import derive_global_doc_id
 from src.community.knowledge_base.common import derive_thread_doc_id
 from src.community.knowledge_base.common import extract_title_from_text
+from src.community.knowledge_base.common import get_thread_collection_name
 from src.community.knowledge_base.common import resolve_project_path
 from src.community.knowledge_base.ingestion import build_record_lookup, list_ingestion_records
-from src.community.knowledge_base.structured_document import build_bbox_from_position, load_structured_document
 from src.community.knowledge_base.retriever import get_embedding_model, get_qdrant_client
+from src.community.knowledge_base.structured_document import build_bbox_from_position, load_structured_document
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
-INDEXABLE_EXTENSIONS = {".md", ".txt"}
+INDEXABLE_EXTENSIONS = {".md", ".txt", ".pdf"}
 STRUCTURED_INDEXABLE_EXTENSIONS = INDEXABLE_EXTENSIONS | {".json"}
 
 
@@ -34,18 +36,19 @@ def _load_safe_directory(loader_cls, docs_path: Path, glob_pattern: str) -> list
         return []
 
 
-def _load_documents_from_paths(paths: list[Path]) -> list[Document]:
-    documents: list[Document] = []
-    for path in sorted(paths):
-        try:
-            if path.suffix.lower() == ".json":
-                documents.extend(_load_structured_documents(path))
-            elif path.suffix.lower() == ".md":
-                documents.extend(UnstructuredMarkdownLoader(str(path)).load())
-            elif path.suffix.lower() == ".txt":
-                documents.extend(TextLoader(str(path), encoding="utf-8").load())
-        except Exception as exc:
-            print(f"Warning: failed to load '{path}': {exc}")
+def _load_pdf_documents(path: Path) -> list[Document]:
+    try:
+        loader = PyMuPDFLoader(str(path))
+        documents = loader.load()
+    except Exception as exc:
+        print(f"Warning: failed to load PDF '{path}': {exc}")
+        return []
+
+    for document in documents:
+        document.metadata["filename"] = path.name
+        document.metadata["source_type"] = "pdf"
+        document.metadata["page"] = document.metadata.get("page", 0)
+        document.metadata.setdefault("source", str(path))
     return documents
 
 
@@ -79,14 +82,40 @@ def _load_structured_documents(path: Path) -> list[Document]:
                         "paragraph_no_in_doc": paragraph.get("paragraph_no_in_doc"),
                         "line_start": paragraph.get("line_start"),
                         "line_end": paragraph.get("line_end"),
-                        "bbox": paragraph.get("bbox") or build_bbox_from_position(paragraph.get("position")),
+                        "bbox": paragraph.get("bbox")
+                        or build_bbox_from_position(paragraph.get("position")),
                         "bbox_source": paragraph.get("bbox_source"),
                         "structured_source_filename": payload.get("source_filename"),
                         "structured_title": payload.get("title"),
                         "parser_name": payload.get("parser_name"),
+                        "source_type": "structured",
                     },
                 )
             )
+    return documents
+
+
+def _load_documents_from_paths(paths: list[Path]) -> list[Document]:
+    documents: list[Document] = []
+    for path in sorted(paths):
+        try:
+            suffix = path.suffix.lower()
+            if suffix == ".json":
+                documents.extend(_load_structured_documents(path))
+            elif suffix == ".md":
+                loaded = UnstructuredMarkdownLoader(str(path)).load()
+                for document in loaded:
+                    document.metadata["source_type"] = "markdown"
+                documents.extend(loaded)
+            elif suffix == ".txt":
+                loaded = TextLoader(str(path), encoding="utf-8").load()
+                for document in loaded:
+                    document.metadata["source_type"] = "text"
+                documents.extend(loaded)
+            elif suffix == ".pdf":
+                documents.extend(_load_pdf_documents(path))
+        except Exception as exc:
+            print(f"Warning: failed to load '{path}': {exc}")
     return documents
 
 
@@ -119,7 +148,12 @@ def _clear_collection_if_exists(client, collection_name: str) -> None:
         pass
 
 
-def _annotate_chunks(chunks: list[Document], source_text_by_path: dict[str, str], scope: str, thread_id: str | None) -> list[Document]:
+def _annotate_chunks(
+    chunks: list[Document],
+    source_text_by_path: dict[str, str],
+    scope: str,
+    thread_id: str | None,
+) -> list[Document]:
     chunk_counts: dict[str, int] = {}
 
     for chunk in chunks:
@@ -128,21 +162,30 @@ def _annotate_chunks(chunks: list[Document], source_text_by_path: dict[str, str]
         start_index = int(chunk.metadata.get("start_index", 0) or 0)
         existing_line_start = chunk.metadata.get("line_start")
         existing_line_end = chunk.metadata.get("line_end")
-        line_start = existing_line_start if existing_line_start is not None else (source_text[:start_index].count("\n") + 1 if source_text else None)
-        line_end = existing_line_end if existing_line_end is not None else (line_start + chunk.page_content.count("\n") if line_start is not None else None)
+        line_start = (
+            existing_line_start
+            if existing_line_start is not None
+            else (source_text[:start_index].count("\n") + 1 if source_text else None)
+        )
+        line_end = (
+            existing_line_end
+            if existing_line_end is not None
+            else (line_start + chunk.page_content.count("\n") if line_start is not None else None)
+        )
 
         chunk_index = chunk_counts.get(source, 0)
         chunk_counts[source] = chunk_index + 1
 
         chunk.metadata.update(
             {
-                "filename": Path(source).name if source else "Unknown",
+                "filename": chunk.metadata.get("filename") or (Path(source).name if source else "Unknown"),
                 "source_path": source,
                 "scope": scope,
                 "thread_id": thread_id,
                 "chunk_index": chunk_index,
                 "line_start": line_start,
                 "line_end": line_end,
+                "page": chunk.metadata.get("page"),
                 "page_no": chunk.metadata.get("page_no"),
                 "pdf_page_no": chunk.metadata.get("pdf_page_no"),
                 "book_page_no": chunk.metadata.get("book_page_no"),
@@ -153,6 +196,7 @@ def _annotate_chunks(chunks: list[Document], source_text_by_path: dict[str, str]
                 "paragraph_no_in_doc": chunk.metadata.get("paragraph_no_in_doc"),
                 "bbox": chunk.metadata.get("bbox"),
                 "bbox_source": chunk.metadata.get("bbox_source"),
+                "source_type": chunk.metadata.get("source_type", "unknown"),
             }
         )
 
@@ -175,7 +219,12 @@ def _build_chunks(documents: list[Document], scope: str, thread_id: str | None) 
     return _annotate_chunks(chunks, source_text_by_path, scope=scope, thread_id=thread_id)
 
 
-def index_documents(documents: list[Document], collection_name: str, scope: str, thread_id: str | None = None) -> int:
+def index_documents(
+    documents: list[Document],
+    collection_name: str,
+    scope: str,
+    thread_id: str | None = None,
+) -> int:
     """Replace a collection with freshly indexed documents."""
     if not documents:
         return 0
@@ -245,6 +294,16 @@ def rebuild_global_knowledge_index() -> int:
         if Path(str(document.metadata.get("source", ""))).name not in preview_filenames_to_skip
         and "/.ingestion/" not in str(document.metadata.get("source", ""))
     )
+
+    raw_pdf_paths = [
+        path
+        for path in sorted(docs_path.glob("**/*.pdf"))
+        if "/.ingestion/" not in str(path)
+        and path.name not in records_by_source_filename
+    ]
+    if raw_pdf_paths:
+        documents.extend(_load_documents_from_paths(raw_pdf_paths))
+
     if not documents:
         return 0
 
@@ -258,10 +317,16 @@ def rebuild_global_knowledge_index() -> int:
         document.metadata["doc_id"] = derive_global_doc_id(docs_path, Path(str(source_filename)))
         document.metadata["title"] = title
         document.metadata["filename"] = str(global_record.get("preview_filename") or source_filename)
-        document.metadata["detected_title"] = extract_title_from_text(document.page_content[:800], source_path.stem)
+        document.metadata["detected_title"] = extract_title_from_text(
+            document.page_content[:800],
+            source_path.stem,
+        )
         if global_record.get("preview_filename"):
             document.metadata["preview_filename"] = global_record.get("preview_filename")
-        if global_record.get("source_filename") and global_record.get("source_filename") != global_record.get("preview_filename"):
+        if (
+            global_record.get("source_filename")
+            and global_record.get("source_filename") != global_record.get("preview_filename")
+        ):
             document.metadata["origin_filename"] = global_record.get("source_filename")
 
     return index_documents(
@@ -286,13 +351,20 @@ def rebuild_thread_upload_index(thread_id: str) -> int:
     candidate_paths: list[Path] = []
     seen_paths: set[Path] = set()
     preview_filenames_to_skip: set[str] = set()
+    recorded_source_filenames: set[str] = set()
 
     for record in list_ingestion_records(thread_id):
         target_filename = record.get("index_target_filename")
         target_path = record.get("index_target_path")
         preview_filename = record.get("preview_filename")
+        source_filename = record.get("source_filename")
         if preview_filename:
             preview_filenames_to_skip.add(str(preview_filename))
+            recorded_source_filenames.add(str(preview_filename))
+        if source_filename:
+            recorded_source_filenames.add(str(source_filename))
+        if target_filename:
+            recorded_source_filenames.add(str(target_filename))
         if not record.get("indexable") or not target_filename or not target_path:
             continue
         path = Path(str(target_path))
@@ -304,7 +376,7 @@ def rebuild_thread_upload_index(thread_id: str) -> int:
     for path in uploads_dir.iterdir():
         if not path.is_file() or path.suffix.lower() not in INDEXABLE_EXTENSIONS:
             continue
-        if path.name in preview_filenames_to_skip:
+        if path.name in preview_filenames_to_skip or path.name in recorded_source_filenames:
             continue
         if path in seen_paths:
             continue
@@ -340,7 +412,10 @@ def rebuild_thread_upload_index(thread_id: str) -> int:
             hints = ingestion_record.get("hints") or {}
             for key, value in hints.items():
                 document.metadata[key] = value
-            source_virtual_path = ingestion_record.get("preview_virtual_path") or ingestion_record.get("source_virtual_path")
+            source_virtual_path = (
+                ingestion_record.get("preview_virtual_path")
+                or ingestion_record.get("source_virtual_path")
+            )
             if source_virtual_path:
                 document.metadata["source_virtual_path"] = source_virtual_path
             if source_filename != preview_filename:
@@ -349,7 +424,10 @@ def rebuild_thread_upload_index(thread_id: str) -> int:
         else:
             document.metadata["doc_id"] = derive_thread_doc_id(source_path)
             document.metadata["title"] = source_path.stem
-        document.metadata["detected_title"] = extract_title_from_text(document.page_content[:800], source_path.stem)
+        document.metadata["detected_title"] = extract_title_from_text(
+            document.page_content[:800],
+            source_path.stem,
+        )
 
         if "origin_virtual_path" not in document.metadata and source_path.suffix.lower() == ".md":
             for sibling in uploads_dir.glob(f"{source_path.stem}.*"):

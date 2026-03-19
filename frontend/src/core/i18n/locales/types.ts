@@ -166,6 +166,7 @@ export interface Translations {
     sections: {
       appearance: string;
       memory: string;
+      knowledge: string;
       tools: string;
       skills: string;
       notification: string;
@@ -203,6 +204,45 @@ export interface Translations {
           createdAt: string;
           view: string;
         };
+      };
+    };
+    knowledge: {
+      title: string;
+      description: string;
+      status: {
+        enabled: string;
+        disabled: string;
+        docsPath: string;
+        docCount: string;
+        collectionName: string;
+      };
+      actions: {
+        reindexTitle: string;
+        reindexDescription: string;
+        reindex: string;
+        reindexing: string;
+        reindexSuccess: string;
+        reindexError: string;
+      };
+      upload: {
+        title: string;
+        description: string;
+        selectFile: string;
+        selectedFile: string;
+        noFile: string;
+        autoReindex: string;
+        uploadButton: string;
+        uploading: string;
+        success: string;
+        error: string;
+      };
+      docs: {
+        title: string;
+        description: string;
+        empty: string;
+        filename: string;
+        size: string;
+        actions: string;
       };
     };
     appearance: {

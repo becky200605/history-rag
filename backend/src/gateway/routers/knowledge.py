@@ -39,6 +39,8 @@ from src.community.knowledge_base.structured_document import (
 from src.community.knowledge_base.retriever import get_retriever, get_qdrant_client
 from src.config.knowledge_base_config import get_knowledge_base_config
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge-base"])
 logger = logging.getLogger(__name__)
 
@@ -88,6 +90,8 @@ class SearchResult(BaseModel):
     bbox: dict[str, float] | None = None
     source_url: str | None = None
     original_url: str | None = None
+    page: int | None = None
+    source_type: str = "unknown"
 
 
 class SearchResponse(BaseModel):
@@ -116,6 +120,30 @@ class KnowledgeUploadResponse(BaseModel):
     success: bool
     files: list[dict[str, Any]]
     message: str
+
+
+class UploadKnowledgeDocumentResponse(BaseModel):
+    """Compatibility response model for settings-page uploads."""
+
+    status: str
+    message: str
+    filename: str
+    markdown_filename: str | None = None
+
+
+class KnowledgeDocumentInfo(BaseModel):
+    """Compatibility metadata model for settings-page document listing."""
+
+    filename: str
+    size: int
+    modified: float
+    extension: str
+
+
+class KnowledgeDocumentListResponse(BaseModel):
+    """Compatibility response model for settings-page document listing."""
+
+    docs: list[KnowledgeDocumentInfo]
 
 
 async def save_upload_file(file: UploadFile, destination: Path, chunk_size: int = UPLOAD_CHUNK_SIZE) -> int:
@@ -606,6 +634,7 @@ def reindex_knowledge_base(thread_id: str | None = None) -> ReindexResponse:
             message = f"Knowledge base reindexed successfully (global={global_chunks})"
         return ReindexResponse(status="success", message=message)
     except Exception as e:
+        logger.exception("Failed to reindex knowledge base")
         raise HTTPException(status_code=500, detail=f"Failed to reindex: {str(e)}")
 
 
@@ -839,38 +868,56 @@ def search_knowledge_base(
                 bbox=res.get("metadata", {}).get("bbox"),
                 source_url=(
                     _encode_url_path(
-                        _append_pdf_page_fragment(
-                            f"/api/threads/{res.get('metadata', {}).get('thread_id')}/artifacts{res.get('metadata', {}).get('source_virtual_path')}",
-                            res.get("metadata", {}).get("pdf_page_no"),
+                        (
+                            f"/api/threads/{res.get('metadata', {}).get('thread_id')}/artifacts{res.get('metadata', {}).get('source_virtual_path')}?page={res.get('page')}"
+                            if res.get("source_type") == "pdf" and res.get("page") is not None
+                            else _append_pdf_page_fragment(
+                                f"/api/threads/{res.get('metadata', {}).get('thread_id')}/artifacts{res.get('metadata', {}).get('source_virtual_path')}",
+                                res.get("metadata", {}).get("pdf_page_no"),
+                            )
                         )
                     )
                     if res.get("metadata", {}).get("scope") == "thread"
                     else _encode_url_path(
-                        _append_pdf_page_fragment(
-                            f"/api/knowledge/docs/{res['filename']}",
-                            res.get("metadata", {}).get("pdf_page_no"),
+                        (
+                            f"/api/knowledge/docs/{res['filename']}?page={res.get('page')}"
+                            if res.get("source_type") == "pdf" and res.get("page") is not None
+                            else _append_pdf_page_fragment(
+                                f"/api/knowledge/docs/{res['filename']}",
+                                res.get("metadata", {}).get("pdf_page_no"),
+                            )
                         )
                     )
                 ),
                 original_url=(
                     _encode_url_path(
-                        _append_pdf_page_fragment(
-                            f"/api/threads/{res.get('metadata', {}).get('thread_id')}/artifacts{res.get('metadata', {}).get('origin_virtual_path')}",
-                            res.get("metadata", {}).get("pdf_page_no"),
+                        (
+                            f"/api/threads/{res.get('metadata', {}).get('thread_id')}/artifacts{res.get('metadata', {}).get('origin_virtual_path')}?page={res.get('page')}"
+                            if res.get("source_type") == "pdf" and res.get("page") is not None
+                            else _append_pdf_page_fragment(
+                                f"/api/threads/{res.get('metadata', {}).get('thread_id')}/artifacts{res.get('metadata', {}).get('origin_virtual_path')}",
+                                res.get("metadata", {}).get("pdf_page_no"),
+                            )
                         )
                     )
                     if res.get("metadata", {}).get("scope") == "thread" and res.get("metadata", {}).get("origin_virtual_path")
                     else (
                         _encode_url_path(
-                            _append_pdf_page_fragment(
-                                f"/api/knowledge/docs/{res.get('metadata', {}).get('origin_filename')}",
-                                res.get("metadata", {}).get("pdf_page_no"),
+                            (
+                                f"/api/knowledge/docs/{res.get('metadata', {}).get('origin_filename')}?page={res.get('page')}"
+                                if res.get("source_type") == "pdf" and res.get("page") is not None
+                                else _append_pdf_page_fragment(
+                                    f"/api/knowledge/docs/{res.get('metadata', {}).get('origin_filename')}",
+                                    res.get("metadata", {}).get("pdf_page_no"),
+                                )
                             )
                         )
                         if res.get("metadata", {}).get("scope") == "global" and res.get("metadata", {}).get("origin_filename")
                         else None
                     )
                 ),
+                page=res.get("page"),
+                source_type=res.get("source_type", "unknown"),
             )
             for res in results
         ]
@@ -880,20 +927,101 @@ def search_knowledge_base(
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
+@router.get(
+    "/docs",
+    response_model=KnowledgeDocumentListResponse,
+    summary="List Knowledge Documents",
+)
+def list_knowledge_documents() -> KnowledgeDocumentListResponse:
+    """List all visible files under the knowledge docs directory."""
+    response = list_global_knowledge_files()
+    docs = [
+        KnowledgeDocumentInfo(
+            filename=file_info["filename"],
+            size=int(file_info["size"]),
+            modified=float(file_info.get("modified") or 0),
+            extension=str(file_info.get("extension") or ""),
+        )
+        for file_info in response.get("files", [])
+    ]
+    return KnowledgeDocumentListResponse(docs=docs)
+
+
+@router.post(
+    "/docs/upload",
+    response_model=UploadKnowledgeDocumentResponse,
+    summary="Upload Knowledge Document",
+)
+async def upload_knowledge_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(..., description="Knowledge document"),
+    reindex: bool = Query(
+        True,
+        description="Compatibility flag. Structured uploads always reindex in the background.",
+    ),
+) -> UploadKnowledgeDocumentResponse:
+    """Compatibility wrapper for the settings-page upload flow."""
+    _ = reindex
+    upload_response = await upload_global_knowledge_files(
+        background_tasks,
+        [file],
+    )
+    uploaded = upload_response.files[0] if upload_response.files else {}
+    return UploadKnowledgeDocumentResponse(
+        status="success" if upload_response.success else "error",
+        message=upload_response.message,
+        filename=str(uploaded.get("filename") or file.filename or ""),
+        markdown_filename=str(uploaded.get("preview_filename") or "") or None,
+    )
+
+
+@router.delete(
+    "/docs/{filename}",
+    response_model=dict,
+    summary="Delete Knowledge Document",
+)
+async def delete_knowledge_document(
+    filename: str,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Compatibility wrapper for deleting a knowledge document."""
+    return await delete_global_knowledge_file(filename, background_tasks)
+
+
 @router.get("/docs/{filename}", summary="Get Knowledge Document")
-def get_knowledge_document(filename: str, download: bool = False):
-    """Get a knowledge document by filename."""
+def get_knowledge_document(
+    filename: str,
+    download: bool = False,
+    page: int | None = Query(None, description="Page number for PDF files (0-based)"),
+):
+    """Get a knowledge document by filename.
+
+    Supports URL-encoded names like 民国财政史_(杨荫溥).md.
+    For PDF files, the page parameter can be used to indicate the target page
+    (passed to frontend via X-Page header).
+    """
     config = get_knowledge_base_config()
     if not config.enabled:
         raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
 
-    if "/" in filename or "\\" in filename:
+    if "/" in filename or "\\" in filename or filename.startswith(".."):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    file_path = get_global_docs_dir() / filename
+    docs_root = get_global_docs_dir()
+    file_path = docs_root / filename
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
 
+    # Ensure resolved path is under docs_root (path traversal protection)
+    try:
+        file_path = file_path.resolve()
+        docs_root = docs_root.resolve()
+        if not str(file_path).startswith(str(docs_root)):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+    except Exception:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    ext = Path(filename).suffix.lower()
     if download:
         media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         return FileResponse(
@@ -901,12 +1029,21 @@ def get_knowledge_document(filename: str, download: bool = False):
             filename=filename,
             media_type=media_type,
         )
-    else:
-        media_type = mimetypes.guess_type(filename)[0] or "text/markdown"
+    if ext == ".pdf":
+        headers = {}
+        if page is not None:
+            headers["X-PDF-Page"] = str(page)
         return FileResponse(
             path=file_path,
-            media_type=media_type,
+            media_type="application/pdf",
+            headers=headers,
         )
+
+    # Handle text/markdown files
+    return FileResponse(
+        path=file_path,
+        media_type="text/markdown"
+    )
 
 
 @router.get(

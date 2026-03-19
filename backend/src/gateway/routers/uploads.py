@@ -1,35 +1,47 @@
 """Upload router for handling file uploads."""
 
 import logging
+from typing import Any
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from src.community.knowledge_base.document_parsers import (
+    OFFICE_EXTENSIONS,
+    PDF_EXTENSIONS,
+    build_structured_document_from_paddleocr,
+    extract_office_text_with_markitdown,
+    extract_pdf_text_with_paddleocr,
+)
+from src.community.knowledge_base.indexer import rebuild_thread_upload_index
+from src.community.knowledge_base.ingestion import (
+    build_ingestion_record,
+    build_ingestion_urls,
+    build_record_lookup,
+    find_ingestion_record,
+    mark_record_failed,
+    mark_record_parsed,
+    mark_thread_records_indexed,
+    persist_thread_structured_document,
+    remove_ingestion_record,
+    save_ingestion_record,
+)
+from src.community.knowledge_base.structured_document import build_structured_document
 from src.config.paths import VIRTUAL_PATH_PREFIX, get_paths
 from src.sandbox.sandbox_provider import get_sandbox_provider
 
 logger = logging.getLogger(__name__)
 
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+
 router = APIRouter(prefix="/api/threads/{thread_id}/uploads", tags=["uploads"])
-
-# File extensions that should be converted to markdown
-CONVERTIBLE_EXTENSIONS = {
-    ".pdf",
-    ".ppt",
-    ".pptx",
-    ".xls",
-    ".xlsx",
-    ".doc",
-    ".docx",
-}
-
 
 class UploadResponse(BaseModel):
     """Response model for file upload."""
 
     success: bool
-    files: list[dict[str, str]]
+    files: list[dict[str, Any]]
     message: str
 
 
@@ -47,41 +59,32 @@ def get_uploads_dir(thread_id: str) -> Path:
     return base_dir
 
 
-async def convert_file_to_markdown(file_path: Path) -> Path | None:
-    """Convert a file to markdown using markitdown.
-
-    Args:
-        file_path: Path to the file to convert.
-
-    Returns:
-        Path to the markdown file if conversion was successful, None otherwise.
-    """
-    try:
-        from markitdown import MarkItDown
-
-        md = MarkItDown()
-        result = md.convert(str(file_path))
-
-        # Save as .md file with same name
-        md_path = file_path.with_suffix(".md")
-        md_path.write_text(result.text_content, encoding="utf-8")
-
-        logger.info(f"Converted {file_path.name} to markdown: {md_path.name}")
-        return md_path
-    except Exception as e:
-        logger.error(f"Failed to convert {file_path.name} to markdown: {e}")
-        return None
+async def save_upload_file(file: UploadFile, destination: Path, chunk_size: int = UPLOAD_CHUNK_SIZE) -> int:
+    """Stream an uploaded file to disk and return its size in bytes."""
+    size = 0
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("wb") as buffer:
+        while chunk := await file.read(chunk_size):
+            buffer.write(chunk)
+            size += len(chunk)
+    await file.close()
+    return size
 
 
 @router.post("", response_model=UploadResponse)
 async def upload_files(
     thread_id: str,
     files: list[UploadFile] = File(...),
+    language_hint: str | None = Form(default=None),
+    layout_hint: str | None = Form(default=None),
+    document_type_hint: str | None = Form(default=None),
+    book_page_start_pdf_page: str | None = Form(default=None),
+    book_page_start_value: str | None = Form(default=None),
 ) -> UploadResponse:
     """Upload multiple files to a thread's uploads directory.
 
-    For PDF, PPT, Excel, and Word files, they will be converted to markdown using markitdown.
-    All files (original and converted) are saved to /mnt/user-data/uploads.
+    For PDF, PPT, Excel, and Word files, text is extracted and saved as structured JSON.
+    Original files remain in /mnt/user-data/uploads.
 
     Args:
         thread_id: The thread ID to upload files to.
@@ -95,10 +98,23 @@ async def upload_files(
 
     uploads_dir = get_uploads_dir(thread_id)
     uploaded_files = []
+    needs_reindex = False
+    hints = {
+        key: value
+        for key, value in {
+            "language_hint": language_hint,
+            "layout_hint": layout_hint,
+            "document_type_hint": document_type_hint,
+            "book_page_start_pdf_page": book_page_start_pdf_page,
+            "book_page_start_value": book_page_start_value,
+        }.items()
+        if value
+    }
 
     sandbox_provider = get_sandbox_provider()
     sandbox_id = sandbox_provider.acquire(thread_id)
     sandbox = sandbox_provider.get(sandbox_id)
+    is_local_sandbox = sandbox_id == "local"
 
     for file in files:
         if not file.filename:
@@ -113,39 +129,156 @@ async def upload_files(
 
             # Save the original file
             file_path = uploads_dir / safe_filename
-            content = await file.read()
+            file_size = await save_upload_file(file, file_path)
+            record = build_ingestion_record(
+                thread_id=thread_id,
+                source_filename=safe_filename,
+                size=file_size,
+                content_type=file.content_type,
+                hints=hints,
+            )
 
             # Build relative path from backend root
             relative_path = str(get_paths().sandbox_uploads_dir(thread_id) / safe_filename)
             virtual_path = f"{VIRTUAL_PATH_PREFIX}/uploads/{safe_filename}"
-            sandbox.update_file(virtual_path, content)
+            if not is_local_sandbox:
+                sandbox.update_file(virtual_path, file_path.read_bytes())
 
             file_info = {
                 "filename": safe_filename,
-                "size": str(len(content)),
+                "size": file_size,
                 "path": relative_path,  # Actual filesystem path (relative to backend/)
                 "virtual_path": virtual_path,  # Path for Agent in sandbox
                 "artifact_url": f"/api/threads/{thread_id}/artifacts/mnt/user-data/uploads/{safe_filename}",  # HTTP URL
+                "parse_method": record["parse_method"],
+                "parse_status": record["parse_status"],
+                "indexable": record["indexable"],
+                "hints": hints,
             }
 
-            logger.info(f"Saved file: {safe_filename} ({len(content)} bytes) to {relative_path}")
+            logger.info(f"Saved file: {safe_filename} ({file_size} bytes) to {relative_path}")
 
-            # Check if file should be converted to markdown
+            # Check if file should be parsed into structured text
             file_ext = file_path.suffix.lower()
-            if file_ext in CONVERTIBLE_EXTENSIONS:
-                md_path = await convert_file_to_markdown(file_path)
-                if md_path:
-                    md_relative_path = str(get_paths().sandbox_uploads_dir(thread_id) / md_path.name)
-                    file_info["markdown_file"] = md_path.name
-                    file_info["markdown_path"] = md_relative_path
-                    file_info["markdown_virtual_path"] = f"{VIRTUAL_PATH_PREFIX}/uploads/{md_path.name}"
-                    file_info["markdown_artifact_url"] = f"/api/threads/{thread_id}/artifacts/mnt/user-data/uploads/{md_path.name}"
+            if file_ext in PDF_EXTENSIONS:
+                try:
+                    structured_payload = build_structured_document_from_paddleocr(
+                        file_path,
+                        title=record["display_title"],
+                        parser_name=record["parse_method"],
+                        hints=hints,
+                        language_hint=hints.get("language_hint"),
+                    )
+                except Exception as exc:
+                    structured_payload = None
+                    logger.error("PaddleOCR failed for %s: %s", file_path.name, exc)
+                if structured_payload:
+                    structured_filename = persist_thread_structured_document(
+                        thread_id,
+                        safe_filename,
+                        structured_payload,
+                    )
+                    if not is_local_sandbox:
+                        ingestion_urls = build_ingestion_urls(thread_id, structured_filename)
+                        sandbox.update_file(
+                            ingestion_urls["virtual_path"],
+                            (get_paths().sandbox_uploads_dir(thread_id) / ".ingestion" / structured_filename).read_bytes(),
+                        )
+                    record = mark_record_parsed(
+                        thread_id,
+                        record,
+                        structured_filename=structured_filename,
+                    )
+                    file_info["structured_file"] = structured_filename
+                    file_info["structured_artifact_url"] = record["structured_artifact_url"]
+                    file_info["index_target_filename"] = structured_filename
+                    file_info["parse_status"] = record["parse_status"]
+                    needs_reindex = True
+                else:
+                    record = mark_record_failed(record, "PaddleOCR returned no text")
+                    file_info["parse_status"] = record["parse_status"]
+                    file_info["error"] = record["error"]
+            elif file_ext in OFFICE_EXTENSIONS:
+                extracted_text = extract_office_text_with_markitdown(file_path)
+                if extracted_text:
+                    structured_payload = build_structured_document(
+                        source_filename=safe_filename,
+                        title=record["display_title"],
+                        text=extracted_text,
+                        parser_name=record["parse_method"],
+                        hints=hints,
+                    )
+                    structured_filename = persist_thread_structured_document(
+                        thread_id,
+                        safe_filename,
+                        structured_payload,
+                    )
+                    if not is_local_sandbox:
+                        ingestion_urls = build_ingestion_urls(thread_id, structured_filename)
+                        sandbox.update_file(
+                            ingestion_urls["virtual_path"],
+                            (get_paths().sandbox_uploads_dir(thread_id) / ".ingestion" / structured_filename).read_bytes(),
+                        )
+                    record = mark_record_parsed(
+                        thread_id,
+                        record,
+                        structured_filename=structured_filename,
+                    )
+                    file_info["structured_file"] = structured_filename
+                    file_info["structured_artifact_url"] = record["structured_artifact_url"]
+                    file_info["index_target_filename"] = structured_filename
+                    file_info["parse_status"] = record["parse_status"]
+                    needs_reindex = True
+                else:
+                    record = mark_record_failed(record, "Office parser returned no text")
+                    file_info["parse_status"] = record["parse_status"]
+                    file_info["error"] = record["error"]
+            elif file_ext in {".md", ".txt"}:
+                structured_payload = build_structured_document(
+                    source_filename=safe_filename,
+                    title=record["display_title"],
+                    text=file_path.read_text(encoding="utf-8"),
+                    parser_name=record["parse_method"],
+                    hints=hints,
+                )
+                structured_filename = persist_thread_structured_document(
+                    thread_id,
+                    safe_filename,
+                    structured_payload,
+                )
+                if not is_local_sandbox:
+                    ingestion_urls = build_ingestion_urls(thread_id, structured_filename)
+                    sandbox.update_file(
+                        ingestion_urls["virtual_path"],
+                        (get_paths().sandbox_uploads_dir(thread_id) / ".ingestion" / structured_filename).read_bytes(),
+                    )
+                record = mark_record_parsed(
+                    thread_id,
+                    record,
+                    structured_filename=structured_filename,
+                    preview_filename=safe_filename,
+                )
+                file_info["structured_file"] = structured_filename
+                file_info["structured_artifact_url"] = record["structured_artifact_url"]
+                file_info["index_target_filename"] = structured_filename
+                file_info["parse_status"] = record["parse_status"]
+                needs_reindex = True
+            else:
+                record["parse_status"] = "uploaded"
 
+            save_ingestion_record(thread_id, safe_filename, record)
             uploaded_files.append(file_info)
 
         except Exception as e:
             logger.error(f"Failed to upload {file.filename}: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to upload {file.filename}: {str(e)}")
+
+    if needs_reindex:
+        try:
+            rebuild_thread_upload_index(thread_id)
+            mark_thread_records_indexed(thread_id)
+        except Exception as exc:
+            logger.warning("Failed to rebuild thread upload index for %s: %s", thread_id, exc)
 
     return UploadResponse(
         success=True,
@@ -169,22 +302,49 @@ async def list_uploaded_files(thread_id: str) -> dict:
     if not uploads_dir.exists():
         return {"files": [], "count": 0}
 
+    source_records, target_records = build_record_lookup(thread_id)
+    preview_filenames = {
+        str(record.get("preview_filename"))
+        for record in source_records.values()
+        if record.get("preview_filename") and record.get("preview_filename") != record.get("source_filename")
+    }
     files = []
     for file_path in sorted(uploads_dir.iterdir()):
         if file_path.is_file():
+            record = source_records.get(file_path.name)
+            if target_records.get(file_path.name) and not record:
+                continue
+            if file_path.name in preview_filenames and not record:
+                continue
+
             stat = file_path.stat()
             relative_path = str(get_paths().sandbox_uploads_dir(thread_id) / file_path.name)
-            files.append(
-                {
-                    "filename": file_path.name,
-                    "size": stat.st_size,
-                    "path": relative_path,  # Actual filesystem path
-                    "virtual_path": f"{VIRTUAL_PATH_PREFIX}/uploads/{file_path.name}",  # Path for Agent in sandbox
-                    "artifact_url": f"/api/threads/{thread_id}/artifacts/mnt/user-data/uploads/{file_path.name}",  # HTTP URL
-                    "extension": file_path.suffix,
-                    "modified": stat.st_mtime,
-                }
-            )
+            entry = {
+                "filename": file_path.name,
+                "size": stat.st_size,
+                "path": relative_path,  # Actual filesystem path
+                "virtual_path": f"{VIRTUAL_PATH_PREFIX}/uploads/{file_path.name}",  # Path for Agent in sandbox
+                "artifact_url": f"/api/threads/{thread_id}/artifacts/mnt/user-data/uploads/{file_path.name}",  # HTTP URL
+                "extension": file_path.suffix,
+                "modified": stat.st_mtime,
+            }
+            if record:
+                entry.update(
+                    {
+                        "parse_method": record.get("parse_method"),
+                        "parse_status": record.get("parse_status"),
+                        "indexable": record.get("indexable", False),
+                        "preview_filename": record.get("preview_filename"),
+                        "preview_artifact_url": record.get("preview_artifact_url"),
+                        "structured_filename": record.get("structured_filename"),
+                        "structured_artifact_url": record.get("structured_artifact_url"),
+                        "index_target_filename": record.get("index_target_filename"),
+                        "index_target_artifact_url": record.get("index_target_artifact_url"),
+                        "hints": record.get("hints", {}),
+                        "error": record.get("error"),
+                    }
+                )
+            files.append(entry)
 
     return {"files": files, "count": len(files)}
 
@@ -202,6 +362,7 @@ async def delete_uploaded_file(thread_id: str, filename: str) -> dict:
     """
     uploads_dir = get_uploads_dir(thread_id)
     file_path = uploads_dir / filename
+    record = find_ingestion_record(thread_id, filename)
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
@@ -214,6 +375,34 @@ async def delete_uploaded_file(thread_id: str, filename: str) -> dict:
 
     try:
         file_path.unlink()
+        if record:
+            index_target_filename = record.get("index_target_filename")
+            source_filename = record.get("source_filename")
+            structured_filename = record.get("structured_filename")
+            if index_target_filename and index_target_filename != filename:
+                derived_path = Path(str(record.get("index_target_path")))
+                if derived_path.exists():
+                    derived_path.unlink()
+            elif structured_filename and structured_filename != filename:
+                structured_path = Path(str(record.get("structured_path")))
+                if structured_path.exists():
+                    structured_path.unlink()
+            if source_filename and source_filename != filename:
+                source_path = uploads_dir / source_filename
+                if source_path.exists():
+                    source_path.unlink()
+            preview_filename = record.get("preview_filename")
+            if preview_filename and preview_filename not in {filename, source_filename, index_target_filename}:
+                preview_path = uploads_dir / preview_filename
+                if preview_path.exists():
+                    preview_path.unlink()
+            if source_filename:
+                remove_ingestion_record(thread_id, source_filename)
+        try:
+            rebuild_thread_upload_index(thread_id)
+            mark_thread_records_indexed(thread_id)
+        except Exception as exc:
+            logger.warning("Failed to rebuild thread upload index for %s after delete: %s", thread_id, exc)
         logger.info(f"Deleted file: {filename}")
         return {"success": True, "message": f"Deleted {filename}"}
     except Exception as e:

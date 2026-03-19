@@ -260,6 +260,8 @@ function UploadedFileCard({
 
   const isImage = isImageFile(file.filename);
   const fileUrl = resolveArtifactURL(file.path, threadId);
+  const isPdf = getFileExt(file.filename) === "pdf";
+  const actionLabel = isPdf ? "打开原文" : "打开文件";
 
   if (isImage) {
     return (
@@ -278,7 +280,7 @@ function UploadedFileCard({
     );
   }
 
-  return (
+  const cardContent = (
     <div className="bg-background border-border/40 flex max-w-[200px] min-w-[120px] flex-col gap-1 rounded-lg border p-3 shadow-sm">
       <div className="flex items-start gap-2">
         <FileIcon className="text-muted-foreground mt-0.5 size-4 shrink-0" />
@@ -298,7 +300,24 @@ function UploadedFileCard({
         </Badge>
         <span className="text-muted-foreground text-[10px]">{file.size}</span>
       </div>
+      <div className="flex items-center justify-between text-[11px] tracking-wide">
+        <span className="text-primary underline decoration-dotted">
+          {actionLabel}
+        </span>
+        {isPdf && <span className="text-muted-foreground">PDF 原文</span>}
+      </div>
     </div>
+  );
+
+  return (
+    <a
+      href={fileUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group inline-block"
+    >
+      {cardContent}
+    </a>
   );
 }
 

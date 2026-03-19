@@ -10,12 +10,28 @@ export interface UploadedFileInfo {
   path: string;
   virtual_path: string;
   artifact_url: string;
+  parse_method?: string;
+  parse_status?: string;
+  indexable?: boolean;
+  preview_filename?: string;
+  preview_artifact_url?: string;
+  structured_file?: string;
+  structured_filename?: string;
+  structured_artifact_url?: string;
+  index_target_filename?: string;
+  index_target_artifact_url?: string;
+  error?: string;
+  hints?: Record<string, string>;
   extension?: string;
   modified?: number;
-  markdown_file?: string;
-  markdown_path?: string;
-  markdown_virtual_path?: string;
-  markdown_artifact_url?: string;
+}
+
+export interface UploadOptions {
+  languageHint?: string;
+  layoutHint?: string;
+  documentTypeHint?: string;
+  bookPageStartPdfPage?: string;
+  bookPageStartValue?: string;
 }
 
 export interface UploadResponse {
@@ -35,12 +51,28 @@ export interface ListFilesResponse {
 export async function uploadFiles(
   threadId: string,
   files: File[],
+  options?: UploadOptions,
 ): Promise<UploadResponse> {
   const formData = new FormData();
 
   files.forEach((file) => {
     formData.append("files", file);
   });
+  if (options?.languageHint) {
+    formData.append("language_hint", options.languageHint);
+  }
+  if (options?.layoutHint) {
+    formData.append("layout_hint", options.layoutHint);
+  }
+  if (options?.documentTypeHint) {
+    formData.append("document_type_hint", options.documentTypeHint);
+  }
+  if (options?.bookPageStartPdfPage) {
+    formData.append("book_page_start_pdf_page", options.bookPageStartPdfPage);
+  }
+  if (options?.bookPageStartValue) {
+    formData.append("book_page_start_value", options.bookPageStartValue);
+  }
 
   const response = await fetch(
     `${getBackendBaseURL()}/api/threads/${threadId}/uploads`,

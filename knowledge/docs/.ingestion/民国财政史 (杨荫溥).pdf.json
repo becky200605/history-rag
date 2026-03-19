@@ -1,0 +1,31 @@
+{
+  "source_filename": "民国财政史 (杨荫溥).pdf",
+  "display_title": "民国财政史 (杨荫溥)",
+  "source_extension": ".pdf",
+  "source_size": 8313541,
+  "content_type": "application/pdf",
+  "parse_method": "paddleocr_pdf",
+  "parse_status": "indexed",
+  "indexable": true,
+  "source_artifact_url": "/api/knowledge/docs/民国财政史 (杨荫溥).pdf",
+  "preview_filename": null,
+  "preview_artifact_url": null,
+  "structured_filename": "民国财政史 (杨荫溥).pdf.structured.json",
+  "structured_path": "/Users/lawkaiqing/code/history-rag/knowledge/docs/.ingestion/民国财政史 (杨荫溥).pdf.structured.json",
+  "structured_artifact_url": null,
+  "index_target_filename": "民国财政史 (杨荫溥).pdf.structured.json",
+  "index_target_path": "/Users/lawkaiqing/code/history-rag/knowledge/docs/.ingestion/民国财政史 (杨荫溥).pdf.structured.json",
+  "index_target_artifact_url": null,
+  "index_target_format": "structured_json",
+  "hints": {
+    "language_hint": "zh-Hans",
+    "layout_hint": "horizontal",
+    "book_page_start_pdf_page": "4",
+    "book_page_start_value": "1"
+  },
+  "error": null,
+  "parser_task_id": null,
+  "remote_object_key": null,
+  "remote_file_url": null,
+  "replace_existing_index": false
+}

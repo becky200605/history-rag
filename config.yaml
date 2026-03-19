@@ -49,18 +49,18 @@ models:
           type: enabled
 
   # Example: Volcengine (Doubao) model
-  # - name: doubao-seed-1.8
-  #   display_name: Doubao 1.8 (Thinking)
-  #   use: langchain_deepseek:ChatDeepSeek
-  #   model: ep-m-20260106111913-xxxxx
-  #   api_base: https://ark.cn-beijing.volces.com/api/v3
-  #   api_key: $VOLCENGINE_API_KEY
-  #   supports_thinking: true
-  #   supports_vision: false  # Check your specific model's capabilities
-  #   when_thinking_enabled:
-  #     extra_body:
-  #       thinking:
-  #         type: enabled
+  - name: doubao-seed-2.0-pro
+    display_name: Doubao 2.0  (Thinking)
+    use: langchain_deepseek:ChatDeepSeek
+    model: doubao-seed-2.0-pro
+    api_base: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key: $VOLCENGINE_API_KEY
+    supports_thinking: true
+    supports_vision: true  # Check your specific model's capabilities
+    when_thinking_enabled:
+      extra_body:
+        thinking:
+          type: enabled
 
   # Example: Kimi K2.5 model
   # - name: kimi-k2.5
@@ -115,9 +115,17 @@ tools:
     max_results: 5
 
   # Knowledge Base tool
+  - name: book_search
+    group: web
+    use: src.community.knowledge_base.tools:book_search_tool
+
   - name: knowledge_search
     group: web
     use: src.community.knowledge_base.tools:knowledge_search_tool
+
+  - name: knowledge_locate
+    group: web
+    use: src.community.knowledge_base.tools:knowledge_locate_tool
 
   # File operations tools
   - name: ls
@@ -260,9 +268,9 @@ summarization:
   # Summarization runs when ANY threshold is met (OR logic)
   # You can specify a single trigger or a list of triggers
   trigger:
-    # Trigger when token count reaches 15564
+    # Trigger when token count reaches 48000
     - type: tokens
-      value: 15564
+      value: 48000
     # Uncomment to also trigger when message count reaches 50
     # - type: messages
     #   value: 50
@@ -273,9 +281,9 @@ summarization:
   # Context retention policy after summarization
   # Specifies how much recent history to preserve
   keep:
-    # Keep the most recent 10 messages (recommended)
+    # Keep the most recent 16 messages
     type: messages
-    value: 10
+    value: 16
     # Alternative: Keep specific token count
     # type: tokens
     # value: 3000
@@ -285,7 +293,7 @@ summarization:
 
   # Maximum tokens to keep when preparing messages for summarization
   # Set to null to skip trimming (not recommended for very long conversations)
-  trim_tokens_to_summarize: 15564
+  trim_tokens_to_summarize: 24000
 
   # Custom summary prompt template (null = use default LangChain prompt)
   # The prompt should guide the model to extract important context
@@ -341,5 +349,5 @@ knowledge_base:
 
   # Retrieval Configuration
   retrieval:
-    top_k: 5
+    top_k: 3
     score_threshold: 0.3

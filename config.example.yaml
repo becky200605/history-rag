@@ -112,6 +112,15 @@ tools:
     use: src.community.image_search.tools:image_search_tool
     max_results: 5
 
+  # Knowledge Base tools
+  - name: book_search
+    group: web
+    use: src.community.knowledge_base.tools:book_search_tool
+
+  - name: knowledge_search
+    group: web
+    use: src.community.knowledge_base.tools:knowledge_search_tool
+
   # File operations tools
   - name: ls
     group: file:read

@@ -1,4 +1,6 @@
 import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
   Code2Icon,
   CopyIcon,
   DownloadIcon,
@@ -8,7 +10,8 @@ import {
   SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { pdfjs } from "react-pdf";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
 
@@ -20,6 +23,8 @@ import {
   ArtifactHeader,
   ArtifactTitle,
 } from "@/components/ai-elements/artifact";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectItem } from "@/components/ui/select";
 import {
   SelectContent,
@@ -32,6 +37,11 @@ import { CodeEditor } from "@/components/workspace/code-editor";
 import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
+import {
+  buildKnowledgePageImageURL,
+  getKnowledgeParagraphLocation,
+  type KnowledgeParagraphLocation,
+} from "@/core/knowledge/api";
 import { installSkill } from "@/core/skills/api";
 import { streamdownPlugins } from "@/core/streamdown";
 import { checkCodeFile, getFileExtension, getFileName } from "@/core/utils/files";
@@ -125,6 +135,21 @@ export function ArtifactFileDetail({
       url.searchParams.delete("pdf_page_no");
       url.searchParams.delete("paragraph_no");
       return `${url.pathname}${url.search}`;
+    } catch {
+      return null;
+    }
+  }, [isKnowledgePdf, knowledgeUrl]);
+
+  const knowledgePdfLocator = useMemo(() => {
+    if (!isKnowledgePdf || !knowledgeUrl) return null;
+    try {
+      const url = new URL(knowledgeUrl, window.location.origin);
+      return {
+        filename: decodeURIComponent(url.pathname.split("/").pop() ?? ""),
+        pageNo: url.searchParams.get("page_no"),
+        pdfPageNo: url.searchParams.get("pdf_page_no"),
+        paragraphNo: url.searchParams.get("paragraph_no"),
+      };
     } catch {
       return null;
     }
@@ -442,13 +467,36 @@ export function ArtifactFileDetail({
           </ArtifactActions>
         </div>
       </ArtifactHeader>
-      <ArtifactContent className="p-0">
+      <ArtifactContent
+        className={cn(
+          "p-0",
+          isKnowledgePdf &&
+            knowledgePdfLocator?.filename &&
+            (knowledgePdfLocator.pageNo ??
+              knowledgePdfLocator.pdfPageNo ??
+              knowledgePdfLocator.paragraphNo) &&
+            "overflow-hidden",
+        )}
+      >
         {isKnowledgePdf && knowledgePdfUrl && (
-          <PdfViewer
-            url={knowledgePdfUrl}
-            initialPage={knowledgePdfPage ?? 0}
-            className="size-full"
-          />
+          knowledgePdfLocator?.filename &&
+          (knowledgePdfLocator.pageNo ||
+            knowledgePdfLocator.pdfPageNo ||
+            knowledgePdfLocator.paragraphNo) ? (
+            <KnowledgeCitationPdfViewer
+              filename={knowledgePdfLocator.filename}
+              pdfUrl={knowledgePdfUrl}
+              pageNo={knowledgePdfLocator.pageNo}
+              pdfPageNo={knowledgePdfLocator.pdfPageNo}
+              paragraphNo={knowledgePdfLocator.paragraphNo}
+            />
+          ) : (
+            <PdfViewer
+              url={knowledgePdfUrl}
+              initialPage={knowledgePdfPage ?? 0}
+              className="size-full"
+            />
+          )
         )}
         {!isKnowledgePdf && previewable && viewMode === "preview" && language === "markdown" && (
           <MarkdownDualPreview
@@ -456,7 +504,7 @@ export function ArtifactFileDetail({
             threadId={threadId}
             content={displayContent}
             mode={markdownPreviewVariant}
-            onModeChange={(value) => setMarkdownPreviewVariant(value as PreviewVariant)}
+            onModeChange={setMarkdownPreviewVariant}
             rawUrl={isKnowledgeDoc ? knowledgeUrl ?? undefined : undefined}
           />
         )}
@@ -494,6 +542,291 @@ export function ArtifactFileDetail({
         )}
       </ArtifactContent>
     </Artifact>
+  );
+}
+
+type KnowledgeCitationState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; data: KnowledgeParagraphLocation };
+
+function KnowledgeCitationPdfViewer({
+  filename,
+  pdfUrl,
+  pageNo,
+  pdfPageNo,
+  paragraphNo,
+}: {
+  filename: string;
+  pdfUrl: string;
+  pageNo: string | null;
+  pdfPageNo: string | null;
+  paragraphNo: string | null;
+}) {
+  const [state, setState] = useState<KnowledgeCitationState>({ status: "loading" });
+  const [numPages, setNumPages] = useState<number | null>(null);
+  const [currentPdfPageNo, setCurrentPdfPageNo] = useState<number | null>(null);
+  const [pageInputValue, setPageInputValue] = useState<string>("");
+  const [viewportSize, setViewportSize] = useState<{ width: number; height: number } | null>(null);
+  const [imageNaturalSize, setImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: "loading" });
+    getKnowledgeParagraphLocation(filename, { pageNo, pdfPageNo, paragraphNo })
+      .then((data) => {
+        if (!cancelled) {
+          setState({ status: "ready", data });
+        }
+      })
+      .catch((error: Error) => {
+        if (!cancelled) {
+          setState({
+            status: "error",
+            message: error.message || "定位信息加载失败",
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filename, pageNo, pdfPageNo, paragraphNo]);
+
+  useEffect(() => {
+    const loadingTask = pdfjs.getDocument(pdfUrl);
+    loadingTask.promise
+      .then((document) => {
+        setNumPages(document.numPages);
+      })
+      .catch(() => {
+        setNumPages(null);
+      });
+    return () => {
+      void loadingTask.destroy();
+    };
+  }, [pdfUrl]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    const updateSize = () => {
+      setViewportSize({
+        width: viewport.clientWidth,
+        height: viewport.clientHeight,
+      });
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(viewport);
+    return () => {
+      observer.disconnect();
+    };
+  }, [currentPdfPageNo]);
+
+  useEffect(() => {
+    if (state.status !== "ready") {
+      setCurrentPdfPageNo(null);
+      return;
+    }
+    setCurrentPdfPageNo(state.data.pdf_page_no ?? null);
+  }, [state]);
+
+  useEffect(() => {
+    setImageNaturalSize(null);
+  }, [currentPdfPageNo]);
+
+  const goToPage = (page: number) => {
+    if (page < 1) {
+      return;
+    }
+    if (numPages && page > numPages) {
+      return;
+    }
+    setCurrentPdfPageNo(page);
+    setPageInputValue("");
+  };
+
+  const goToPrevPage = () => {
+    if (!currentPdfPageNo || currentPdfPageNo <= 1) {
+      return;
+    }
+    goToPage(currentPdfPageNo - 1);
+  };
+
+  const goToNextPage = () => {
+    if (!currentPdfPageNo) {
+      return;
+    }
+    if (numPages && currentPdfPageNo >= numPages) {
+      return;
+    }
+    goToPage(currentPdfPageNo + 1);
+  };
+
+  if (state.status === "loading") {
+    return (
+      <div className="flex size-full items-center justify-center bg-muted/30 p-4 text-sm text-muted-foreground">
+        正在加载 citation 定位...
+      </div>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <div className="flex size-full items-center justify-center bg-red-50 p-4 text-sm text-red-700">
+        {state.message}
+      </div>
+    );
+  }
+
+  const { data } = state;
+  const imageUrl = currentPdfPageNo
+    ? buildKnowledgePageImageURL(filename, currentPdfPageNo)
+    : null;
+  const isCitationPage = currentPdfPageNo === data.pdf_page_no;
+  const pageWidth = data.page_meta?.page_width ?? null;
+  const pageHeight = data.page_meta?.page_height ?? null;
+  const displayWidth = imageNaturalSize?.width ?? pageWidth ?? null;
+  const displayHeight = imageNaturalSize?.height ?? pageHeight ?? null;
+  const bbox = data.bbox;
+  const fittedScale =
+    displayWidth && displayHeight && viewportSize
+      ? Math.min(
+          viewportSize.width / displayWidth,
+          viewportSize.height / displayHeight,
+          1,
+        )
+      : null;
+  const renderedWidth =
+    displayWidth && fittedScale ? Math.floor(displayWidth * fittedScale) : null;
+  const renderedHeight =
+    displayHeight && fittedScale ? Math.floor(displayHeight * fittedScale) : null;
+  const overlayStyle =
+    isCitationPage &&
+    bbox &&
+    pageWidth &&
+    pageHeight &&
+    renderedWidth &&
+    renderedHeight
+      ? {
+          left: `${(bbox.x / pageWidth) * 100}%`,
+          top: `${(bbox.y / pageHeight) * 100}%`,
+          width: `${(bbox.width / pageWidth) * 100}%`,
+          height: `${(bbox.height / pageHeight) * 100}%`,
+        }
+      : null;
+
+  return (
+    <div className="flex size-full flex-col overflow-hidden bg-muted/20">
+      <div className="flex items-center justify-between border-b bg-muted/50 px-2 py-1.5">
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            onClick={goToPrevPage}
+            disabled={!currentPdfPageNo || currentPdfPageNo <= 1}
+          >
+            <ChevronLeftIcon className="size-4" />
+          </Button>
+          <div className="flex items-center gap-1 text-sm">
+            <Input
+              type="text"
+              className="h-7 w-12 text-center"
+              value={
+                pageInputValue !== ""
+                  ? pageInputValue
+                  : (currentPdfPageNo?.toString() ?? "")
+              }
+              onChange={(event) => setPageInputValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") {
+                  return;
+                }
+                const page = parseInt(pageInputValue, 10);
+                if (!Number.isNaN(page)) {
+                  goToPage(page);
+                }
+              }}
+              onBlur={() => setPageInputValue("")}
+              onFocus={() => {
+                if (currentPdfPageNo) {
+                  setPageInputValue(String(currentPdfPageNo));
+                }
+              }}
+            />
+            <span className="text-muted-foreground">/ {numPages ?? "?"}</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            onClick={goToNextPage}
+            disabled={!currentPdfPageNo || (numPages ? currentPdfPageNo >= numPages : false)}
+          >
+            <ChevronRightIcon className="size-4" />
+          </Button>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {isCitationPage && data.paragraph_no
+            ? `引用段落：第 ${data.paragraph_no} 段`
+            : "当前页预览"}
+        </div>
+      </div>
+      {imageUrl ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+          <div
+            ref={viewportRef}
+            className="flex h-full w-full items-center justify-center overflow-hidden"
+          >
+            <div
+              className="relative shrink-0 overflow-hidden rounded-md bg-white shadow-lg"
+              style={
+                renderedWidth && renderedHeight
+                  ? {
+                      width: `${renderedWidth}px`,
+                      height: `${renderedHeight}px`,
+                    }
+                  : undefined
+              }
+            >
+              <img
+                src={imageUrl}
+                alt={`${data.title} PDF page ${data.pdf_page_no ?? ""}`}
+                className="block bg-white object-contain"
+                style={
+                  renderedWidth && renderedHeight
+                    ? {
+                        width: `${renderedWidth}px`,
+                        height: `${renderedHeight}px`,
+                      }
+                    : undefined
+                }
+                onLoad={(event) => {
+                  setImageNaturalSize({
+                    width: event.currentTarget.naturalWidth,
+                    height: event.currentTarget.naturalHeight,
+                  });
+                }}
+              />
+              {overlayStyle && (
+                <div
+                  className="pointer-events-none absolute rounded-md border-2 border-emerald-500/90 bg-emerald-300/12"
+                  style={overlayStyle}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex size-full items-center justify-center p-4 text-sm text-muted-foreground">
+          当前 citation 缺少 PDF 页码，无法渲染整页预览。
+        </div>
+      )}
+    </div>
   );
 }
 

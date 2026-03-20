@@ -358,6 +358,6 @@ knowledge_base:
     enabled: $MINERU_GRPC_ENABLED
     target: $MINERU_GRPC_TARGET
     use_tls: $MINERU_GRPC_USE_TLS
-    api_token: $MINERU_API_TOKEN
+    api_token: null
     model_version: $MINERU_MODEL_VERSION
     request_timeout: 600

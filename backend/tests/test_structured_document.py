@@ -19,7 +19,7 @@ def test_build_structured_document_resets_paragraph_number_per_page() -> None:
     assert second_page["paragraphs"][1]["paragraph_no_in_doc"] == 4
 
 
-def test_build_structured_document_maps_book_page_numbers_from_hints() -> None:
+def test_build_structured_document_always_numbers_pages_from_pdf_page_one() -> None:
     payload = build_structured_document(
         source_filename="demo.pdf",
         title="Demo",
@@ -32,15 +32,15 @@ def test_build_structured_document_maps_book_page_numbers_from_hints() -> None:
     )
 
     assert payload["pages"][0]["pdf_page_no"] == 1
-    assert payload["pages"][0]["book_page_no"] is None
-    assert payload["pages"][0]["page_no"] is None
-    assert payload["pages"][0]["page_number_source"] == "unmapped_pdf"
+    assert payload["pages"][0]["book_page_no"] == 1
+    assert payload["pages"][0]["page_no"] == 1
+    assert payload["pages"][0]["page_number_source"] == "book"
 
     assert payload["pages"][2]["pdf_page_no"] == 3
-    assert payload["pages"][2]["book_page_no"] == 1
-    assert payload["pages"][2]["page_no"] == 1
+    assert payload["pages"][2]["book_page_no"] == 3
+    assert payload["pages"][2]["page_no"] == 3
     assert payload["pages"][2]["page_number_source"] == "book"
 
     assert payload["pages"][3]["pdf_page_no"] == 4
-    assert payload["pages"][3]["book_page_no"] == 2
-    assert payload["pages"][3]["page_no"] == 2
+    assert payload["pages"][3]["book_page_no"] == 4
+    assert payload["pages"][3]["page_no"] == 4

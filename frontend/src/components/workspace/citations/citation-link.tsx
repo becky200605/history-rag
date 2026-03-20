@@ -24,7 +24,7 @@ function parseKnowledgeDocUrl(url: string): KnowledgeDocInfo | null {
   try {
     const urlObj = new URL(url, window.location.origin);
     const pathParts = urlObj.pathname.split("/");
-    const filename = decodeURIComponent(pathParts[pathParts.length - 1] || "");
+    const filename = decodeURIComponent(pathParts[pathParts.length - 1] ?? "");
     const isPdf = filename.toLowerCase().endsWith(".pdf");
 
     const pageParam = urlObj.searchParams.get("page");

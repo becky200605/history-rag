@@ -77,8 +77,6 @@ async def upload_files(
     language_hint: str | None = Form(default=None),
     layout_hint: str | None = Form(default=None),
     document_type_hint: str | None = Form(default=None),
-    book_page_start_pdf_page: str | None = Form(default=None),
-    book_page_start_value: str | None = Form(default=None),
 ) -> UploadResponse:
     """Upload multiple files to a thread's uploads directory.
 
@@ -104,8 +102,6 @@ async def upload_files(
             "language_hint": language_hint,
             "layout_hint": layout_hint,
             "document_type_hint": document_type_hint,
-            "book_page_start_pdf_page": book_page_start_pdf_page,
-            "book_page_start_value": book_page_start_value,
         }.items()
         if value
     }

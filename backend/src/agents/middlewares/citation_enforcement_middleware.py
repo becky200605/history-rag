@@ -27,10 +27,22 @@ RETRY_APPENDIX = (
     "3. If you cannot support the answer with citations, refuse instead of answering.\n"
     "4. Do not mention this enforcement message in the final answer."
 )
-BLOCKED_RESPONSE = (
-    "当前回答已被系统拦截：检测到使用了知识库检索结果，但输出中缺少必需的 citation。\n\n"
-    "请重新提问，或要求系统基于当前资料重新作答。"
+RETRY_APPENDIX_FINAL = (
+    "\n\n[System enforcement - final retry]\n"
+    "Your previous retry still missed the required citations.\n"
+    "Regenerate the full answer from scratch one more time.\n"
+    "Additional requirements:\n"
+    "1. Reuse the exact `citation:` lines returned by `knowledge_search` whenever possible; do not rewrite citation links manually.\n"
+    "2. If you cite a source, the answer body must contain the `[citation:Title](URL)` link itself, not only a plain-text mention.\n"
+    "3. End with a `参考文献` section listing the same cited sources.\n"
+    "4. If you still cannot produce a fully cited answer, refuse explicitly instead of giving a partial answer.\n"
+    "5. Do not mention this enforcement message in the final answer."
 )
+FINAL_FALLBACK_RESPONSE = (
+    "无法根据当前资料生成带 citation 的回答，因此本轮不输出未经依据支持的内容。\n\n"
+    "请缩小问题范围，或稍后重试。"
+)
+RETRY_APPENDICES = (RETRY_APPENDIX, RETRY_APPENDIX_FINAL)
 
 
 def _stringify_content(content: object) -> str:
@@ -85,12 +97,12 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
             return True
         return False
 
-    def _build_retry_request(self, request: ModelRequest) -> ModelRequest:
+    def _build_retry_request(self, request: ModelRequest, appendix: str) -> ModelRequest:
         current_system = _stringify_content(request.system_message.content) if request.system_message else ""
-        retry_system = SystemMessage(content=f"{current_system}{RETRY_APPENDIX}" if current_system else RETRY_APPENDIX)
+        retry_system = SystemMessage(content=f"{current_system}{appendix}" if current_system else appendix)
         return request.override(system_message=retry_system)
 
-    def _block_response(self, response: ModelResponse) -> ModelResponse:
+    def _fallback_response(self, response: ModelResponse) -> ModelResponse:
         final_ai_index = None
         final_message = None
         for index in range(len(response.result) - 1, -1, -1):
@@ -103,9 +115,9 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         if final_ai_index is None or final_message is None:
             return response
 
-        blocked_message = final_message.model_copy(update={"content": BLOCKED_RESPONSE, "tool_calls": []})
+        fallback_message = final_message.model_copy(update={"content": FINAL_FALLBACK_RESPONSE, "tool_calls": []})
         updated_result = list(response.result)
-        updated_result[final_ai_index] = blocked_message
+        updated_result[final_ai_index] = fallback_message
         return ModelResponse(result=updated_result, structured_response=response.structured_response)
 
     def _enforce_with_retry(
@@ -117,11 +129,15 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         if not self._needs_enforcement(response, request.messages):
             return response
 
-        retry_response = handler(self._build_retry_request(request))
-        if not self._needs_enforcement(retry_response, request.messages):
-            return retry_response
+        retry_request = request
+        retry_response = response
+        for appendix in RETRY_APPENDICES:
+            retry_request = self._build_retry_request(retry_request, appendix)
+            retry_response = handler(retry_request)
+            if not self._needs_enforcement(retry_response, request.messages):
+                return retry_response
 
-        return self._block_response(retry_response)
+        return self._fallback_response(retry_response)
 
     async def _aenforce_with_retry(
         self,
@@ -132,11 +148,15 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         if not self._needs_enforcement(response, request.messages):
             return response
 
-        retry_response = await handler(self._build_retry_request(request))
-        if not self._needs_enforcement(retry_response, request.messages):
-            return retry_response
+        retry_request = request
+        retry_response = response
+        for appendix in RETRY_APPENDICES:
+            retry_request = self._build_retry_request(retry_request, appendix)
+            retry_response = await handler(retry_request)
+            if not self._needs_enforcement(retry_response, request.messages):
+                return retry_response
 
-        return self._block_response(retry_response)
+        return self._fallback_response(retry_response)
 
     @override
     def wrap_model_call(

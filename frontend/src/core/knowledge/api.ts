@@ -35,8 +35,6 @@ export interface KnowledgeUploadOptions {
   languageHint?: string;
   layoutHint?: string;
   documentTypeHint?: string;
-  bookPageStartPdfPage?: string;
-  bookPageStartValue?: string;
 }
 
 export interface KnowledgeUploadResponse {
@@ -125,12 +123,6 @@ export async function uploadKnowledgeFiles(
   }
   if (options?.documentTypeHint) {
     formData.append("document_type_hint", options.documentTypeHint);
-  }
-  if (options?.bookPageStartPdfPage) {
-    formData.append("book_page_start_pdf_page", options.bookPageStartPdfPage);
-  }
-  if (options?.bookPageStartValue) {
-    formData.append("book_page_start_value", options.bookPageStartValue);
   }
 
   const response = await fetch(`${getBackendBaseURL()}/api/knowledge/uploads`, {

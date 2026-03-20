@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import Any
 
 STRUCTURED_DOCUMENT_SUFFIX = ".structured.json"
-BOOK_PAGE_START_PDF_PAGE_HINT = "book_page_start_pdf_page"
-BOOK_PAGE_START_VALUE_HINT = "book_page_start_value"
 
 
 def derive_structured_filename(source_filename: str) -> str:
@@ -20,48 +18,13 @@ def _normalize_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _parse_positive_int(raw_value: str | None) -> int | None:
-    if raw_value is None:
-        return None
-    value = str(raw_value).strip()
-    if not value:
-        return None
-    try:
-        parsed = int(value)
-    except ValueError:
-        return None
-    return parsed if parsed > 0 else None
-
-
 def build_page_reference(pdf_page_no: int, hints: dict[str, str] | None = None) -> dict[str, Any]:
     """Return page numbering metadata for a physical PDF page."""
-    hints = hints or {}
-    start_pdf_page = _parse_positive_int(hints.get(BOOK_PAGE_START_PDF_PAGE_HINT))
-    start_book_page = _parse_positive_int(hints.get(BOOK_PAGE_START_VALUE_HINT))
-
-    book_page_no: int | None = None
-    page_no: int | None
-    page_number_source: str
-    if (
-        start_pdf_page is not None
-        and start_book_page is not None
-    ):
-        if pdf_page_no >= start_pdf_page:
-            book_page_no = start_book_page + (pdf_page_no - start_pdf_page)
-            page_no = book_page_no
-            page_number_source = "book"
-        else:
-            page_no = None
-            page_number_source = "unmapped_pdf"
-    else:
-        page_no = pdf_page_no
-        page_number_source = "pdf"
-
     return {
-        "page_no": page_no,
+        "page_no": pdf_page_no,
         "pdf_page_no": pdf_page_no,
-        "book_page_no": book_page_no,
-        "page_number_source": page_number_source,
+        "book_page_no": pdf_page_no,
+        "page_number_source": "book",
     }
 
 

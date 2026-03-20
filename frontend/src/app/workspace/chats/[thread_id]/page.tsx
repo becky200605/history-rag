@@ -321,7 +321,7 @@ export default function ChatPage() {
             "transition-all duration-300 ease-in-out",
             !artifactsOpen && "opacity-0",
           )}
-          defaultSize={artifactPanelOpen ? 64 : 0}
+          defaultSize={artifactPanelOpen ? 36 : 0}
           minSize={0}
           maxSize={artifactPanelOpen ? undefined : 0}
         >

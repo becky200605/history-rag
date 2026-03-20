@@ -13,14 +13,15 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { useI18n } from "@/core/i18n/hooks";
+import { shouldUseChunkedUpload } from "@/core/knowledge/chunked-upload";
 import {
   useKnowledgeStatus,
+  useKnowledgeFiles,
   useKnowledgeDocuments,
   useReindexKnowledgeBase,
   useSmartUploadKnowledgeDocument,
   useDeleteKnowledgeDocument,
 } from "@/core/knowledge/hooks";
-import { shouldUseChunkedUpload } from "@/core/knowledge/chunked-upload";
 
 import { SettingsSection } from "./settings-section";
 
@@ -35,6 +36,7 @@ function formatBytes(bytes: number): string {
 export function KnowledgeSettingsPage() {
   const { t } = useI18n();
   const { status, isLoading, error } = useKnowledgeStatus();
+  const { data: knowledgeFilesData } = useKnowledgeFiles();
   const { docs, isLoading: isDocsLoading, error: docsError } =
     useKnowledgeDocuments();
   const reindexMutation = useReindexKnowledgeBase();
@@ -68,6 +70,19 @@ export function KnowledgeSettingsPage() {
   const isLargeFile = useMemo(() => {
     return selectedFile ? shouldUseChunkedUpload(selectedFile) : false;
   }, [selectedFile]);
+
+  const hasActiveKnowledgeJobs = useMemo(() => {
+    const files = knowledgeFilesData?.files ?? [];
+    return files.some((file) =>
+      ["queued", "parsing", "indexing"].includes(file.parse_status ?? ""),
+    );
+  }, [knowledgeFilesData]);
+
+  const isKnowledgeMutating =
+    isUploading ||
+    deleteMutation.isPending ||
+    reindexMutation.isPending ||
+    hasActiveKnowledgeJobs;
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -160,11 +175,11 @@ export function KnowledgeSettingsPage() {
         description={t.settings.knowledge.actions.reindexDescription}
       >
         <Button
-          type="button"
-          variant="outline"
-          disabled={reindexMutation.isPending}
-          onClick={() => reindexMutation.mutate()}
-        >
+                  type="button"
+                  variant="outline"
+                  disabled={isKnowledgeMutating}
+                  onClick={() => reindexMutation.mutate()}
+                >
           <RefreshCwIcon className="mr-2 size-4" />
           {reindexMutation.isPending
             ? t.settings.knowledge.actions.reindexing
@@ -197,14 +212,14 @@ export function KnowledgeSettingsPage() {
                   accept=".md,.markdown,.pdf,.txt"
                   className="hidden"
                   onChange={handleFileChange}
-                  disabled={isUploading}
+                  disabled={isKnowledgeMutating}
                 />
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading}
+                  disabled={isKnowledgeMutating}
                 >
                   <UploadIcon className="mr-2 size-4" />
                   {t.settings.knowledge.upload.selectFile}
@@ -234,7 +249,7 @@ export function KnowledgeSettingsPage() {
                 <Switch
                   checked={autoReindex}
                   onCheckedChange={setAutoReindex}
-                  disabled={isUploading}
+                  disabled={isKnowledgeMutating}
                 />
                 <span className="text-xs md:text-sm">
                   {t.settings.knowledge.upload.autoReindex}
@@ -255,7 +270,7 @@ export function KnowledgeSettingsPage() {
                 <Button
                   type="button"
                   size="sm"
-                  disabled={!selectedFile || isUploading}
+                  disabled={!selectedFile || isKnowledgeMutating}
                   onClick={() => void handleUpload()}
                 >
                   {isUploading
@@ -291,6 +306,12 @@ export function KnowledgeSettingsPage() {
           {uploadSuccess && !uploadError && (
             <p className="text-muted-foreground text-xs md:text-sm">
               {t.settings.knowledge.upload.success}
+            </p>
+          )}
+
+          {hasActiveKnowledgeJobs && (
+            <p className="text-muted-foreground text-xs md:text-sm">
+              知识库正在解析或重建索引，暂时不能上传、删除或重新索引。
             </p>
           )}
         </div>
@@ -335,7 +356,7 @@ export function KnowledgeSettingsPage() {
                       size="icon"
                       variant="ghost"
                       className="text-destructive hover:text-destructive"
-                      disabled={deleteMutation.isPending}
+                      disabled={isKnowledgeMutating}
                       onClick={() =>
                         deleteMutation.mutate(doc.filename)
                       }
@@ -352,5 +373,3 @@ export function KnowledgeSettingsPage() {
     </div>
   );
 }
-
-

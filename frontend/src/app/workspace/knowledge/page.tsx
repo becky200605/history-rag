@@ -190,6 +190,46 @@ function documentTypeLabel(value?: string) {
   }
 }
 
+function parseMethodLabel(value?: string) {
+  switch (value) {
+    case "ocr_pdf_mineru_grpc":
+    case "ocr_pdf_local":
+    case "paddleocr_pdf":
+      return "OCR 解析";
+    case "static":
+      return "直接导入";
+    default:
+      return "自动解析";
+  }
+}
+
+function fileStatusHint(file: {
+  parse_status?: string;
+  parse_method?: string;
+  indexable?: boolean;
+}) {
+  switch (file.parse_status) {
+    case "queued":
+      return "等待开始处理";
+    case "parsing":
+      return "正在提取文本";
+    case "indexing":
+      return "正在写入知识库";
+    case "pending_parse":
+      return "当前文件需要进一步处理后才能入库";
+    case "index_failed":
+      return "入库失败，请稍后重试";
+    case "failed":
+      return file.parse_method?.includes("ocr")
+        ? "解析失败，请检查解析服务后重试"
+        : "处理失败，请稍后重试";
+    case "uploaded":
+      return file.indexable === false ? "已上传，暂不支持自动入库" : "已上传";
+    default:
+      return null;
+  }
+}
+
 export default function KnowledgeManagementPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
@@ -198,8 +238,6 @@ export default function KnowledgeManagementPage() {
   const [uploadLayoutHint, setUploadLayoutHint] = useState<LayoutHint>("unknown");
   const [uploadDocumentTypeHint, setUploadDocumentTypeHint] =
     useState<DocumentTypeHint>("unknown");
-  const [bookPageStartPdfPage, setBookPageStartPdfPage] = useState("");
-  const [bookPageStartValue, setBookPageStartValue] = useState("");
   const [statusFilter, setStatusFilter] = useState<FileStatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
@@ -272,8 +310,6 @@ export default function KnowledgeManagementPage() {
         file.hints?.document_type_hint,
         file.hints?.language_hint,
         file.hints?.layout_hint,
-        file.hints?.book_page_start_pdf_page,
-        file.hints?.book_page_start_value,
         file.preview_filename,
         file.structured_filename,
       ]
@@ -285,14 +321,8 @@ export default function KnowledgeManagementPage() {
     });
   }, [searchQuery, sortedFiles, statusFilter]);
 
-  const hasPendingPdf = pendingFiles.some((file) =>
-    file.name.toLowerCase().endsWith(".pdf"),
-  );
-
   const resetUploadDialog = () => {
     setPendingFiles([]);
-    setBookPageStartPdfPage("");
-    setBookPageStartValue("");
     setIsUploadDialogOpen(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -324,24 +354,6 @@ export default function KnowledgeManagementPage() {
       return;
     }
 
-    const hasPageMappingInput =
-      bookPageStartPdfPage.trim().length > 0 || bookPageStartValue.trim().length > 0;
-    if (
-      hasPageMappingInput &&
-      (!/^[1-9]\d*$/.test(bookPageStartPdfPage.trim()) ||
-        !/^[1-9]\d*$/.test(bookPageStartValue.trim()))
-    ) {
-      toast.error("原书页码映射请填写正整数，或保持两个字段都为空");
-      return;
-    }
-    if (
-      (bookPageStartPdfPage.trim() && !bookPageStartValue.trim()) ||
-      (!bookPageStartPdfPage.trim() && bookPageStartValue.trim())
-    ) {
-      toast.error("请同时填写 PDF 起始页和对应的原书页码");
-      return;
-    }
-
     try {
       const result = await uploadMutation.mutateAsync({
         files: pendingFiles,
@@ -350,8 +362,6 @@ export default function KnowledgeManagementPage() {
           layoutHint: uploadLayoutHint === "unknown" ? undefined : uploadLayoutHint,
           documentTypeHint:
             uploadDocumentTypeHint === "unknown" ? undefined : uploadDocumentTypeHint,
-          bookPageStartPdfPage: bookPageStartPdfPage.trim() || undefined,
-          bookPageStartValue: bookPageStartValue.trim() || undefined,
         },
       });
       toast.success(result.message);
@@ -405,7 +415,7 @@ export default function KnowledgeManagementPage() {
                 <DialogHeader>
                   <DialogTitle className="text-stone-950">上传知识库文件</DialogTitle>
                   <DialogDescription>
-                    上传前补充 OCR 线索和页码映射，后续 citation 才能更稳定地定位到原书页数。
+                    上传前补充 OCR 线索，系统会默认从 PDF 第 1 页开始编号。
                   </DialogDescription>
                 </DialogHeader>
 
@@ -512,51 +522,6 @@ export default function KnowledgeManagementPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-stone-200 bg-white p-4">
-                    <div className="text-sm font-medium text-stone-950">
-                      原书页码映射
-                    </div>
-                    <div className="mt-1 text-xs text-stone-500">
-                      告诉系统从 PDF 第几页开始对应原书页码。目录、封面、扉页通常不要算进去。
-                    </div>
-
-                    {hasPendingPdf ? (
-                      <div className="mt-3 grid gap-3 md:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <div className="text-xs font-medium text-stone-700">
-                            PDF 第几页开始对应原书页码
-                          </div>
-                          <Input
-                            inputMode="numeric"
-                            placeholder="例如 17"
-                            value={bookPageStartPdfPage}
-                            onChange={(event) =>
-                              setBookPageStartPdfPage(event.target.value.replace(/[^\d]/g, ""))
-                            }
-                            className="bg-white"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <div className="text-xs font-medium text-stone-700">
-                            该页对应原书第几页
-                          </div>
-                          <Input
-                            inputMode="numeric"
-                            placeholder="例如 1"
-                            value={bookPageStartValue}
-                            onChange={(event) =>
-                              setBookPageStartValue(event.target.value.replace(/[^\d]/g, ""))
-                            }
-                            className="bg-white"
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="mt-3 rounded-lg border border-dashed border-stone-200 bg-stone-50 p-3 text-xs text-stone-500">
-                        当前未选择 PDF 文件，这组字段会跳过。
-                      </div>
-                    )}
-                  </div>
                 </div>
 
                 <DialogFooter>
@@ -701,6 +666,8 @@ export default function KnowledgeManagementPage() {
                       const isDeleting =
                         deleteMutation.isPending &&
                         deletingFilename === file.filename;
+                      const methodLabel = parseMethodLabel(file.parse_method);
+                      const statusHint = fileStatusHint(file);
 
                       return (
                         <TableRow key={file.filename} className="h-14">
@@ -714,8 +681,8 @@ export default function KnowledgeManagementPage() {
                                   {file.filename}
                                 </div>
                                 <div className="truncate text-[11px] text-stone-500">
-                                  {file.parse_method ? `解析：${file.parse_method}` : "未标注解析方式"}
-                                  {file.error ? ` · ${file.error}` : ""}
+                                  {`解析：${methodLabel}`}
+                                  {statusHint ? ` · ${statusHint}` : ""}
                                 </div>
                               </div>
                             </div>
@@ -742,13 +709,6 @@ export default function KnowledgeManagementPage() {
                               <span className="mx-1 text-stone-300">/</span>
                               {layoutLabel(file.hints?.layout_hint)}
                             </div>
-                            {file.hints?.book_page_start_pdf_page &&
-                              file.hints?.book_page_start_value && (
-                                <div className="mt-0.5 text-[11px] text-stone-500">
-                                  PDF 第 {file.hints.book_page_start_pdf_page} 页 {"->"} 原书第{" "}
-                                  {file.hints.book_page_start_value} 页
-                                </div>
-                              )}
                           </TableCell>
                           <TableCell className="py-2.5 text-[12px] text-stone-700">
                             {formatBytes(file.size)}

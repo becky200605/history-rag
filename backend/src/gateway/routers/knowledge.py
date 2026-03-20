@@ -2,6 +2,7 @@ import logging
 import json
 import mimetypes
 from pathlib import Path
+import threading
 from typing import Any
 from urllib.parse import quote
 
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 INDEXABLE_EXTENSIONS = {".md", ".txt"}
+_knowledge_operation_lock = threading.Lock()
 
 
 def _encode_url_path(url: str | None) -> str | None:
@@ -45,6 +47,19 @@ def _append_pdf_page_fragment(url: str | None, pdf_page_no: int | None) -> str |
     if not url or not pdf_page_no or "#page=" in url:
         return url
     return f"{url}#page={pdf_page_no}"
+
+
+def _acquire_knowledge_operation_lock() -> None:
+    if not _knowledge_operation_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="Another knowledge-base operation is already in progress. Please wait for it to finish.",
+        )
+
+
+def _release_knowledge_operation_lock() -> None:
+    if _knowledge_operation_lock.locked():
+        _knowledge_operation_lock.release()
 
 
 class KnowledgeBaseStatus(BaseModel):
@@ -370,63 +385,42 @@ def _mark_global_records_indexed() -> None:
 
 def _process_global_knowledge_uploads(filenames: list[str]) -> None:
     """Parse uploaded global knowledge files and rebuild the index in the background."""
-    docs_dir = get_global_docs_dir()
-    ingestion_dir = get_global_ingestion_dir()
-    needs_reindex = False
-    force_reindex = False
-    parsed_filenames: list[str] = []
+    try:
+        docs_dir = get_global_docs_dir()
+        ingestion_dir = get_global_ingestion_dir()
+        needs_reindex = False
+        force_reindex = False
+        parsed_filenames: list[str] = []
 
-    for safe_filename in filenames:
-        record = _load_global_record(safe_filename)
-        if not record:
-            logger.warning("Global ingestion record missing for %s", safe_filename)
-            continue
+        for safe_filename in filenames:
+            record = _load_global_record(safe_filename)
+            if not record:
+                logger.warning("Global ingestion record missing for %s", safe_filename)
+                continue
 
-        file_path = docs_dir / safe_filename
-        if not file_path.exists():
-            record = _mark_global_record_failed(record, "source file missing")
-            _save_global_record(safe_filename, record)
-            continue
-
-        record["parse_status"] = "parsing"
-        record["error"] = None
-        force_reindex = force_reindex or bool(record.get("replace_existing_index"))
-        _save_global_record(safe_filename, record)
-
-        try:
-            file_ext = file_path.suffix.lower()
-            if file_ext in PDF_EXTENSIONS:
-                hints = record.get("hints") or {}
-                record["parse_method"] = "ocr_pdf_mineru_grpc"
+            file_path = docs_dir / safe_filename
+            if not file_path.exists():
+                record = _mark_global_record_failed(record, "source file missing")
                 _save_global_record(safe_filename, record)
-                structured_payload = build_structured_document_from_mineru_grpc(
-                    file_path,
-                    title=record["display_title"],
-                    parser_name=record["parse_method"],
-                    hints=hints,
-                    language_hint=hints.get("language_hint"),
-                )
-                structured_path = save_structured_document(
-                    ingestion_dir,
-                    safe_filename,
-                    structured_payload,
-                )
-                record = _mark_global_record_parsed(
-                    record,
-                    structured_filename=structured_path.name,
-                    structured_path=str(structured_path),
-                )
-                needs_reindex = True
-                parsed_filenames.append(safe_filename)
-            elif file_ext in OFFICE_EXTENSIONS:
-                extracted_text = extract_office_text_with_markitdown(file_path)
-                if extracted_text and extracted_text.strip():
-                    structured_payload = build_structured_document(
-                        source_filename=safe_filename,
+                continue
+
+            record["parse_status"] = "parsing"
+            record["error"] = None
+            force_reindex = force_reindex or bool(record.get("replace_existing_index"))
+            _save_global_record(safe_filename, record)
+
+            try:
+                file_ext = file_path.suffix.lower()
+                if file_ext in PDF_EXTENSIONS:
+                    hints = record.get("hints") or {}
+                    record["parse_method"] = "ocr_pdf_mineru_grpc"
+                    _save_global_record(safe_filename, record)
+                    structured_payload = build_structured_document_from_mineru_grpc(
+                        file_path,
                         title=record["display_title"],
-                        text=extracted_text,
                         parser_name=record["parse_method"],
-                        hints=record.get("hints") or {},
+                        hints=hints,
+                        language_hint=hints.get("language_hint"),
                     )
                     structured_path = save_structured_document(
                         ingestion_dir,
@@ -440,61 +434,85 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
                     )
                     needs_reindex = True
                     parsed_filenames.append(safe_filename)
+                elif file_ext in OFFICE_EXTENSIONS:
+                    extracted_text = extract_office_text_with_markitdown(file_path)
+                    if extracted_text and extracted_text.strip():
+                        structured_payload = build_structured_document(
+                            source_filename=safe_filename,
+                            title=record["display_title"],
+                            text=extracted_text,
+                            parser_name=record["parse_method"],
+                            hints=record.get("hints") or {},
+                        )
+                        structured_path = save_structured_document(
+                            ingestion_dir,
+                            safe_filename,
+                            structured_payload,
+                        )
+                        record = _mark_global_record_parsed(
+                            record,
+                            structured_filename=structured_path.name,
+                            structured_path=str(structured_path),
+                        )
+                        needs_reindex = True
+                        parsed_filenames.append(safe_filename)
+                    else:
+                        record = _mark_global_record_failed(record, "Office parser returned no text")
+                elif file_ext in INDEXABLE_EXTENSIONS:
+                    structured_payload = build_structured_document(
+                        source_filename=safe_filename,
+                        title=record["display_title"],
+                        text=file_path.read_text(encoding="utf-8"),
+                        parser_name=record["parse_method"],
+                        hints=record.get("hints") or {},
+                    )
+                    structured_path = save_structured_document(
+                        ingestion_dir,
+                        safe_filename,
+                        structured_payload,
+                    )
+                    record = _mark_global_record_parsed(
+                        record,
+                        structured_filename=structured_path.name,
+                        structured_path=str(structured_path),
+                        preview_filename=safe_filename,
+                    )
+                    needs_reindex = True
+                    parsed_filenames.append(safe_filename)
                 else:
-                    record = _mark_global_record_failed(record, "Office parser returned no text")
-            elif file_ext in INDEXABLE_EXTENSIONS:
-                structured_payload = build_structured_document(
-                    source_filename=safe_filename,
-                    title=record["display_title"],
-                    text=file_path.read_text(encoding="utf-8"),
-                    parser_name=record["parse_method"],
-                    hints=record.get("hints") or {},
-                )
-                structured_path = save_structured_document(
-                    ingestion_dir,
-                    safe_filename,
-                    structured_payload,
-                )
-                record = _mark_global_record_parsed(
-                    record,
-                    structured_filename=structured_path.name,
-                    structured_path=str(structured_path),
-                    preview_filename=safe_filename,
-                )
-                needs_reindex = True
-                parsed_filenames.append(safe_filename)
-            else:
-                record["parse_status"] = "uploaded"
-        except Exception as exc:
-            logger.exception("Failed to parse global upload %s: %s", safe_filename, exc)
-            record = _mark_global_record_failed(record, f"parse failed: {exc}")
+                    record["parse_status"] = "uploaded"
+            except Exception as exc:
+                logger.exception("Failed to parse global upload %s: %s", safe_filename, exc)
+                record = _mark_global_record_failed(record, f"parse failed: {exc}")
 
-        _save_global_record(safe_filename, record)
+            _save_global_record(safe_filename, record)
 
-    if not needs_reindex and not force_reindex:
-        return
+        if not needs_reindex and not force_reindex:
+            return
 
-    for safe_filename in parsed_filenames:
-        record = _load_global_record(safe_filename)
-        if not record or not record.get("index_target_path"):
-            continue
-        record["parse_status"] = "indexing"
-        record["error"] = None
-        _save_global_record(safe_filename, record)
-
-    try:
-        rebuild_global_knowledge_index()
-        _mark_global_records_indexed()
-        logger.info("Background global knowledge reindex completed for %s", parsed_filenames)
-    except Exception as exc:
-        logger.exception("Background global knowledge reindex failed: %s", exc)
         for safe_filename in parsed_filenames:
             record = _load_global_record(safe_filename)
-            if not record:
+            if not record or not record.get("index_target_path"):
                 continue
-            record["parse_status"] = "index_failed"
-            record["error"] = f"reindex failed: {exc}"
+            record["parse_status"] = "indexing"
+            record["error"] = None
             _save_global_record(safe_filename, record)
+
+        try:
+            rebuild_global_knowledge_index()
+            _mark_global_records_indexed()
+            logger.info("Background global knowledge reindex completed for %s", parsed_filenames)
+        except Exception as exc:
+            logger.exception("Background global knowledge reindex failed: %s", exc)
+            for safe_filename in parsed_filenames:
+                record = _load_global_record(safe_filename)
+                if not record:
+                    continue
+                record["parse_status"] = "index_failed"
+                record["error"] = f"reindex failed: {exc}"
+                _save_global_record(safe_filename, record)
+    finally:
+        _release_knowledge_operation_lock()
 
 
 def _reindex_global_knowledge_in_background() -> None:
@@ -505,6 +523,8 @@ def _reindex_global_knowledge_in_background() -> None:
         logger.info("Background global knowledge reindex completed")
     except Exception as exc:
         logger.exception("Background global knowledge reindex failed: %s", exc)
+    finally:
+        _release_knowledge_operation_lock()
 
 
 @router.get("/status", response_model=KnowledgeBaseStatus, summary="Get Knowledge Base Status")
@@ -543,6 +563,7 @@ def reindex_knowledge_base(thread_id: str | None = None) -> ReindexResponse:
     if not config.enabled:
         raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
 
+    _acquire_knowledge_operation_lock()
     try:
         global_chunks = rebuild_global_knowledge_index()
         if thread_id:
@@ -554,6 +575,8 @@ def reindex_knowledge_base(thread_id: str | None = None) -> ReindexResponse:
     except Exception as e:
         logger.exception("Failed to reindex knowledge base")
         raise HTTPException(status_code=500, detail=f"Failed to reindex: {str(e)}")
+    finally:
+        _release_knowledge_operation_lock()
 
 
 @router.post("/uploads", response_model=KnowledgeUploadResponse, summary="Upload Global Knowledge Documents")
@@ -563,8 +586,6 @@ async def upload_global_knowledge_files(
     language_hint: str | None = Form(default=None),
     layout_hint: str | None = Form(default=None),
     document_type_hint: str | None = Form(default=None),
-    book_page_start_pdf_page: str | None = Form(default=None),
-    book_page_start_value: str | None = Form(default=None),
 ) -> KnowledgeUploadResponse:
     """Upload files into the global knowledge base and reindex them."""
     config = get_knowledge_base_config()
@@ -573,76 +594,82 @@ async def upload_global_knowledge_files(
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
-    docs_dir = get_global_docs_dir()
-    uploaded_files: list[dict[str, Any]] = []
-    queued_filenames: list[str] = []
-    hints = {
-        key: value
-        for key, value in {
-            "language_hint": language_hint,
-            "layout_hint": layout_hint,
-            "document_type_hint": document_type_hint,
-            "book_page_start_pdf_page": book_page_start_pdf_page,
-            "book_page_start_value": book_page_start_value,
-        }.items()
-        if value
-    }
+    _acquire_knowledge_operation_lock()
+    lock_handed_to_background = False
+    try:
+        docs_dir = get_global_docs_dir()
+        uploaded_files: list[dict[str, Any]] = []
+        queued_filenames: list[str] = []
+        hints = {
+            key: value
+            for key, value in {
+                "language_hint": language_hint,
+                "layout_hint": layout_hint,
+                "document_type_hint": document_type_hint,
+            }.items()
+            if value
+        }
 
-    for file in files:
-        if not file.filename:
-            continue
-        safe_filename = Path(file.filename).name
-        if not safe_filename:
-            continue
+        for file in files:
+            if not file.filename:
+                continue
+            safe_filename = Path(file.filename).name
+            if not safe_filename:
+                continue
 
-        try:
-            file_path = docs_dir / safe_filename
-            file_size = await save_upload_file(file, file_path)
-            existing_record = _load_global_record(safe_filename)
-            if existing_record:
-                _cleanup_global_record_artifacts(existing_record, remove_source_file=False)
-                _remove_global_record(safe_filename)
+            try:
+                file_path = docs_dir / safe_filename
+                file_size = await save_upload_file(file, file_path)
+                existing_record = _load_global_record(safe_filename)
+                if existing_record:
+                    _cleanup_global_record_artifacts(existing_record, remove_source_file=False)
+                    _remove_global_record(safe_filename)
 
-            record = _build_global_ingestion_record(
-                filename=safe_filename,
-                size=file_size,
-                content_type=file.content_type,
-                hints=hints,
-            )
-            if existing_record and existing_record.get("index_target_path"):
-                record["replace_existing_index"] = True
+                record = _build_global_ingestion_record(
+                    filename=safe_filename,
+                    size=file_size,
+                    content_type=file.content_type,
+                    hints=hints,
+                )
+                if existing_record and existing_record.get("index_target_path"):
+                    record["replace_existing_index"] = True
 
-            file_info: dict[str, Any] = {
-                "filename": safe_filename,
-                "size": file_size,
-                "artifact_url": _build_global_urls(safe_filename)["source_url"],
-                "parse_method": record["parse_method"],
-                "parse_status": record["parse_status"],
-                "indexable": record["indexable"],
-                "preview_filename": record.get("preview_filename"),
-                "preview_artifact_url": record.get("preview_artifact_url"),
-                "structured_filename": record.get("structured_filename"),
-                "structured_artifact_url": record.get("structured_artifact_url"),
-                "index_target_filename": record.get("index_target_filename"),
-                "index_target_artifact_url": record.get("index_target_artifact_url"),
-                "hints": hints,
-            }
+                file_info: dict[str, Any] = {
+                    "filename": safe_filename,
+                    "size": file_size,
+                    "artifact_url": _build_global_urls(safe_filename)["source_url"],
+                    "parse_method": record["parse_method"],
+                    "parse_status": record["parse_status"],
+                    "indexable": record["indexable"],
+                    "preview_filename": record.get("preview_filename"),
+                    "preview_artifact_url": record.get("preview_artifact_url"),
+                    "structured_filename": record.get("structured_filename"),
+                    "structured_artifact_url": record.get("structured_artifact_url"),
+                    "index_target_filename": record.get("index_target_filename"),
+                    "index_target_artifact_url": record.get("index_target_artifact_url"),
+                    "hints": hints,
+                }
 
-            _save_global_record(safe_filename, record)
-            uploaded_files.append(file_info)
-            if record.get("indexable"):
-                queued_filenames.append(safe_filename)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to upload {safe_filename}: {exc}")
+                _save_global_record(safe_filename, record)
+                uploaded_files.append(file_info)
+                if record.get("indexable"):
+                    queued_filenames.append(safe_filename)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Failed to upload {safe_filename}: {exc}")
 
-    if queued_filenames:
-        background_tasks.add_task(_process_global_knowledge_uploads, queued_filenames)
+        if queued_filenames:
+            background_tasks.add_task(_process_global_knowledge_uploads, queued_filenames)
+            lock_handed_to_background = True
 
-    return KnowledgeUploadResponse(
-        success=True,
-        files=uploaded_files,
-        message=f"Successfully uploaded {len(uploaded_files)} file(s); parsing and indexing are running in the background",
-    )
+        return KnowledgeUploadResponse(
+            success=True,
+            files=uploaded_files,
+            message=f"Successfully uploaded {len(uploaded_files)} file(s); parsing and indexing are running in the background",
+        )
+    finally:
+        if not lock_handed_to_background:
+            _release_knowledge_operation_lock()
+    
 
 
 @router.get("/uploads/list", response_model=dict, summary="List Global Knowledge Uploads")
@@ -719,7 +746,7 @@ def list_global_knowledge_files() -> dict:
 
 
 @router.delete("/uploads/{filename}", response_model=dict, summary="Delete Global Knowledge Upload")
-async def delete_global_knowledge_file(filename: str, background_tasks: BackgroundTasks) -> dict:
+async def delete_global_knowledge_file(filename: str) -> dict:
     """Delete a file from the global knowledge directory and rebuild the global index."""
     config = get_knowledge_base_config()
     if not config.enabled:
@@ -727,6 +754,7 @@ async def delete_global_knowledge_file(filename: str, background_tasks: Backgrou
     if "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
+    _acquire_knowledge_operation_lock()
     docs_dir = get_global_docs_dir()
     file_path = docs_dir / filename
     record = _find_global_record(filename)
@@ -742,13 +770,16 @@ async def delete_global_knowledge_file(filename: str, background_tasks: Backgrou
         else:
             raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
-        background_tasks.add_task(_reindex_global_knowledge_in_background)
+        rebuild_global_knowledge_index()
+        _mark_global_records_indexed()
         return {
             "success": True,
-            "message": f"Deleted {filename} from global knowledge base; reindex is running in the background",
+            "message": f"Deleted {filename} from global knowledge base and rebuilt the index",
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to delete {filename}: {exc}")
+    finally:
+        _release_knowledge_operation_lock()
 
 
 @router.get("/search", response_model=SearchResponse, summary="Search Knowledge Base")
@@ -896,10 +927,9 @@ async def upload_knowledge_document(
 )
 async def delete_knowledge_document(
     filename: str,
-    background_tasks: BackgroundTasks,
 ) -> dict:
     """Compatibility wrapper for deleting a knowledge document."""
-    return await delete_global_knowledge_file(filename, background_tasks)
+    return await delete_global_knowledge_file(filename)
 
 
 @router.get("/docs/{filename}", summary="Get Knowledge Document")

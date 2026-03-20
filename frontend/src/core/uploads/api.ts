@@ -30,8 +30,6 @@ export interface UploadOptions {
   languageHint?: string;
   layoutHint?: string;
   documentTypeHint?: string;
-  bookPageStartPdfPage?: string;
-  bookPageStartValue?: string;
 }
 
 export interface UploadResponse {
@@ -66,12 +64,6 @@ export async function uploadFiles(
   }
   if (options?.documentTypeHint) {
     formData.append("document_type_hint", options.documentTypeHint);
-  }
-  if (options?.bookPageStartPdfPage) {
-    formData.append("book_page_start_pdf_page", options.bookPageStartPdfPage);
-  }
-  if (options?.bookPageStartValue) {
-    formData.append("book_page_start_value", options.bookPageStartValue);
   }
 
   const response = await fetch(

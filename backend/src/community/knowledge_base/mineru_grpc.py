@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,18 @@ from src.community.knowledge_base.structured_document import (
 )
 from src.config.knowledge_base_config import MineruConfig, get_knowledge_base_config
 
-MAX_GRPC_MESSAGE_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_GRPC_MESSAGE_BYTES = 256 * 1024 * 1024
+
+
+def _get_max_grpc_message_bytes() -> int:
+    raw_value = (os.getenv("MINERU_GRPC_MAX_MESSAGE_BYTES") or "").strip()
+    if not raw_value:
+        return DEFAULT_MAX_GRPC_MESSAGE_BYTES
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return DEFAULT_MAX_GRPC_MESSAGE_BYTES
+    return parsed if parsed > 0 else DEFAULT_MAX_GRPC_MESSAGE_BYTES
 
 
 def _get_mineru_config() -> MineruConfig:
@@ -40,9 +52,10 @@ def _build_metadata(config: MineruConfig) -> list[tuple[str, str]]:
 
 
 def _build_channel(config: MineruConfig) -> grpc.Channel:
+    max_message_bytes = _get_max_grpc_message_bytes()
     options = [
-        ("grpc.max_send_message_length", MAX_GRPC_MESSAGE_BYTES),
-        ("grpc.max_receive_message_length", MAX_GRPC_MESSAGE_BYTES),
+        ("grpc.max_send_message_length", max_message_bytes),
+        ("grpc.max_receive_message_length", max_message_bytes),
     ]
     if config.use_tls:
         credentials = grpc.ssl_channel_credentials()
@@ -58,56 +71,30 @@ def _bbox_to_payload(bbox: mineru_pb2.BBox | None) -> dict[str, float] | None:
     return build_bbox(x=bbox.x, y=bbox.y, width=bbox.width, height=bbox.height)
 
 
-def _build_paragraphs_from_page_text(
+def _build_single_paragraph_from_page_text(
     *,
     page_text: str,
     pdf_page_no: int,
     paragraph_no_in_doc_start: int,
     global_line_start: int,
 ) -> tuple[list[dict[str, Any]], int, int]:
-    paragraphs: list[dict[str, Any]] = []
-    paragraph_lines: list[str] = []
-    paragraph_line_start: int | None = None
-    paragraph_no_on_page = 1
-    paragraph_no_in_doc = paragraph_no_in_doc_start
-    global_line = global_line_start
+    text = page_text.strip()
+    if not text:
+        return [], paragraph_no_in_doc_start, global_line_start
 
-    def flush_paragraph(current_line_no: int) -> None:
-        nonlocal paragraph_no_on_page, paragraph_no_in_doc, paragraph_lines, paragraph_line_start
-        if not paragraph_lines or paragraph_line_start is None:
-            paragraph_lines = []
-            paragraph_line_start = None
-            return
-
-        paragraph_text = "\n".join(paragraph_lines).strip()
-        if paragraph_text:
-            paragraphs.append(
-                {
-                    "paragraph_id": f"page-{pdf_page_no}-p{paragraph_no_on_page}",
-                    "paragraph_no": paragraph_no_on_page,
-                    "paragraph_no_in_doc": paragraph_no_in_doc,
-                    "text": paragraph_text,
-                    "line_start": paragraph_line_start,
-                    "line_end": current_line_no,
-                }
-            )
-            paragraph_no_on_page += 1
-            paragraph_no_in_doc += 1
-
-        paragraph_lines = []
-        paragraph_line_start = None
-
-    for line in page_text.splitlines():
-        if line.strip():
-            if paragraph_line_start is None:
-                paragraph_line_start = global_line
-            paragraph_lines.append(line)
-        else:
-            flush_paragraph(global_line - 1)
-        global_line += 1
-
-    flush_paragraph(global_line - 1)
-    return paragraphs, paragraph_no_in_doc, global_line
+    line_count = max(1, text.count("\n") + 1)
+    line_end = global_line_start + line_count - 1
+    paragraphs = [
+        {
+            "paragraph_id": f"page-{pdf_page_no}-p1",
+            "paragraph_no": 1,
+            "paragraph_no_in_doc": paragraph_no_in_doc_start,
+            "text": text,
+            "line_start": global_line_start,
+            "line_end": line_end,
+        }
+    ]
+    return paragraphs, paragraph_no_in_doc_start + 1, line_end + 2
 
 
 def build_structured_document_from_mineru_response(
@@ -174,7 +161,7 @@ def build_structured_document_from_mineru_response(
 
         page_text = page.text.strip() or "\n\n".join(page_text_parts).strip()
         if not paragraphs and page_text:
-            paragraphs, paragraph_no_in_doc, global_line = _build_paragraphs_from_page_text(
+            paragraphs, paragraph_no_in_doc, global_line = _build_single_paragraph_from_page_text(
                 page_text=page_text,
                 pdf_page_no=pdf_page_no,
                 paragraph_no_in_doc_start=paragraph_no_in_doc,
@@ -229,8 +216,6 @@ def build_structured_document_from_mineru_grpc(
         language_hint=language_hint or "",
         layout_hint=hints.get("layout_hint", ""),
         document_type_hint=hints.get("document_type_hint", ""),
-        book_page_start_pdf_page=hints.get("book_page_start_pdf_page", ""),
-        book_page_start_value=hints.get("book_page_start_value", ""),
         model_version=config.model_version,
     )
 

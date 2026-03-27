@@ -2,6 +2,7 @@
 
 import type { Message } from "@langchain/langgraph-sdk";
 import type { UseStream } from "@langchain/langgraph-sdk/react";
+import { useQuery } from "@tanstack/react-query";
 import { FilesIcon, XIcon } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -9,15 +10,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
 import { useSidebar } from "@/components/ui/sidebar";
 import {
   ArtifactFileDetail,
   ArtifactFileList,
+  KNOWLEDGE_ARTIFACT_PANEL_DEFAULT_WIDTH,
+  KNOWLEDGE_ARTIFACT_PANEL_EXPANDED_WIDTH,
   useArtifacts,
 } from "@/components/workspace/artifacts";
 import { InputBox } from "@/components/workspace/input-box";
@@ -27,7 +25,9 @@ import { ThreadTitle } from "@/components/workspace/thread-title";
 import { TodoList } from "@/components/workspace/todo-list";
 import { Tooltip } from "@/components/workspace/tooltip";
 import { Welcome } from "@/components/workspace/welcome";
+import { getAPIClient } from "@/core/api";
 import { useI18n } from "@/core/i18n/hooks";
+import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useLocalSettings } from "@/core/settings";
 import { type AgentThread, type AgentThreadState } from "@/core/threads";
@@ -40,11 +40,178 @@ import {
 import { uuid } from "@/core/utils/uuid";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
+import { authClient } from "@/server/better-auth/client";
+
+const THREAD_ROUTE_HANDOFF_KEY = "workspace:thread-route-handoff";
+const THREAD_ROUTE_HANDOFF_TTL_MS = 15_000;
+
+function readThreadRouteHandoff() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(THREAD_ROUTE_HANDOFF_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as {
+      createdAt?: number;
+      threadId?: string;
+    };
+    if (
+      typeof parsed.threadId !== "string" ||
+      typeof parsed.createdAt !== "number"
+    ) {
+      window.sessionStorage.removeItem(THREAD_ROUTE_HANDOFF_KEY);
+      return null;
+    }
+
+    if (Date.now() - parsed.createdAt > THREAD_ROUTE_HANDOFF_TTL_MS) {
+      window.sessionStorage.removeItem(THREAD_ROUTE_HANDOFF_KEY);
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    window.sessionStorage.removeItem(THREAD_ROUTE_HANDOFF_KEY);
+    return null;
+  }
+}
+
+function rememberThreadRouteHandoff(threadId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.setItem(
+    THREAD_ROUTE_HANDOFF_KEY,
+    JSON.stringify({
+      threadId,
+      createdAt: Date.now(),
+    }),
+  );
+}
+
+async function waitForThreadStreamRegistration(threadId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const storageKey = `lg:stream:${threadId}`;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (window.sessionStorage.getItem(storageKey)) {
+      return;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+  }
+}
+
+function clearThreadRouteHandoff(threadId?: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const handoff = readThreadRouteHandoff();
+  if (!handoff) {
+    return;
+  }
+
+  if (!threadId || handoff.threadId === threadId) {
+    window.sessionStorage.removeItem(THREAD_ROUTE_HANDOFF_KEY);
+  }
+}
 
 export default function ChatPage() {
+  const router = useRouter();
+  const { thread_id: threadIdFromPath } = useParams<{ thread_id: string }>();
+  const isNewThread = threadIdFromPath === "new";
+  const { data: session, isPending: isSessionPending } = authClient.useSession();
+  const shouldKeepContentDuringAccessCheck = useMemo(() => {
+    if (isNewThread) {
+      return false;
+    }
+
+    return readThreadRouteHandoff()?.threadId === threadIdFromPath;
+  }, [isNewThread, threadIdFromPath]);
+
+  const accessQuery = useQuery({
+    queryKey: ["thread", "access", threadIdFromPath, session?.user.id],
+    enabled:
+      env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
+      (Boolean(session?.user.id) && !isSessionPending && !isNewThread),
+    queryFn: async () => {
+      const thread = await getAPIClient().threads.get<AgentThreadState>(
+        threadIdFromPath,
+      );
+      const ownerId =
+        typeof thread.metadata?.user_id === "string"
+          ? thread.metadata.user_id
+          : undefined;
+
+      if (!ownerId && session?.user.id) {
+        await getAPIClient().threads.update(threadIdFromPath, {
+          metadata: {
+            ...thread.metadata,
+            user_id: session.user.id,
+          },
+        });
+        return true;
+      }
+
+      return ownerId === session?.user.id;
+    },
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" || isNewThread) {
+      return;
+    }
+
+    if (accessQuery.data === false || accessQuery.isError) {
+      void router.replace("/workspace/chats");
+    }
+  }, [accessQuery.data, accessQuery.isError, isNewThread, router]);
+
+  useEffect(() => {
+    if (!shouldKeepContentDuringAccessCheck) {
+      return;
+    }
+
+    if (accessQuery.data !== undefined || accessQuery.isError) {
+      clearThreadRouteHandoff(threadIdFromPath);
+    }
+  }, [
+    accessQuery.data,
+    accessQuery.isError,
+    shouldKeepContentDuringAccessCheck,
+    threadIdFromPath,
+  ]);
+
+  if (
+    env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
+    !isNewThread &&
+    (isSessionPending ||
+      (!shouldKeepContentDuringAccessCheck && accessQuery.isPending) ||
+      accessQuery.data === false)
+  ) {
+    return null;
+  }
+
+  return <ChatPageContent initialThreadIdFromPath={threadIdFromPath} />;
+}
+
+function ChatPageContent({
+  initialThreadIdFromPath,
+}: {
+  initialThreadIdFromPath: string;
+}) {
   const { t } = useI18n();
   const router = useRouter();
   const [settings, setSettings] = useLocalSettings();
+  const { models } = useModels();
   const { setOpen: setSidebarOpen } = useSidebar();
   const {
     artifacts,
@@ -54,15 +221,17 @@ export default function ChatPage() {
     select: selectArtifact,
     selectedArtifact,
   } = useArtifacts();
-  const { thread_id: threadIdFromPath } = useParams<{ thread_id: string }>();
   const searchParams = useSearchParams();
   const promptInputController = usePromptInputController();
   const inputInitialValue = useMemo(() => {
-    if (threadIdFromPath !== "new" || searchParams.get("mode") !== "skill") {
+    if (
+      initialThreadIdFromPath !== "new" ||
+      searchParams.get("mode") !== "skill"
+    ) {
       return undefined;
     }
     return t.inputBox.createSkillPrompt;
-  }, [threadIdFromPath, searchParams, t.inputBox.createSkillPrompt]);
+  }, [initialThreadIdFromPath, searchParams, t.inputBox.createSkillPrompt]);
   const lastInitialValueRef = useRef<string | undefined>(undefined);
   const setInputRef = useRef(promptInputController.textInput.setInput);
   setInputRef.current = promptInputController.textInput.setInput;
@@ -81,17 +250,17 @@ export default function ChatPage() {
     }
   }, [inputInitialValue]);
   const isNewThread = useMemo(
-    () => threadIdFromPath === "new",
-    [threadIdFromPath],
+    () => initialThreadIdFromPath === "new",
+    [initialThreadIdFromPath],
   );
   const [threadId, setThreadId] = useState<string | null>(null);
   useEffect(() => {
-    if (threadIdFromPath !== "new") {
-      setThreadId(threadIdFromPath);
+    if (initialThreadIdFromPath !== "new") {
+      setThreadId(initialThreadIdFromPath);
     } else {
       setThreadId(uuid());
     }
-  }, [threadIdFromPath]);
+  }, [initialThreadIdFromPath]);
 
   const { showNotification } = useNotification();
   const [finalState, setFinalState] = useState<AgentThreadState | null>(null);
@@ -154,6 +323,7 @@ export default function ChatPage() {
   ]);
 
   const [autoSelectFirstArtifact, setAutoSelectFirstArtifact] = useState(true);
+  const [artifactCompareOpen, setArtifactCompareOpen] = useState(false);
   useEffect(() => {
     setArtifacts(thread.values.artifacts);
     if (
@@ -179,20 +349,62 @@ export default function ChatPage() {
     return artifactsOpen;
   }, [artifactsOpen, artifacts]);
 
+  const handleKnowledgeCompareToggle = useCallback((open: boolean) => {
+    setArtifactCompareOpen(open);
+  }, []);
+
+  useEffect(() => {
+    if (!artifactPanelOpen) {
+      setArtifactCompareOpen(false);
+    }
+  }, [artifactPanelOpen]);
+
   const [todoListCollapsed, setTodoListCollapsed] = useState(true);
+
+  const resolvedModelName = useMemo(() => {
+    if (models.length === 0) {
+      return settings.context.model_name;
+    }
+
+    return (
+      models.find((model) => model.name === settings.context.model_name)?.name ??
+      models[0]?.name
+    );
+  }, [models, settings.context.model_name]);
+
+  const resolvedContext = useMemo(
+    () => ({
+      ...settings.context,
+      model_name: resolvedModelName,
+    }),
+    [resolvedModelName, settings.context],
+  );
+
+  useEffect(() => {
+    if (
+      resolvedModelName &&
+      settings.context.model_name !== resolvedModelName
+    ) {
+      setSettings("context", {
+        model_name: resolvedModelName,
+      });
+    }
+  }, [resolvedModelName, setSettings, settings.context.model_name]);
 
   const handleSubmit = useSubmitThread({
     isNewThread,
     threadId,
     thread,
     threadContext: {
-      ...settings.context,
-      thinking_enabled: settings.context.mode !== "flash",
+      ...resolvedContext,
+      thinking_enabled: resolvedContext.mode !== "flash",
       is_plan_mode:
-        settings.context.mode === "pro" || settings.context.mode === "ultra",
-      subagent_enabled: settings.context.mode === "ultra",
+        resolvedContext.mode === "pro" || resolvedContext.mode === "ultra",
+      subagent_enabled: resolvedContext.mode === "ultra",
     },
-    afterSubmit() {
+    async afterSubmit() {
+      rememberThreadRouteHandoff(threadId!);
+      await waitForThreadStreamRegistration(threadId!);
       router.push(pathOfThread(threadId!));
     },
   });
@@ -206,12 +418,8 @@ export default function ChatPage() {
 
   return (
     <ThreadContext.Provider value={{ threadId, thread }}>
-      <ResizablePanelGroup orientation="horizontal">
-        <ResizablePanel
-          className="relative"
-          defaultSize={artifactPanelOpen ? 46 : 100}
-          minSize={artifactPanelOpen ? 30 : 100}
-        >
+      <div className="flex size-full min-h-0">
+        <div className="relative min-w-0 flex-1">
           <div className="relative flex size-full min-h-0 justify-between">
             <header
               className={cn(
@@ -289,9 +497,9 @@ export default function ChatPage() {
                     isNewThread={isNewThread}
                     autoFocus={isNewThread}
                     status={thread.isLoading ? "streaming" : "ready"}
-                    context={settings.context}
+                    context={resolvedContext}
                     extraHeader={
-                      isNewThread && <Welcome mode={settings.context.mode} />
+                      isNewThread && <Welcome mode={resolvedContext.mode} />
                     }
                     disabled={env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"}
                     onContextChange={(context) =>
@@ -309,33 +517,22 @@ export default function ChatPage() {
               </div>
             </main>
           </div>
-        </ResizablePanel>
-        <ResizableHandle
-          className={cn(
-            "opacity-33 hover:opacity-100",
-            !artifactPanelOpen && "pointer-events-none opacity-0",
-          )}
-        />
-        <ResizablePanel
-          className={cn(
-            "transition-all duration-300 ease-in-out",
-            !artifactsOpen && "opacity-0",
-          )}
-          defaultSize={artifactPanelOpen ? 36 : 0}
-          minSize={0}
-          maxSize={artifactPanelOpen ? undefined : 0}
-        >
+        </div>
+        {artifactPanelOpen && (
           <div
-            className={cn(
-              "h-full p-4 transition-transform duration-300 ease-in-out",
-              artifactPanelOpen ? "translate-x-0" : "translate-x-full",
-            )}
+            className="h-full shrink-0 border-l bg-background p-4"
+            style={{
+              width: artifactCompareOpen
+                ? `min(${KNOWLEDGE_ARTIFACT_PANEL_EXPANDED_WIDTH}px, calc(100vw - 24px))`
+                : `${KNOWLEDGE_ARTIFACT_PANEL_DEFAULT_WIDTH}px`,
+            }}
           >
             {selectedArtifact ? (
               <ArtifactFileDetail
                 className="size-full"
                 filepath={selectedArtifact}
                 threadId={threadId}
+                onKnowledgeCompareToggle={handleKnowledgeCompareToggle}
               />
             ) : (
               <div className="relative flex size-full justify-center">
@@ -373,8 +570,8 @@ export default function ChatPage() {
               </div>
             )}
           </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        )}
+      </div>
     </ThreadContext.Provider>
   );
 }

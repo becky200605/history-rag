@@ -132,5 +132,6 @@ function nameOfSegment(
   if (segment === "workspace") return t.breadcrumb.workspace;
   if (segment === "chats") return t.breadcrumb.chats;
   if (segment === "knowledge") return "知识库";
+  if (segment === "personal-knowledge") return "个人知识库";
   return segment[0]?.toUpperCase() + segment.slice(1);
 }

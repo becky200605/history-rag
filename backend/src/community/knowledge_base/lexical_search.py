@@ -9,6 +9,7 @@ from typing import Any, Iterator
 from src.community.knowledge_base.common import (
     derive_global_doc_id,
     derive_thread_doc_id,
+    derive_user_doc_id,
     normalize_search_text,
     resolve_project_path,
     tokenize_search_text,
@@ -18,6 +19,7 @@ from src.community.knowledge_base.structured_document import (
     build_structured_document,
     load_structured_document,
 )
+from src.community.knowledge_base.user_store import list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
@@ -159,11 +161,85 @@ def _iter_thread_documents(thread_id: str, doc_ids: set[str] | None = None) -> I
         }
 
 
-def _iter_candidate_documents(thread_id: str | None, doc_ids: list[str] | None = None) -> Iterator[dict[str, Any]]:
+def _iter_user_documents(user_id: str, doc_ids: set[str] | None = None) -> Iterator[dict[str, Any]]:
+    docs_dir = get_paths().user_knowledge_docs_dir(user_id)
+    if not docs_dir.exists():
+        return
+
+    seen_source_filenames: set[str] = set()
+    for record in list_user_records(user_id):
+        if not record.get("retrieval_enabled") or not record.get("indexable"):
+            continue
+        source_filename = str(record.get("source_filename") or record.get("index_target_filename") or "")
+        record_id = str(record.get("id") or "")
+        if not source_filename or not record_id:
+            continue
+        seen_source_filenames.add(source_filename)
+        doc_id = derive_user_doc_id(record_id)
+        if doc_ids and doc_id not in doc_ids:
+            continue
+
+        structured_path = Path(str(record.get("structured_path"))) if record.get("structured_path") else None
+        payload = load_structured_document(structured_path) if structured_path else None
+        if not payload and Path(source_filename).suffix.lower() in {".md", ".txt"}:
+            payload = _load_text_payload(
+                docs_dir / source_filename,
+                title=str(record.get("display_title") or Path(source_filename).stem),
+                parser_name=str(record.get("parse_method") or "plain_text"),
+            )
+        if not payload:
+            continue
+
+        yield {
+            "doc_id": doc_id,
+            "title": str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
+            "filename": source_filename,
+            "scope": "user",
+            "user_id": user_id,
+            "source_kind": str(record.get("source_kind") or "upload"),
+            "origin_doc_id": record.get("origin_doc_id"),
+            "payload": payload,
+            "source": str(record.get("structured_path") or record.get("source_path") or source_filename),
+        }
+
+    for path in sorted(docs_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
+            continue
+        if path.name in seen_source_filenames:
+            continue
+        doc_id = derive_user_doc_id(path.name)
+        if doc_ids and doc_id not in doc_ids:
+            continue
+        payload = _load_text_payload(path, title=path.stem, parser_name="plain_text")
+        if not payload:
+            continue
+        yield {
+            "doc_id": doc_id,
+            "title": str(payload.get("title") or path.stem),
+            "filename": path.name,
+            "scope": "user",
+            "user_id": user_id,
+            "source_kind": "upload",
+            "origin_doc_id": None,
+            "payload": payload,
+            "source": str(path),
+        }
+
+
+def _iter_candidate_documents(
+    thread_id: str | None,
+    user_id: str | None,
+    doc_ids: list[str] | None = None,
+    scopes: list[str] | None = None,
+) -> Iterator[dict[str, Any]]:
+    enabled_scopes = set(scopes or ["user", "thread", "global"])
     doc_id_set = set(doc_ids or []) or None
-    if thread_id:
-        yield from _iter_thread_documents(thread_id, doc_ids=doc_id_set)
-    yield from _iter_global_documents(doc_ids=doc_id_set)
+    if user_id and "user" in enabled_scopes:
+        yield from _iter_user_documents(user_id, doc_ids=None)
+    if thread_id and "thread" in enabled_scopes:
+        yield from _iter_thread_documents(thread_id, doc_ids=None)
+    if "global" in enabled_scopes:
+        yield from _iter_global_documents(doc_ids=doc_id_set)
 
 
 def _score_paragraph(
@@ -194,12 +270,19 @@ def lexical_search_documents(
     query: str,
     *,
     thread_id: str | None = None,
+    user_id: str | None = None,
     doc_ids: list[str] | None = None,
+    scopes: list[str] | None = None,
     top_k: int = 5,
 ) -> list[dict[str, Any]]:
     """Scan structured documents lexically for quote-like or table-title queries."""
     results: list[dict[str, Any]] = []
-    for document in _iter_candidate_documents(thread_id, doc_ids=doc_ids):
+    for document in _iter_candidate_documents(
+        thread_id,
+        user_id,
+        doc_ids=doc_ids,
+        scopes=scopes,
+    ):
         payload = document.get("payload") or {}
         for page in payload.get("pages") or []:
             page_no = page.get("page_no")
@@ -229,6 +312,11 @@ def lexical_search_documents(
                 if document["scope"] == "thread":
                     metadata["thread_id"] = document.get("thread_id")
                     metadata["source_virtual_path"] = f"/mnt/user-data/uploads/{document['filename']}"
+                    metadata["source_kind"] = "thread_upload"
+                if document["scope"] == "user":
+                    metadata["user_id"] = document.get("user_id")
+                    metadata["source_kind"] = document.get("source_kind", "upload")
+                    metadata["origin_doc_id"] = document.get("origin_doc_id")
                 results.append(
                     {
                         "content": content,

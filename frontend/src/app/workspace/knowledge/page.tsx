@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BookmarkPlusIcon,
   FileIcon,
   Loader2Icon,
   RefreshCwIcon,
@@ -22,7 +23,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -44,11 +44,52 @@ import {
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
 import { useDeleteKnowledgeFile, useKnowledgeFiles, useUploadKnowledgeFiles } from "@/core/knowledge/hooks";
+import { useImportGlobalKnowledgeToPersonal } from "@/core/knowledge/user-hooks";
+import { env } from "@/env";
 
 type LanguageHint = "unknown" | "zh-Hans" | "zh-Hant" | "en" | "mixed";
 type LayoutHint = "unknown" | "horizontal" | "vertical" | "mixed";
 type DocumentTypeHint = "unknown" | "book" | "archive" | "periodical" | "ancient_book";
 type FileStatusFilter = "all" | "active" | "indexed" | "failed" | "parsed" | "pending_parse" | "uploaded";
+const KNOWLEDGE_TYPES = new Set(["core", "specialized", "reference", "unknown"]);
+
+function buildFileTags(file: {
+  tags?: string[];
+  categories?: string[];
+  eras?: string[];
+  regions?: string[];
+  keywords?: string[];
+}) {
+  const tags = file.tags?.length
+    ? file.tags
+    : [
+        ...(file.categories ?? []),
+        ...(file.eras ?? []),
+        ...(file.regions ?? []),
+        ...(file.keywords ?? []),
+      ];
+
+  return Array.from(
+    new Set(
+      tags.filter(
+        (tag) => tag && !KNOWLEDGE_TYPES.has(String(tag).trim().toLowerCase()),
+      ),
+    ),
+  );
+}
+
+function knowledgeTypeLabel(value?: string | null) {
+  switch ((value ?? "").toLowerCase()) {
+    case "core":
+      return "核心通用";
+    case "specialized":
+      return "专题支撑";
+    case "reference":
+      return "参考工具";
+    default:
+      return "未分类";
+  }
+}
 
 const languageOptions: Array<{ value: LanguageHint; label: string }> = [
   { value: "unknown", label: "自动判断" },
@@ -245,6 +286,7 @@ export default function KnowledgeManagementPage() {
   const { data, isLoading, error, refetch, isFetching } = useKnowledgeFiles();
   const uploadMutation = useUploadKnowledgeFiles();
   const deleteMutation = useDeleteKnowledgeFile();
+  const importMutation = useImportGlobalKnowledgeToPersonal();
 
   useEffect(() => {
     document.title = "知识库管理 - 财政历史大模型";
@@ -304,6 +346,13 @@ export default function KnowledgeManagementPage() {
 
       const haystack = [
         file.filename,
+        file.type,
+        ...(file.tags ?? []),
+        ...(file.categories ?? []),
+        ...(file.eras ?? []),
+        ...(file.regions ?? []),
+        ...(file.keywords ?? []),
+        file.summary,
         file.parse_method,
         file.extension,
         file.parse_status,
@@ -385,6 +434,15 @@ export default function KnowledgeManagementPage() {
       toast.error(message);
     } finally {
       setDeletingFilename(null);
+    }
+  };
+
+  const handleImportToPersonal = async (filename: string) => {
+    try {
+      const result = await importMutation.mutateAsync(filename);
+      toast.success(result.message);
+    } catch (importError) {
+      toast.error((importError as Error).message || "加入个人知识库失败");
     }
   };
 
@@ -624,7 +682,7 @@ export default function KnowledgeManagementPage() {
                 <Input
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="搜索书名、文件名、解析方式"
+                  placeholder="搜索书名、文件名、检索类型、标签"
                   className="h-8 bg-white pl-8 text-xs"
                 />
               </div>
@@ -647,18 +705,20 @@ export default function KnowledgeManagementPage() {
                   : "没有符合当前筛选条件的文件。"}
               </div>
             ) : (
-              <ScrollArea className="min-h-0 flex-1">
-                <Table className="min-w-[1120px] text-xs">
+              <div className="min-h-0 flex-1 overflow-auto">
+                <Table className="w-[1600px] table-fixed text-xs">
                   <TableHeader className="sticky top-0 z-10 bg-stone-50/95 backdrop-blur">
                     <TableRow className="hover:bg-stone-50/95">
-                      <TableHead className="w-[30%]">文件</TableHead>
-                      <TableHead>类型</TableHead>
-                      <TableHead>状态</TableHead>
-                      <TableHead>线索</TableHead>
-                      <TableHead>大小</TableHead>
-                      <TableHead>时间</TableHead>
-                      <TableHead>产物</TableHead>
-                      <TableHead className="w-[52px] text-right">操作</TableHead>
+                      <TableHead className="w-[320px] min-w-[320px]">文件</TableHead>
+                      <TableHead className="w-[120px] min-w-[120px]">文档类型</TableHead>
+                      <TableHead className="w-[120px] min-w-[120px]">检索类型</TableHead>
+                      <TableHead className="w-[360px] min-w-[360px]">标签</TableHead>
+                      <TableHead className="w-[100px] min-w-[100px]">状态</TableHead>
+                      <TableHead className="w-[160px] min-w-[160px]">线索</TableHead>
+                      <TableHead className="w-[90px] min-w-[90px]">大小</TableHead>
+                      <TableHead className="w-[140px] min-w-[140px]">时间</TableHead>
+                      <TableHead className="w-[250px] min-w-[250px]">产物</TableHead>
+                      <TableHead className="w-[100px] min-w-[100px] text-right">操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -668,10 +728,12 @@ export default function KnowledgeManagementPage() {
                         deletingFilename === file.filename;
                       const methodLabel = parseMethodLabel(file.parse_method);
                       const statusHint = fileStatusHint(file);
+                      const tags = buildFileTags(file);
+                      const typeLabel = knowledgeTypeLabel(file.type);
 
                       return (
                         <TableRow key={file.filename} className="h-14">
-                          <TableCell className="py-2.5">
+                          <TableCell className="w-[320px] min-w-[320px] py-2.5">
                             <div className="flex items-center gap-2">
                               <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-stone-100 text-stone-500">
                                 <FileIcon className="size-3.5" />
@@ -687,7 +749,7 @@ export default function KnowledgeManagementPage() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="py-2.5 text-[12px] text-stone-700">
+                          <TableCell className="w-[120px] min-w-[120px] py-2.5 text-[12px] text-stone-700">
                             <div>{documentTypeLabel(file.hints?.document_type_hint)}</div>
                             {file.extension && (
                               <div className="text-[11px] text-stone-500">
@@ -695,7 +757,34 @@ export default function KnowledgeManagementPage() {
                               </div>
                             )}
                           </TableCell>
-                          <TableCell className="py-2.5">
+                          <TableCell className="w-[120px] min-w-[120px] py-2.5">
+                            <Badge
+                              variant={file.type ? "secondary" : "outline"}
+                              className="rounded-md px-2 py-0.5 text-[11px]"
+                            >
+                              {typeLabel}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="w-[360px] min-w-[360px] py-2.5">
+                            <div className="w-full overflow-x-auto overflow-y-hidden overscroll-x-contain whitespace-nowrap">
+                              <div className="flex w-max min-w-full flex-nowrap gap-1 pr-2">
+                                {tags.length > 0 ? (
+                                  tags.map((tag) => (
+                                    <Badge
+                                      key={`${file.filename}-${tag}`}
+                                      variant="outline"
+                                      className="shrink-0 rounded-md px-2 py-0.5 text-[11px]"
+                                    >
+                                      {tag}
+                                    </Badge>
+                                  ))
+                                ) : (
+                                  <span className="text-[11px] text-stone-400">-</span>
+                                )}
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="w-[100px] min-w-[100px] py-2.5">
                             <Badge
                               variant={statusVariant(file.parse_status)}
                               className="h-5 rounded-md px-2 text-[11px]"
@@ -703,20 +792,20 @@ export default function KnowledgeManagementPage() {
                               {statusLabel(file.parse_status)}
                             </Badge>
                           </TableCell>
-                          <TableCell className="py-2.5 text-[12px] text-stone-600">
+                          <TableCell className="w-[160px] min-w-[160px] py-2.5 text-[12px] text-stone-600">
                             <div>
                               {languageLabel(file.hints?.language_hint)}
                               <span className="mx-1 text-stone-300">/</span>
                               {layoutLabel(file.hints?.layout_hint)}
                             </div>
                           </TableCell>
-                          <TableCell className="py-2.5 text-[12px] text-stone-700">
+                          <TableCell className="w-[90px] min-w-[90px] py-2.5 text-[12px] text-stone-700">
                             {formatBytes(file.size)}
                           </TableCell>
-                          <TableCell className="py-2.5 text-[12px] text-stone-700">
+                          <TableCell className="w-[140px] min-w-[140px] py-2.5 text-[12px] text-stone-700">
                             {formatCompactTime(file.modified)}
                           </TableCell>
-                          <TableCell className="py-2.5 text-[12px]">
+                          <TableCell className="w-[250px] min-w-[250px] py-2.5 text-[12px]">
                             <div className="flex flex-wrap gap-x-3 gap-y-1">
                               <a
                                 className="text-stone-700 underline underline-offset-4 hover:text-stone-950"
@@ -748,27 +837,44 @@ export default function KnowledgeManagementPage() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="py-1.5 text-right">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="size-7"
-                              disabled={deleteMutation.isPending}
-                              onClick={() => void handleDelete(file.filename)}
-                            >
-                              {isDeleting ? (
-                                <Loader2Icon className="size-3.5 animate-spin" />
-                              ) : (
-                                <Trash2Icon className="size-3.5" />
+                          <TableCell className="w-[100px] min-w-[100px] py-1.5 text-right">
+                            <div className="flex justify-end gap-1">
+                              {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7"
+                                  disabled={importMutation.isPending}
+                                  onClick={() => void handleImportToPersonal(file.filename)}
+                                >
+                                  {importMutation.isPending ? (
+                                    <Loader2Icon className="size-3.5 animate-spin" />
+                                  ) : (
+                                    <BookmarkPlusIcon className="size-3.5" />
+                                  )}
+                                </Button>
                               )}
-                            </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7"
+                                disabled={deleteMutation.isPending}
+                                onClick={() => void handleDelete(file.filename)}
+                              >
+                                {isDeleting ? (
+                                  <Loader2Icon className="size-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2Icon className="size-3.5" />
+                                )}
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
-              </ScrollArea>
+              </div>
             )}
           </section>
         </div>

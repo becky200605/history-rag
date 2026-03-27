@@ -4,7 +4,7 @@ from typing import TypeVar
 T = TypeVar("T")
 
 
-def resolve_variable[T](
+def resolve_variable(
     variable_path: str,
     expected_type: type[T] | tuple[type, ...] | None = None,
 ) -> T:
@@ -46,7 +46,7 @@ def resolve_variable[T](
     return variable
 
 
-def resolve_class[T](class_path: str, base_class: type[T] | None = None) -> type[T]:
+def resolve_class(class_path: str, base_class: type[T] | None = None) -> type[T]:
     """Resolve a class from a module path and class name.
 
     Args:

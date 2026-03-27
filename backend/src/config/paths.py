@@ -6,6 +6,7 @@ from pathlib import Path
 VIRTUAL_PATH_PREFIX = "/mnt/user-data"
 
 _SAFE_THREAD_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+_SAFE_USER_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
 
 class Paths:
@@ -70,6 +71,15 @@ class Paths:
             )
         return self.base_dir / "threads" / thread_id
 
+    def user_dir(self, user_id: str) -> Path:
+        """Host path for a user's persisted data."""
+        if not _SAFE_USER_ID_RE.match(user_id):
+            raise ValueError(
+                f"Invalid user_id {user_id!r}: only alphanumeric characters, "
+                "hyphens, and underscores are allowed."
+            )
+        return self.base_dir / "users" / user_id
+
     def sandbox_work_dir(self, thread_id: str) -> Path:
         """
         Host path for the agent's workspace directory.
@@ -102,11 +112,38 @@ class Paths:
         """
         return self.thread_dir(thread_id) / "user-data"
 
+    def user_knowledge_dir(self, user_id: str) -> Path:
+        """Host path for a user's personal knowledge base root."""
+        return self.user_dir(user_id) / "knowledge"
+
+    def user_knowledge_docs_dir(self, user_id: str) -> Path:
+        """Host path for a user's uploaded knowledge documents."""
+        return self.user_knowledge_dir(user_id) / "docs"
+
+    def user_knowledge_ingestion_dir(self, user_id: str) -> Path:
+        """Host path for a user's structured knowledge ingestion artifacts."""
+        return self.user_knowledge_dir(user_id) / ".ingestion"
+
+    def user_knowledge_derived_dir(self, user_id: str) -> Path:
+        """Host path for a user's derived knowledge artifacts."""
+        return self.user_knowledge_dir(user_id) / ".derived"
+
+    def user_knowledge_catalog_dir(self, user_id: str) -> Path:
+        """Host path for a user's knowledge metadata/catalog records."""
+        return self.user_knowledge_dir(user_id) / ".catalog"
+
     def ensure_thread_dirs(self, thread_id: str) -> None:
         """Create all standard sandbox directories for a thread."""
         self.sandbox_work_dir(thread_id).mkdir(parents=True, exist_ok=True)
         self.sandbox_uploads_dir(thread_id).mkdir(parents=True, exist_ok=True)
         self.sandbox_outputs_dir(thread_id).mkdir(parents=True, exist_ok=True)
+
+    def ensure_user_knowledge_dirs(self, user_id: str) -> None:
+        """Create all standard directories for a user's personal knowledge base."""
+        self.user_knowledge_docs_dir(user_id).mkdir(parents=True, exist_ok=True)
+        self.user_knowledge_ingestion_dir(user_id).mkdir(parents=True, exist_ok=True)
+        self.user_knowledge_derived_dir(user_id).mkdir(parents=True, exist_ok=True)
+        self.user_knowledge_catalog_dir(user_id).mkdir(parents=True, exist_ok=True)
 
     def resolve_virtual_path(self, thread_id: str, virtual_path: str) -> Path:
         """Resolve a sandbox virtual path to the actual host filesystem path.

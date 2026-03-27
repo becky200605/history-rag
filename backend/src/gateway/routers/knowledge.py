@@ -1,29 +1,49 @@
-import logging
 import json
+import logging
 import mimetypes
-from pathlib import Path
 import threading
+from collections import deque
+from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
+from src.community.knowledge_base.book_metadata import (
+    MetadataField,
+    build_book_metadata_prompt_input,
+    build_book_metadata_record,
+    load_book_metadata_for_source,
+    save_book_metadata,
+)
+from src.community.knowledge_base.book_metadata_runtime import maybe_generate_book_metadata
+from src.community.knowledge_base.citations import (
+    encode_source_url,
+    resolve_result_citation_context,
+)
 from src.community.knowledge_base.common import resolve_project_path
 from src.community.knowledge_base.document_parsers import (
     OFFICE_EXTENSIONS,
     PDF_EXTENSIONS,
     extract_office_text_with_markitdown,
 )
-from src.community.knowledge_base.indexer import rebuild_global_knowledge_index, rebuild_thread_upload_index
+from src.community.knowledge_base.indexer import (
+    delete_global_knowledge_documents,
+    rebuild_global_knowledge_index,
+    rebuild_thread_upload_index,
+    upsert_global_knowledge_records,
+)
 from src.community.knowledge_base.locator import extract_document_context, locate_document
 from src.community.knowledge_base.mineru_grpc import build_structured_document_from_mineru_grpc
+from src.community.knowledge_base.retriever import get_qdrant_client, get_retriever
 from src.community.knowledge_base.structured_document import (
+    build_bbox_from_position,
     build_structured_document,
+    load_structured_document,
     save_structured_document,
 )
-from src.community.knowledge_base.retriever import get_retriever, get_qdrant_client
+from src.community.knowledge_base.translation_grpc import translate_blocks_to_chinese_via_grpc
 from src.config.knowledge_base_config import get_knowledge_base_config
 
 logger = logging.getLogger(__name__)
@@ -35,18 +55,17 @@ UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 INDEXABLE_EXTENSIONS = {".md", ".txt"}
 _knowledge_operation_lock = threading.Lock()
+_global_queue_condition = threading.Condition()
+_global_ocr_queue: deque[str] = deque()
+_global_embedding_queue: deque[str] = deque()
+_global_queued_ocr: set[str] = set()
+_global_queued_embedding: set[str] = set()
+_global_ocr_worker: threading.Thread | None = None
+_global_embedding_worker: threading.Thread | None = None
 
 
 def _encode_url_path(url: str | None) -> str | None:
-    if not url:
-        return url
-    return quote(url, safe="/:?=&%#")
-
-
-def _append_pdf_page_fragment(url: str | None, pdf_page_no: int | None) -> str | None:
-    if not url or not pdf_page_no or "#page=" in url:
-        return url
-    return f"{url}#page={pdf_page_no}"
+    return encode_source_url(url)
 
 
 def _acquire_knowledge_operation_lock() -> None:
@@ -60,6 +79,79 @@ def _acquire_knowledge_operation_lock() -> None:
 def _release_knowledge_operation_lock() -> None:
     if _knowledge_operation_lock.locked():
         _knowledge_operation_lock.release()
+
+
+def _remove_global_queued_filename(filename: str) -> None:
+    global _global_ocr_queue, _global_embedding_queue
+    with _global_queue_condition:
+        if filename in _global_queued_ocr:
+            _global_queued_ocr.discard(filename)
+            _global_ocr_queue = deque(item for item in _global_ocr_queue if item != filename)
+        if filename in _global_queued_embedding:
+            _global_queued_embedding.discard(filename)
+            _global_embedding_queue = deque(item for item in _global_embedding_queue if item != filename)
+
+
+def _enqueue_global_ocr(filename: str) -> None:
+    with _global_queue_condition:
+        if filename in _global_queued_ocr:
+            return
+        _global_queued_ocr.add(filename)
+        _global_ocr_queue.append(filename)
+        _global_queue_condition.notify_all()
+
+
+def _enqueue_global_embedding(filename: str) -> None:
+    with _global_queue_condition:
+        if filename in _global_queued_embedding:
+            return
+        _global_queued_embedding.add(filename)
+        _global_embedding_queue.append(filename)
+        _global_queue_condition.notify_all()
+
+
+def _recover_pending_global_jobs() -> None:
+    for record in _list_global_records():
+        filename = record.get("source_filename")
+        if not filename or not record.get("indexable"):
+            continue
+        status = str(record.get("parse_status") or "")
+        if status in {"queued", "queued_ocr", "pending_parse"}:
+            _enqueue_global_ocr(str(filename))
+            continue
+        if status in {"parsed", "queued_embedding", "index_failed"}:
+            _enqueue_global_embedding(str(filename))
+
+
+def _ensure_global_queue_workers_started() -> None:
+    global _global_ocr_worker, _global_embedding_worker
+    started_worker = False
+    with _global_queue_condition:
+        if _global_ocr_worker is None or not _global_ocr_worker.is_alive():
+            _global_ocr_worker = threading.Thread(
+                target=_global_ocr_worker_loop,
+                name="global-knowledge-ocr-worker",
+                daemon=True,
+            )
+            _global_ocr_worker.start()
+            started_worker = True
+        if _global_embedding_worker is None or not _global_embedding_worker.is_alive():
+            _global_embedding_worker = threading.Thread(
+                target=_global_embedding_worker_loop,
+                name="global-knowledge-embedding-worker",
+                daemon=True,
+                )
+            _global_embedding_worker.start()
+            started_worker = True
+    if started_worker:
+        _recover_pending_global_jobs()
+
+
+def _current_global_queue_positions() -> tuple[dict[str, int], dict[str, int]]:
+    with _global_queue_condition:
+        ocr_positions = {filename: index + 1 for index, filename in enumerate(_global_ocr_queue)}
+        embedding_positions = {filename: index + 1 for index, filename in enumerate(_global_embedding_queue)}
+    return ocr_positions, embedding_positions
 
 
 class KnowledgeBaseStatus(BaseModel):
@@ -102,8 +194,11 @@ class SearchResponse(BaseModel):
 
 
 class KnowledgeParagraphLocationResponse(BaseModel):
+    doc_id: str | None = None
+    scope: str | None = None
     filename: str
     title: str
+    page_count: int | None = None
     page_no: int | None = None
     pdf_page_no: int | None = None
     book_page_no: int | None = None
@@ -145,6 +240,24 @@ class KnowledgeDocumentListResponse(BaseModel):
     """Compatibility response model for settings-page document listing."""
 
     docs: list[KnowledgeDocumentInfo]
+
+
+class KnowledgeMetadataUpdateRequest(BaseModel):
+    type: str | None = None
+    categories: list[str] | None = None
+    eras: list[str] | None = None
+    regions: list[str] | None = None
+    keywords: list[str] | None = None
+    summary: str | None = None
+
+
+class TranslationBlockRequest(BaseModel):
+    key: str
+    text: str
+
+
+class TranslateBlocksRequest(BaseModel):
+    paragraphs: list[TranslationBlockRequest]
 
 
 async def save_upload_file(file: UploadFile, destination: Path, chunk_size: int = UPLOAD_CHUNK_SIZE) -> int:
@@ -242,6 +355,68 @@ def _build_global_urls(filename: str) -> dict[str, str]:
     }
 
 
+def _metadata_value(field: MetadataField | None) -> str | None:
+    if field is None:
+        return None
+    value = str(field.value or "").strip()
+    return value or None
+
+
+def _metadata_values(fields: list[MetadataField] | None) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for field in fields or []:
+        value = _metadata_value(field)
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    return values
+
+
+def _manual_metadata_field(value: str | None) -> MetadataField | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    return MetadataField(value=normalized, confidence=1.0, evidence="manual_edit")
+
+
+def _manual_metadata_fields(values: list[str] | None) -> list[MetadataField]:
+    fields: list[MetadataField] = []
+    seen: set[str] = set()
+    for raw in values or []:
+        normalized = str(raw or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        fields.append(MetadataField(value=normalized, confidence=1.0, evidence="manual_edit"))
+    return fields
+
+
+def _load_global_book_metadata(filename: str) -> dict[str, Any]:
+    record = load_book_metadata_for_source(get_global_docs_dir(), filename)
+    suggestion = record.suggestion if record else None
+    book_type = _metadata_value(suggestion.type) if suggestion else None
+    categories = _metadata_values(suggestion.categories) if suggestion else []
+    eras = _metadata_values(suggestion.eras) if suggestion else []
+    regions = _metadata_values(suggestion.regions) if suggestion else []
+    keywords = _metadata_values(suggestion.keywords) if suggestion else []
+    summary = _metadata_value(suggestion.summary) if suggestion else None
+    tags: list[str] = []
+    for value in [*categories, *eras, *regions, *keywords]:
+        if value and value not in tags:
+            tags.append(value)
+    return {
+        "type": book_type,
+        "categories": categories,
+        "eras": eras,
+        "regions": regions,
+        "keywords": keywords,
+        "summary": summary,
+        "tags": tags,
+    }
+
+
 def _cleanup_global_record_artifacts(record: dict[str, Any], *, remove_source_file: bool) -> None:
     docs_dir = get_global_docs_dir()
     source_filename = record.get("source_filename")
@@ -293,7 +468,7 @@ def _build_global_ingestion_record(
         "source_size": size,
         "content_type": content_type,
         "parse_method": parse_method,
-        "parse_status": "queued" if indexable else "uploaded",
+        "parse_status": "queued_ocr" if indexable else "uploaded",
         "indexable": indexable,
         "source_artifact_url": urls["source_url"],
         "preview_filename": filename if suffix in INDEXABLE_EXTENSIONS else None,
@@ -320,7 +495,7 @@ def _mark_global_record_parsed(
 ) -> dict[str, Any]:
     record.update(
         {
-            "parse_status": "parsed",
+            "parse_status": "queued_embedding",
             "structured_filename": structured_filename,
             "structured_path": structured_path,
             "structured_artifact_url": None,
@@ -372,7 +547,6 @@ def _mark_global_record_pending(record: dict[str, Any], error: str) -> dict[str,
 
 
 def _mark_global_records_indexed() -> None:
-    docs_dir = get_global_docs_dir()
     for record in _list_global_records():
         target_path = record.get("index_target_path")
         if not record.get("indexable") or not target_path:
@@ -383,11 +557,200 @@ def _mark_global_records_indexed() -> None:
         _save_global_record(record["source_filename"], record)
 
 
+def _process_single_global_ocr(filename: str) -> None:
+    docs_dir = get_global_docs_dir()
+    ingestion_dir = get_global_ingestion_dir()
+    metadata_config = get_knowledge_base_config().book_metadata
+    record = _load_global_record(filename)
+    if not record or not record.get("indexable"):
+        return
+
+    file_path = docs_dir / filename
+    if not file_path.exists():
+        record = _mark_global_record_failed(record, "source file missing")
+        _save_global_record(filename, record)
+        return
+
+    record["parse_status"] = "parsing"
+    record["error"] = None
+    _save_global_record(filename, record)
+
+    try:
+        file_ext = file_path.suffix.lower()
+        if file_ext in PDF_EXTENSIONS:
+            hints = record.get("hints") or {}
+            record["parse_method"] = "ocr_pdf_mineru_grpc"
+            _save_global_record(filename, record)
+            structured_payload = build_structured_document_from_mineru_grpc(
+                file_path,
+                title=record["display_title"],
+                parser_name=record["parse_method"],
+                hints=hints,
+                language_hint=hints.get("language_hint"),
+            )
+            structured_path = save_structured_document(
+                ingestion_dir,
+                filename,
+                structured_payload,
+            )
+            maybe_generate_book_metadata(
+                structured_payload=structured_payload,
+                source_filename=filename,
+                title=record["display_title"],
+                output_dir=docs_dir,
+                config=metadata_config,
+            )
+            record = _mark_global_record_parsed(
+                record,
+                structured_filename=structured_path.name,
+                structured_path=str(structured_path),
+            )
+        elif file_ext in OFFICE_EXTENSIONS:
+            extracted_text = extract_office_text_with_markitdown(file_path)
+            if not extracted_text or not extracted_text.strip():
+                raise ValueError("Office parser returned no text")
+            structured_payload = build_structured_document(
+                source_filename=filename,
+                title=record["display_title"],
+                text=extracted_text,
+                parser_name=record["parse_method"],
+                hints=record.get("hints") or {},
+            )
+            structured_path = save_structured_document(
+                ingestion_dir,
+                filename,
+                structured_payload,
+            )
+            maybe_generate_book_metadata(
+                structured_payload=structured_payload,
+                source_filename=filename,
+                title=record["display_title"],
+                output_dir=docs_dir,
+                config=metadata_config,
+            )
+            record = _mark_global_record_parsed(
+                record,
+                structured_filename=structured_path.name,
+                structured_path=str(structured_path),
+            )
+        elif file_ext in INDEXABLE_EXTENSIONS:
+            structured_payload = build_structured_document(
+                source_filename=filename,
+                title=record["display_title"],
+                text=file_path.read_text(encoding="utf-8"),
+                parser_name=record["parse_method"],
+                hints=record.get("hints") or {},
+            )
+            structured_path = save_structured_document(
+                ingestion_dir,
+                filename,
+                structured_payload,
+            )
+            maybe_generate_book_metadata(
+                structured_payload=structured_payload,
+                source_filename=filename,
+                title=record["display_title"],
+                output_dir=docs_dir,
+                config=metadata_config,
+            )
+            record = _mark_global_record_parsed(
+                record,
+                structured_filename=structured_path.name,
+                structured_path=str(structured_path),
+                preview_filename=filename,
+            )
+        else:
+            record["parse_status"] = "uploaded"
+
+        _save_global_record(filename, record)
+        if record.get("index_target_path"):
+            _enqueue_global_embedding(filename)
+    except Exception as exc:
+        logger.exception("Failed to OCR/parse global upload %s: %s", filename, exc)
+        record = _mark_global_record_failed(record, f"parse failed: {exc}")
+        _save_global_record(filename, record)
+
+
+def _drain_embedding_batch(first_filename: str) -> list[str]:
+    batch = [first_filename]
+    with _global_queue_condition:
+        while _global_embedding_queue:
+            next_filename = _global_embedding_queue.popleft()
+            _global_queued_embedding.discard(next_filename)
+            if next_filename not in batch:
+                batch.append(next_filename)
+    return batch
+
+
+def _process_global_embedding_batch(filenames: list[str]) -> None:
+    candidates: list[str] = []
+    for filename in filenames:
+        record = _load_global_record(filename)
+        if not record or not record.get("index_target_path"):
+            continue
+        record["parse_status"] = "indexing"
+        record["error"] = None
+        _save_global_record(filename, record)
+        candidates.append(filename)
+
+    if not candidates:
+        return
+
+    try:
+        _acquire_knowledge_operation_lock()
+    except HTTPException:
+        for filename in candidates:
+            record = _load_global_record(filename)
+            if not record:
+                continue
+            record["parse_status"] = "queued_embedding"
+            record["error"] = None
+            _save_global_record(filename, record)
+            _enqueue_global_embedding(filename)
+        return
+    try:
+        upsert_global_knowledge_records(candidates)
+        _mark_global_records_indexed()
+        logger.info("Background global knowledge reindex completed for %s", candidates)
+    except Exception as exc:
+        logger.exception("Background global knowledge reindex failed: %s", exc)
+        for filename in candidates:
+            record = _load_global_record(filename)
+            if not record:
+                continue
+            record["parse_status"] = "index_failed"
+            record["error"] = f"reindex failed: {exc}"
+            _save_global_record(filename, record)
+    finally:
+        _release_knowledge_operation_lock()
+
+
+def _global_ocr_worker_loop() -> None:
+    while True:
+        with _global_queue_condition:
+            while not _global_ocr_queue:
+                _global_queue_condition.wait()
+            filename = _global_ocr_queue.popleft()
+            _global_queued_ocr.discard(filename)
+        _process_single_global_ocr(filename)
+
+
+def _global_embedding_worker_loop() -> None:
+    while True:
+        with _global_queue_condition:
+            while not _global_embedding_queue:
+                _global_queue_condition.wait()
+            filename = _global_embedding_queue.popleft()
+            _global_queued_embedding.discard(filename)
+        _process_global_embedding_batch(_drain_embedding_batch(filename))
+
+
 def _process_global_knowledge_uploads(filenames: list[str]) -> None:
     """Parse uploaded global knowledge files and rebuild the index in the background."""
     try:
         docs_dir = get_global_docs_dir()
         ingestion_dir = get_global_ingestion_dir()
+        metadata_config = get_knowledge_base_config().book_metadata
         needs_reindex = False
         force_reindex = False
         parsed_filenames: list[str] = []
@@ -427,6 +790,13 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
                         safe_filename,
                         structured_payload,
                     )
+                    maybe_generate_book_metadata(
+                        structured_payload=structured_payload,
+                        source_filename=safe_filename,
+                        title=record["display_title"],
+                        output_dir=docs_dir,
+                        config=metadata_config,
+                    )
                     record = _mark_global_record_parsed(
                         record,
                         structured_filename=structured_path.name,
@@ -449,6 +819,13 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
                             safe_filename,
                             structured_payload,
                         )
+                        maybe_generate_book_metadata(
+                            structured_payload=structured_payload,
+                            source_filename=safe_filename,
+                            title=record["display_title"],
+                            output_dir=docs_dir,
+                            config=metadata_config,
+                        )
                         record = _mark_global_record_parsed(
                             record,
                             structured_filename=structured_path.name,
@@ -470,6 +847,13 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
                         ingestion_dir,
                         safe_filename,
                         structured_payload,
+                    )
+                    maybe_generate_book_metadata(
+                        structured_payload=structured_payload,
+                        source_filename=safe_filename,
+                        title=record["display_title"],
+                        output_dir=docs_dir,
+                        config=metadata_config,
                     )
                     record = _mark_global_record_parsed(
                         record,
@@ -499,7 +883,7 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
             _save_global_record(safe_filename, record)
 
         try:
-            rebuild_global_knowledge_index()
+            upsert_global_knowledge_records(parsed_filenames)
             _mark_global_records_indexed()
             logger.info("Background global knowledge reindex completed for %s", parsed_filenames)
         except Exception as exc:
@@ -588,87 +972,87 @@ async def upload_global_knowledge_files(
     document_type_hint: str | None = Form(default=None),
 ) -> KnowledgeUploadResponse:
     """Upload files into the global knowledge base and reindex them."""
+    _ = background_tasks
     config = get_knowledge_base_config()
     if not config.enabled:
         raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
-    _acquire_knowledge_operation_lock()
-    lock_handed_to_background = False
-    try:
-        docs_dir = get_global_docs_dir()
-        uploaded_files: list[dict[str, Any]] = []
-        queued_filenames: list[str] = []
-        hints = {
-            key: value
-            for key, value in {
-                "language_hint": language_hint,
-                "layout_hint": layout_hint,
-                "document_type_hint": document_type_hint,
-            }.items()
-            if value
-        }
+    docs_dir = get_global_docs_dir()
+    uploaded_files: list[dict[str, Any]] = []
+    queued_filenames: list[str] = []
+    hints = {
+        key: value
+        for key, value in {
+            "language_hint": language_hint,
+            "layout_hint": layout_hint,
+            "document_type_hint": document_type_hint,
+        }.items()
+        if value
+    }
 
-        for file in files:
-            if not file.filename:
-                continue
-            safe_filename = Path(file.filename).name
-            if not safe_filename:
-                continue
+    for file in files:
+        if not file.filename:
+            continue
+        safe_filename = Path(file.filename).name
+        if not safe_filename:
+            continue
 
-            try:
-                file_path = docs_dir / safe_filename
-                file_size = await save_upload_file(file, file_path)
-                existing_record = _load_global_record(safe_filename)
-                if existing_record:
-                    _cleanup_global_record_artifacts(existing_record, remove_source_file=False)
-                    _remove_global_record(safe_filename)
+        try:
+            file_path = docs_dir / safe_filename
+            file_size = await save_upload_file(file, file_path)
+            existing_record = _load_global_record(safe_filename)
+            if existing_record:
+                _cleanup_global_record_artifacts(existing_record, remove_source_file=False)
+                _remove_global_record(safe_filename)
+            _remove_global_queued_filename(safe_filename)
 
-                record = _build_global_ingestion_record(
-                    filename=safe_filename,
-                    size=file_size,
-                    content_type=file.content_type,
-                    hints=hints,
-                )
-                if existing_record and existing_record.get("index_target_path"):
-                    record["replace_existing_index"] = True
+            record = _build_global_ingestion_record(
+                filename=safe_filename,
+                size=file_size,
+                content_type=file.content_type,
+                hints=hints,
+            )
+            if existing_record and existing_record.get("index_target_path"):
+                record["replace_existing_index"] = True
 
-                file_info: dict[str, Any] = {
-                    "filename": safe_filename,
-                    "size": file_size,
-                    "artifact_url": _build_global_urls(safe_filename)["source_url"],
-                    "parse_method": record["parse_method"],
-                    "parse_status": record["parse_status"],
-                    "indexable": record["indexable"],
-                    "preview_filename": record.get("preview_filename"),
-                    "preview_artifact_url": record.get("preview_artifact_url"),
-                    "structured_filename": record.get("structured_filename"),
-                    "structured_artifact_url": record.get("structured_artifact_url"),
-                    "index_target_filename": record.get("index_target_filename"),
-                    "index_target_artifact_url": record.get("index_target_artifact_url"),
-                    "hints": hints,
-                }
+            file_info: dict[str, Any] = {
+                "filename": safe_filename,
+                "size": file_size,
+                "artifact_url": _build_global_urls(safe_filename)["source_url"],
+                "parse_method": record["parse_method"],
+                "parse_status": record["parse_status"],
+                "indexable": record["indexable"],
+                "preview_filename": record.get("preview_filename"),
+                "preview_artifact_url": record.get("preview_artifact_url"),
+                "structured_filename": record.get("structured_filename"),
+                "structured_artifact_url": record.get("structured_artifact_url"),
+                "index_target_filename": record.get("index_target_filename"),
+                "index_target_artifact_url": record.get("index_target_artifact_url"),
+                "hints": hints,
+            }
 
-                _save_global_record(safe_filename, record)
-                uploaded_files.append(file_info)
-                if record.get("indexable"):
-                    queued_filenames.append(safe_filename)
-            except Exception as exc:
-                raise HTTPException(status_code=500, detail=f"Failed to upload {safe_filename}: {exc}")
+            _save_global_record(safe_filename, record)
+            uploaded_files.append(file_info)
+            if record.get("indexable"):
+                queued_filenames.append(safe_filename)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to upload {safe_filename}: {exc}")
 
-        if queued_filenames:
-            background_tasks.add_task(_process_global_knowledge_uploads, queued_filenames)
-            lock_handed_to_background = True
+    if queued_filenames:
+        _ensure_global_queue_workers_started()
+        for filename in queued_filenames:
+            _enqueue_global_ocr(filename)
 
-        return KnowledgeUploadResponse(
-            success=True,
-            files=uploaded_files,
-            message=f"Successfully uploaded {len(uploaded_files)} file(s); parsing and indexing are running in the background",
-        )
-    finally:
-        if not lock_handed_to_background:
-            _release_knowledge_operation_lock()
+    return KnowledgeUploadResponse(
+        success=True,
+        files=uploaded_files,
+        message=(
+            f"Successfully uploaded {len(uploaded_files)} file(s); "
+            "files are queued for OCR and embedding in the background"
+        ),
+    )
     
 
 
@@ -680,6 +1064,7 @@ def list_global_knowledge_files() -> dict:
         raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
 
     docs_dir = get_global_docs_dir()
+    ocr_positions, embedding_positions = _current_global_queue_positions()
     source_records, target_records = _build_global_record_lookup()
     preview_filenames = {
         str(record.get("preview_filename"))
@@ -708,7 +1093,16 @@ def list_global_knowledge_files() -> dict:
             "modified": stat.st_mtime,
             "artifact_url": _build_global_urls(file_path.name)["source_url"],
         }
+        entry.update(_load_global_book_metadata(file_path.name))
         if record:
+            queue_position = None
+            queue_stage = None
+            if file_path.name in ocr_positions:
+                queue_stage = "ocr"
+                queue_position = ocr_positions[file_path.name]
+            elif file_path.name in embedding_positions:
+                queue_stage = "embedding"
+                queue_position = embedding_positions[file_path.name]
             entry.update(
                 {
                     "parse_method": record.get("parse_method"),
@@ -722,6 +1116,8 @@ def list_global_knowledge_files() -> dict:
                     "index_target_artifact_url": record.get("index_target_artifact_url"),
                     "hints": record.get("hints", {}),
                     "error": record.get("error"),
+                    "queue_stage": queue_stage,
+                    "queue_position": queue_position,
                 }
             )
         else:
@@ -745,6 +1141,81 @@ def list_global_knowledge_files() -> dict:
     return {"files": files, "count": len(files)}
 
 
+@router.patch("/uploads/{filename}/metadata", response_model=dict, summary="Update Global Knowledge Metadata")
+async def update_global_knowledge_metadata(
+    filename: str,
+    payload: KnowledgeMetadataUpdateRequest,
+) -> dict:
+    config = get_knowledge_base_config()
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    record = _find_global_record(filename)
+    docs_dir = get_global_docs_dir()
+    file_path = docs_dir / filename
+    if record is None and not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+
+    structured_payload = None
+    if record and record.get("structured_path"):
+        structured_payload = load_structured_document(Path(str(record["structured_path"])))
+    elif file_path.suffix.lower() in INDEXABLE_EXTENSIONS:
+        structured_payload = build_structured_document(
+            source_filename=filename,
+            title=Path(filename).stem,
+            text=file_path.read_text(encoding="utf-8"),
+            parser_name="manual_metadata_edit",
+            hints={},
+        )
+
+    if structured_payload is None:
+        raise HTTPException(status_code=400, detail="This file does not have editable structured metadata yet")
+
+    existing = load_book_metadata_for_source(docs_dir, filename)
+    existing_suggestion = existing.suggestion if existing else None
+    prompt_input = (
+        existing.prompt_input
+        if existing is not None
+        else build_book_metadata_prompt_input(
+            structured_payload,
+            source_filename=filename,
+            title=str((record or {}).get("display_title") or Path(filename).stem),
+            front_page_limit=(config.book_metadata.front_page_limit if config.book_metadata else 10),
+            max_excerpt_chars=(config.book_metadata.max_excerpt_chars if config.book_metadata else 1200),
+        )
+    )
+
+    suggestion = {
+        "title": str((existing_suggestion.title if existing_suggestion else None) or (record or {}).get("display_title") or Path(filename).stem),
+        "author": existing_suggestion.author if existing_suggestion else None,
+        "type": _manual_metadata_field(payload.type) or (existing_suggestion.type if existing_suggestion else None),
+        "categories": _manual_metadata_fields(payload.categories) or (existing_suggestion.categories if existing_suggestion else []),
+        "eras": _manual_metadata_fields(payload.eras) or (existing_suggestion.eras if existing_suggestion else []),
+        "regions": _manual_metadata_fields(payload.regions) or (existing_suggestion.regions if existing_suggestion else []),
+        "keywords": _manual_metadata_fields(payload.keywords) or (existing_suggestion.keywords if existing_suggestion else []),
+        "summary": _manual_metadata_field(payload.summary) or (existing_suggestion.summary if existing_suggestion else None),
+        "ocr_quality": existing_suggestion.ocr_quality if existing_suggestion else None,
+        "notes": "manual_edit",
+    }
+
+    book_metadata_record = build_book_metadata_record(
+        source_filename=filename,
+        source_title=str((record or {}).get("display_title") or Path(filename).stem),
+        page_count=len(list(structured_payload.get("pages") or [])),
+        prompt_input=prompt_input,
+        suggestion=suggestion,
+        model_name=(existing.model_name if existing else (config.book_metadata.model_name if config.book_metadata else None)),
+    )
+    save_book_metadata(docs_dir, filename, book_metadata_record)
+    return {
+        "success": True,
+        "message": f"Updated metadata for {filename}",
+        "metadata": _load_global_book_metadata(filename),
+    }
+
+
 @router.delete("/uploads/{filename}", response_model=dict, summary="Delete Global Knowledge Upload")
 async def delete_global_knowledge_file(filename: str) -> dict:
     """Delete a file from the global knowledge directory and rebuild the global index."""
@@ -754,6 +1225,7 @@ async def delete_global_knowledge_file(filename: str) -> dict:
     if "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
+    _remove_global_queued_filename(filename)
     _acquire_knowledge_operation_lock()
     docs_dir = get_global_docs_dir()
     file_path = docs_dir / filename
@@ -770,11 +1242,11 @@ async def delete_global_knowledge_file(filename: str) -> dict:
         else:
             raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
-        rebuild_global_knowledge_index()
+        delete_global_knowledge_documents([record.get("source_filename") or filename] if record else [filename])
         _mark_global_records_indexed()
         return {
             "success": True,
-            "message": f"Deleted {filename} from global knowledge base and rebuilt the index",
+            "message": f"Deleted {filename} from global knowledge base and updated the index",
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to delete {filename}: {exc}")
@@ -786,6 +1258,7 @@ async def delete_global_knowledge_file(filename: str) -> dict:
 def search_knowledge_base(
     q: str = Query(..., description="Search query"),
     thread_id: str | None = Query(default=None, description="Optional thread ID to include uploaded docs"),
+    user_id: str | None = Query(default=None, description="Optional user ID to include personal knowledge docs"),
     doc_ids: str | None = Query(default=None, description="Optional comma-separated doc_ids to filter candidate books"),
 ) -> SearchResponse:
     """Search the knowledge base for relevant documents."""
@@ -796,77 +1269,37 @@ def search_knowledge_base(
     try:
         retriever = get_retriever()
         parsed_doc_ids = [item.strip() for item in doc_ids.split(",") if item.strip()] if doc_ids else None
-        results = retriever.search(q, thread_id=thread_id, doc_ids=parsed_doc_ids)
-        
-        search_results = [
-            SearchResult(
-                content=res["content"],
-                score=res["score"],
-                filename=res["filename"],
-                source=res["source"],
-                line_start=res.get("metadata", {}).get("line_start"),
-                line_end=res.get("metadata", {}).get("line_end"),
-                page_no=res.get("metadata", {}).get("page_no"),
-                pdf_page_no=res.get("metadata", {}).get("pdf_page_no"),
-                book_page_no=res.get("metadata", {}).get("book_page_no"),
-                paragraph_no=res.get("metadata", {}).get("paragraph_no"),
-                bbox=res.get("metadata", {}).get("bbox"),
-                source_url=(
-                    _encode_url_path(
-                        (
-                            f"/api/threads/{res.get('metadata', {}).get('thread_id')}/artifacts{res.get('metadata', {}).get('source_virtual_path')}?page={res.get('page')}"
-                            if res.get("source_type") == "pdf" and res.get("page") is not None
-                            else _append_pdf_page_fragment(
-                                f"/api/threads/{res.get('metadata', {}).get('thread_id')}/artifacts{res.get('metadata', {}).get('source_virtual_path')}",
-                                res.get("metadata", {}).get("pdf_page_no"),
-                            )
-                        )
-                    )
-                    if res.get("metadata", {}).get("scope") == "thread"
-                    else _encode_url_path(
-                        (
-                            f"/api/knowledge/docs/{res['filename']}?page={res.get('page')}"
-                            if res.get("source_type") == "pdf" and res.get("page") is not None
-                            else _append_pdf_page_fragment(
-                                f"/api/knowledge/docs/{res['filename']}",
-                                res.get("metadata", {}).get("pdf_page_no"),
-                            )
-                        )
-                    )
-                ),
-                original_url=(
-                    _encode_url_path(
-                        (
-                            f"/api/threads/{res.get('metadata', {}).get('thread_id')}/artifacts{res.get('metadata', {}).get('origin_virtual_path')}?page={res.get('page')}"
-                            if res.get("source_type") == "pdf" and res.get("page") is not None
-                            else _append_pdf_page_fragment(
-                                f"/api/threads/{res.get('metadata', {}).get('thread_id')}/artifacts{res.get('metadata', {}).get('origin_virtual_path')}",
-                                res.get("metadata", {}).get("pdf_page_no"),
-                            )
-                        )
-                    )
-                    if res.get("metadata", {}).get("scope") == "thread" and res.get("metadata", {}).get("origin_virtual_path")
-                    else (
-                        _encode_url_path(
-                            (
-                                f"/api/knowledge/docs/{res.get('metadata', {}).get('origin_filename')}?page={res.get('page')}"
-                                if res.get("source_type") == "pdf" and res.get("page") is not None
-                                else _append_pdf_page_fragment(
-                                    f"/api/knowledge/docs/{res.get('metadata', {}).get('origin_filename')}",
-                                    res.get("metadata", {}).get("pdf_page_no"),
-                                )
-                            )
-                        )
-                        if res.get("metadata", {}).get("scope") == "global" and res.get("metadata", {}).get("origin_filename")
-                        else None
-                    )
-                ),
-                page=res.get("page"),
-                source_type=res.get("source_type", "unknown"),
+        results = retriever.search(q, thread_id=thread_id, user_id=user_id, doc_ids=parsed_doc_ids)
+
+        search_results = []
+        for res in results:
+            metadata = res.get("metadata", {})
+            citation_context = resolve_result_citation_context(
+                res,
+                thread_id=thread_id,
+                user_id=user_id,
             )
-            for res in results
-        ]
-        
+
+            search_results.append(
+                SearchResult(
+                    content=res["content"],
+                    score=res["score"],
+                    filename=res["filename"],
+                    source=res["source"],
+                    line_start=metadata.get("line_start"),
+                    line_end=metadata.get("line_end"),
+                    page_no=metadata.get("page_no"),
+                    pdf_page_no=metadata.get("pdf_page_no"),
+                    book_page_no=metadata.get("book_page_no"),
+                    paragraph_no=metadata.get("paragraph_no"),
+                    bbox=metadata.get("bbox"),
+                    source_url=citation_context["source_url"],
+                    original_url=citation_context["original_url"],
+                    page=res.get("page"),
+                    source_type=res.get("source_type", "unknown"),
+                )
+            )
+
         return SearchResponse(query=q, results=search_results)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
@@ -991,6 +1424,100 @@ def get_knowledge_document(
 
 
 @router.get(
+    "/docs/{filename}/structured-page",
+    response_model=dict,
+    summary="Get structured page data for a knowledge document",
+)
+def get_knowledge_structured_page(
+    filename: str,
+    page_no: int | None = Query(default=None),
+    pdf_page_no: int | None = Query(default=None),
+):
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if page_no is None and pdf_page_no is None:
+        raise HTTPException(status_code=400, detail="page_no or pdf_page_no is required")
+
+    document = locate_document(thread_id=None, filename=filename)
+    if not document:
+        raise HTTPException(status_code=404, detail="Structured document not found")
+
+    for page in document.payload.get("pages") or []:
+        current_page_no = int(page.get("page_no") or 0)
+        current_pdf_page_no = int(page.get("pdf_page_no") or current_page_no)
+        if page_no is not None and current_page_no != page_no:
+            continue
+        if pdf_page_no is not None and current_pdf_page_no != pdf_page_no:
+            continue
+        return {
+            "doc_id": document.doc_id,
+            "scope": document.scope,
+            "filename": document.filename,
+            "title": document.title,
+            "page_count": len(list(document.payload.get("pages") or [])),
+            "page_no": page.get("page_no"),
+            "pdf_page_no": page.get("pdf_page_no"),
+            "book_page_no": page.get("book_page_no"),
+            "page_number_source": page.get("page_number_source"),
+            "page_meta": page.get("meta") or {},
+            "paragraphs": [
+                {
+                    **paragraph,
+                    "bbox": paragraph.get("bbox") or build_bbox_from_position(paragraph.get("position")),
+                }
+                for paragraph in page.get("paragraphs") or []
+            ],
+            "source_url": _encode_url_path(document.source_url),
+            "original_url": _encode_url_path(document.original_url),
+        }
+
+    raise HTTPException(status_code=404, detail="Structured page not found")
+
+
+@router.post(
+    "/docs/{filename}/translate-blocks",
+    response_model=dict,
+    summary="Translate structured page paragraphs into Chinese",
+)
+def translate_knowledge_blocks(
+    filename: str,
+    payload: TranslateBlocksRequest,
+):
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    document = locate_document(thread_id=None, filename=filename)
+    if not document:
+        raise HTTPException(status_code=404, detail="Structured document not found")
+
+    blocks = [
+        {
+            "id": paragraph.key,
+            "text": paragraph.text,
+        }
+        for paragraph in payload.paragraphs
+        if paragraph.key.strip() and paragraph.text.strip()
+    ]
+    if not blocks:
+        return {"translations": []}
+
+    try:
+        translations = translate_blocks_to_chinese_via_grpc(blocks)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Translation failed: {exc}") from exc
+
+    return {
+        "translations": [
+            {
+                "key": item["id"],
+                "translation": item["translation"],
+            }
+            for item in translations
+        ]
+    }
+
+
+@router.get(
     "/docs/{filename}/paragraph-location",
     response_model=KnowledgeParagraphLocationResponse,
     summary="Get paragraph location metadata for a knowledge document",
@@ -1023,8 +1550,11 @@ def get_knowledge_paragraph_location(
 
     excerpt = excerpts[0]
     return KnowledgeParagraphLocationResponse(
+        doc_id=document.doc_id,
+        scope=document.scope,
         filename=document.filename,
         title=document.title,
+        page_count=len(list(document.payload.get("pages") or [])),
         page_no=excerpt.get("page_no"),
         pdf_page_no=excerpt.get("pdf_page_no"),
         book_page_no=excerpt.get("book_page_no"),

@@ -1,0 +1,180 @@
+from types import SimpleNamespace
+
+import src.community.knowledge_base.catalog as catalog_module
+import src.community.knowledge_base.tools as tools_module
+from src.community.knowledge_base.book_metadata import build_book_metadata_record, save_book_metadata
+from src.community.knowledge_base.catalog import BookCatalogEntry, search_book_catalog
+
+
+def _write_metadata_sidecar(docs_root, records) -> None:
+    sidecar = docs_root / ".book_metadata.jsonl"
+    sidecar.write_text(
+        "\n".join(records) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_search_book_catalog_uses_layered_metadata_for_specific_query(tmp_path, monkeypatch) -> None:
+    docs_root = tmp_path / "knowledge" / "docs"
+    docs_root.mkdir(parents=True)
+    (docs_root / "general_history.md").write_text("# 总论\n中国历史概述", encoding="utf-8")
+    (docs_root / "finance_history.md").write_text("# 财政史\n财政制度演变", encoding="utf-8")
+    _write_metadata_sidecar(
+        docs_root,
+        [
+            '{"source_filename":"general_history.md","type":"core","categories":["通史"],"eras":["先秦-民国"],"summary":"中国历史通论"}',
+            '{"source_filename":"finance_history.md","type":"specialized","categories":["财政史","税制"],"eras":["明清"],"summary":"财政制度演变"}',
+        ],
+    )
+
+    monkeypatch.setattr(
+        catalog_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(docs_path=str(docs_root)),
+    )
+
+    results = search_book_catalog("财政制度演变", top_k=2)
+
+    assert [item.title for item in results][0] == "finance_history"
+    assert results[0].type == "specialized"
+    assert results[0].score is not None
+    assert "财政史" in results[0].categories
+
+
+def test_search_book_catalog_uses_layered_metadata_for_broad_query(tmp_path, monkeypatch) -> None:
+    docs_root = tmp_path / "knowledge" / "docs"
+    docs_root.mkdir(parents=True)
+    (docs_root / "general_history.md").write_text("# 总论\n中国历史概述", encoding="utf-8")
+    (docs_root / "finance_history.md").write_text("# 财政史\n财政制度演变", encoding="utf-8")
+    _write_metadata_sidecar(
+        docs_root,
+        [
+            '{"source_filename":"general_history.md","type":"core","categories":["通史"],"eras":["先秦-民国"],"summary":"中国历史通论"}',
+            '{"source_filename":"finance_history.md","type":"specialized","categories":["财政史","税制"],"eras":["明清"],"summary":"财政制度演变"}',
+        ],
+    )
+
+    monkeypatch.setattr(
+        catalog_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(docs_path=str(docs_root)),
+    )
+
+    results = search_book_catalog("中国历史通史概述", top_k=2)
+
+    assert [item.title for item in results][0] == "general_history"
+    assert results[0].type == "core"
+    assert results[0].score is not None
+
+
+def test_search_book_catalog_reads_generated_sidecar_metadata(tmp_path, monkeypatch) -> None:
+    docs_root = tmp_path / "knowledge" / "docs"
+    docs_root.mkdir(parents=True)
+    (docs_root / "finance_history.md").write_text("# 财政史\n财政制度演变", encoding="utf-8")
+    record = build_book_metadata_record(
+        source_filename="finance_history.md",
+        source_title="finance_history",
+        page_count=12,
+        prompt_input={
+            "source_filename": "finance_history.md",
+            "title": "finance_history",
+            "page_count": 12,
+            "selected_pages": [],
+            "selection_notes": [],
+        },
+        suggestion={
+            "title": "finance_history",
+            "type": {"value": "specialized", "confidence": 0.92, "evidence": "目录"},
+            "categories": [{"value": "财政史", "confidence": 0.9, "evidence": "标题"}],
+            "summary": {"value": "财政制度演变专题。", "confidence": 0.8, "evidence": "样本"},
+        },
+    )
+    save_book_metadata(docs_root, "finance_history.md", record)
+
+    monkeypatch.setattr(
+        catalog_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(docs_path=str(docs_root)),
+    )
+
+    results = search_book_catalog("财政制度演变", top_k=1)
+
+    assert results[0].type == "specialized"
+    assert "财政史" in results[0].categories
+    assert results[0].metadata_source is not None
+
+
+def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
+    candidates = [
+        BookCatalogEntry(
+            doc_id="core-1",
+            title="Core Book",
+            filename="core.md",
+            scope="global",
+            source_path="/tmp/core.md",
+            source_url="/api/knowledge/docs/core.md",
+            original_url=None,
+            preview="",
+            search_text="core",
+            search_tokens=["core"],
+            type="core",
+            categories=["通史"],
+            eras=["明清"],
+            regions=["全国"],
+            keywords=[],
+            summary="核心通史",
+            priority=1,
+            score=4.0,
+        ),
+        BookCatalogEntry(
+            doc_id="spec-1",
+            title="Spec Book",
+            filename="spec.md",
+            scope="global",
+            source_path="/tmp/spec.md",
+            source_url="/api/knowledge/docs/spec.md",
+            original_url=None,
+            preview="",
+            search_text="spec",
+            search_tokens=["spec"],
+            type="specialized",
+            categories=["财政史"],
+            eras=["明清"],
+            regions=["全国"],
+            keywords=[],
+            summary="专题支撑",
+            priority=2,
+            score=3.0,
+        ),
+        BookCatalogEntry(
+            doc_id="ref-1",
+            title="Ref Book",
+            filename="ref.md",
+            scope="global",
+            source_path="/tmp/ref.md",
+            source_url="/api/knowledge/docs/ref.md",
+            original_url=None,
+            preview="",
+            search_text="ref",
+            search_tokens=["ref"],
+            type="reference",
+            categories=["工具书"],
+            eras=[],
+            regions=[],
+            keywords=[],
+            summary="参考资料",
+            priority=3,
+            score=2.0,
+        ),
+    ]
+    monkeypatch.setattr(tools_module, "search_book_catalog", lambda query, thread_id=None, top_k=8: candidates)
+
+    output = tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
+
+    assert "### 核心通用书" in output
+    assert "### 专题支撑书" in output
+    assert "### 参考/工具书" in output
+    assert "core doc_ids: core-1" in output
+    assert "specialized doc_ids: spec-1" in output
+    assert "reference doc_ids: ref-1" in output
+    assert "all doc_ids: core-1, spec-1, ref-1" in output

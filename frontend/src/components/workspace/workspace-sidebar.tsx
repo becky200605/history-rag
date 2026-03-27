@@ -12,11 +12,20 @@ import {
 import { RecentChatList } from "./recent-chat-list";
 import { WorkspaceHeader } from "./workspace-header";
 import { WorkspaceNavChatList } from "./workspace-nav-chat-list";
-import { WorkspaceNavMenu } from "./workspace-nav-menu";
+import { WorkspaceUserNav } from "./workspace-user-nav";
+
+type WorkspaceUser = {
+  name?: string | null;
+  email: string;
+  image?: string | null;
+};
 
 export function WorkspaceSidebar({
+  user,
   ...props
-}: React.ComponentProps<typeof Sidebar>) {
+}: React.ComponentProps<typeof Sidebar> & {
+  user?: WorkspaceUser | null;
+}) {
   const { open: isSidebarOpen } = useSidebar();
   return (
     <>
@@ -29,7 +38,7 @@ export function WorkspaceSidebar({
           {isSidebarOpen && <RecentChatList />}
         </SidebarContent>
         <SidebarFooter>
-          <WorkspaceNavMenu />
+          <WorkspaceUserNav user={user ?? undefined} />
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>

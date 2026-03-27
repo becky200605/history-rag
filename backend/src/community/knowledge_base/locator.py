@@ -10,6 +10,7 @@ from typing import Any
 from src.community.knowledge_base.common import (
     derive_global_doc_id,
     derive_thread_doc_id,
+    derive_user_doc_id,
     resolve_project_path,
 )
 from src.community.knowledge_base.ingestion import list_ingestion_records
@@ -17,6 +18,7 @@ from src.community.knowledge_base.structured_document import (
     build_structured_document,
     load_structured_document,
 )
+from src.community.knowledge_base.user_store import build_user_doc_public_url, list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
@@ -169,8 +171,56 @@ def _locate_thread_document(thread_id: str, doc_id: str | None, filename: str | 
     return None
 
 
-def locate_document(thread_id: str | None, doc_id: str | None = None, filename: str | None = None) -> LocatedDocument | None:
+def _locate_user_document(user_id: str, doc_id: str | None, filename: str | None) -> LocatedDocument | None:
+    docs_dir = get_paths().user_knowledge_docs_dir(user_id)
+    for record in list_user_records(user_id):
+        source_filename = str(record.get("source_filename") or record.get("index_target_filename") or "")
+        record_id = str(record.get("id") or "")
+        if not source_filename or not record_id:
+            continue
+        candidate_doc_id = derive_user_doc_id(record_id)
+        if not _matches_identifier(
+            requested_doc_id=doc_id,
+            requested_filename=filename,
+            candidate_doc_id=candidate_doc_id,
+            candidate_filename=source_filename,
+        ):
+            continue
+
+        structured_path = record.get("structured_path")
+        payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+        if not payload and Path(source_filename).suffix.lower() in {".md", ".txt"}:
+            payload = _load_text_structured(
+                docs_dir / source_filename,
+                title=str(record.get("display_title") or Path(source_filename).stem),
+                parser_name=str(record.get("parse_method") or "plain_text"),
+            )
+        if not payload:
+            return None
+
+        return LocatedDocument(
+            doc_id=candidate_doc_id,
+            title=str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
+            filename=source_filename,
+            scope="user",
+            source_url=build_user_doc_public_url(source_filename),
+            original_url=build_user_doc_public_url(source_filename),
+            payload=payload,
+        )
+    return None
+
+
+def locate_document(
+    thread_id: str | None,
+    user_id: str | None = None,
+    doc_id: str | None = None,
+    filename: str | None = None,
+) -> LocatedDocument | None:
     """Resolve a structured document from a doc_id or filename."""
+    if user_id:
+        user_match = _locate_user_document(user_id, doc_id, filename)
+        if user_match:
+            return user_match
     if thread_id:
         thread_match = _locate_thread_document(thread_id, doc_id, filename)
         if thread_match:

@@ -170,6 +170,8 @@ FastAPI application on port 8001 with health check at `GET /health`.
 
 Proxied through nginx: `/api/langgraph/*` → LangGraph, all other `/api/*` → Gateway.
 
+Knowledge-base metadata helpers live in `src/community/knowledge_base/book_metadata.py`. They sample structured OCR output, build AI prompt bundles, and persist sidecars under a dedicated `.book-metadata/` subdirectory so they stay isolated from existing ingestion record loaders.
+
 ### Sandbox System (`src/sandbox/`)
 
 **Interface**: Abstract `Sandbox` with `execute_command`, `read_file`, `write_file`, `list_dir`

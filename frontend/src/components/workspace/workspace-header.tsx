@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenTextIcon, MessageSquarePlus } from "lucide-react";
+import { BookMarkedIcon, BookOpenTextIcon, MessageSquarePlus } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -69,6 +69,16 @@ export function WorkspaceHeader({ className }: { className?: string }) {
             </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>
+        {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && (
+          <SidebarMenuItem>
+            <SidebarMenuButton isActive={pathname === "/workspace/personal-knowledge"} asChild>
+              <Link className="text-muted-foreground" href="/workspace/personal-knowledge">
+                <BookMarkedIcon size={16} />
+                <span>个人知识库</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
       </SidebarMenu>
     </>
   );

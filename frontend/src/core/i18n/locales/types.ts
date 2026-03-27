@@ -141,6 +141,11 @@ export interface Translations {
     searchFor: (query: string) => string;
     searchForRelatedImagesFor: (query: string) => string;
     searchOnWebFor: (query: string) => string;
+    searchBookCatalog: string;
+    searchYourNotes: string;
+    searchThreadMaterials: string;
+    searchKnowledgeBase: string;
+    locateKnowledgePassage: string;
     viewWebPage: string;
     listFolder: string;
     readFile: string;

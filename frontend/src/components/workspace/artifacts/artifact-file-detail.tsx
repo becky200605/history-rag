@@ -5,13 +5,14 @@ import {
   CopyIcon,
   DownloadIcon,
   EyeIcon,
+  LanguagesIcon,
   LoaderIcon,
   PackageIcon,
   SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { pdfjs } from "react-pdf";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
 
@@ -38,8 +39,8 @@ import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import {
-  buildKnowledgePageImageURL,
-  getKnowledgeParagraphLocation,
+  buildKnowledgePageImageURLForDocumentUrl,
+  getKnowledgeParagraphLocationForDocumentUrl,
   type KnowledgeParagraphLocation,
 } from "@/core/knowledge/api";
 import { installSkill } from "@/core/skills/api";
@@ -52,7 +53,24 @@ import { CitationLink } from "../citations/citation-link";
 import { Tooltip } from "../tooltip";
 
 import { useArtifacts } from "./context";
-import { PdfViewer } from "./pdf-viewer";
+import { KNOWLEDGE_SIDE_PANE_WIDTH } from "./knowledge-layout";
+import { KnowledgePageSurface } from "./knowledge-page-surface";
+import {
+  KnowledgeSidePane,
+  type KnowledgeSidePaneMode,
+} from "./knowledge-side-pane";
+
+const PdfViewer = dynamic(
+  () => import("./pdf-viewer").then((module) => module.PdfViewer),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex size-full items-center justify-center bg-muted/30 p-4 text-sm text-muted-foreground">
+        正在加载 PDF...
+      </div>
+    ),
+  },
+);
 
 type PreviewVariant = "rendered" | "original" | "split";
 
@@ -60,10 +78,12 @@ export function ArtifactFileDetail({
   className,
   filepath: filepathFromProps,
   threadId,
+  onKnowledgeCompareToggle,
 }: {
   className?: string;
   filepath: string;
   threadId: string;
+  onKnowledgeCompareToggle?: (open: boolean) => void;
 }) {
   const { t } = useI18n();
   const { artifacts, setOpen, select } = useArtifacts();
@@ -484,17 +504,20 @@ export function ArtifactFileDetail({
             knowledgePdfLocator.pdfPageNo ||
             knowledgePdfLocator.paragraphNo) ? (
             <KnowledgeCitationPdfViewer
-              filename={knowledgePdfLocator.filename}
+              documentUrl={knowledgePdfUrl}
               pdfUrl={knowledgePdfUrl}
               pageNo={knowledgePdfLocator.pageNo}
               pdfPageNo={knowledgePdfLocator.pdfPageNo}
               paragraphNo={knowledgePdfLocator.paragraphNo}
+              onCompareToggle={onKnowledgeCompareToggle}
             />
           ) : (
-            <PdfViewer
-              url={knowledgePdfUrl}
+            <KnowledgeDocumentPdfViewer
+              documentUrl={knowledgePdfUrl}
+              pdfUrl={knowledgePdfUrl}
               initialPage={knowledgePdfPage ?? 0}
-              className="size-full"
+              filename={filepath}
+              onCompareToggle={onKnowledgeCompareToggle}
             />
           )
         )}
@@ -550,18 +573,113 @@ type KnowledgeCitationState =
   | { status: "error"; message: string }
   | { status: "ready"; data: KnowledgeParagraphLocation };
 
-function KnowledgeCitationPdfViewer({
+function KnowledgePaneModeButtons({
+  mode,
+  onModeChange,
+}: {
+  mode: KnowledgeSidePaneMode | null;
+  onModeChange: (mode: KnowledgeSidePaneMode | null) => void;
+}) {
+  return (
+    <>
+      <Button
+        variant={mode === "compare" ? "default" : "outline"}
+        size="sm"
+        className="h-8"
+        onClick={() => onModeChange(mode === "compare" ? null : "compare")}
+      >
+        原文对照
+      </Button>
+      <Button
+        variant={mode === "translation" ? "default" : "outline"}
+        size="sm"
+        className="h-8"
+        onClick={() => onModeChange(mode === "translation" ? null : "translation")}
+      >
+        <LanguagesIcon className="mr-1.5 size-4" />
+        原文翻译
+      </Button>
+    </>
+  );
+}
+
+function KnowledgeDocumentPdfViewer({
+  documentUrl,
+  pdfUrl,
+  initialPage,
   filename,
+  onCompareToggle,
+}: {
+  documentUrl: string;
+  pdfUrl: string;
+  initialPage: number;
+  filename: string;
+  onCompareToggle?: (open: boolean) => void;
+}) {
+  const [sidePaneMode, setSidePaneMode] = useState<KnowledgeSidePaneMode | null>(null);
+  const [currentPdfPageNo, setCurrentPdfPageNo] = useState<number>(initialPage + 1);
+  const sidePaneOpen = sidePaneMode !== null;
+
+  useEffect(() => {
+    onCompareToggle?.(sidePaneOpen);
+  }, [onCompareToggle, sidePaneOpen]);
+
+  useEffect(() => {
+    return () => {
+      onCompareToggle?.(false);
+    };
+  }, [onCompareToggle]);
+
+  return (
+    <div
+      className="grid size-full min-h-0"
+      style={{
+        gridTemplateColumns: sidePaneOpen
+          ? `minmax(0, 1fr) ${KNOWLEDGE_SIDE_PANE_WIDTH}px`
+          : "minmax(0, 1fr)",
+      }}
+    >
+      <div className="min-w-0">
+        <PdfViewer
+          url={pdfUrl}
+          initialPage={initialPage}
+          className="size-full"
+          onPageChange={(page) => setCurrentPdfPageNo(page + 1)}
+          toolbarExtra={(
+            <KnowledgePaneModeButtons
+              mode={sidePaneMode}
+              onModeChange={setSidePaneMode}
+            />
+          )}
+        />
+      </div>
+      {sidePaneMode && (
+        <KnowledgeSidePane
+          documentUrl={documentUrl}
+          currentPdfPageNo={currentPdfPageNo}
+          originFilename={filename}
+          originTitle={filename.replace(/\.pdf$/i, "")}
+          mode={sidePaneMode}
+        />
+      )}
+    </div>
+  );
+}
+
+function KnowledgeCitationPdfViewer({
+  documentUrl,
   pdfUrl,
   pageNo,
   pdfPageNo,
   paragraphNo,
+  onCompareToggle,
 }: {
-  filename: string;
+  documentUrl: string;
   pdfUrl: string;
   pageNo: string | null;
   pdfPageNo: string | null;
   paragraphNo: string | null;
+  onCompareToggle?: (open: boolean) => void;
 }) {
   const [state, setState] = useState<KnowledgeCitationState>({ status: "loading" });
   const [numPages, setNumPages] = useState<number | null>(null);
@@ -569,12 +687,24 @@ function KnowledgeCitationPdfViewer({
   const [pageInputValue, setPageInputValue] = useState<string>("");
   const [viewportSize, setViewportSize] = useState<{ width: number; height: number } | null>(null);
   const [imageNaturalSize, setImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const [sidePaneMode, setSidePaneMode] = useState<KnowledgeSidePaneMode | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const sidePaneOpen = sidePaneMode !== null;
+
+  useEffect(() => {
+    onCompareToggle?.(sidePaneOpen);
+  }, [onCompareToggle, sidePaneOpen]);
+
+  useEffect(() => {
+    return () => {
+      onCompareToggle?.(false);
+    };
+  }, [onCompareToggle]);
 
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
-    getKnowledgeParagraphLocation(filename, { pageNo, pdfPageNo, paragraphNo })
+    getKnowledgeParagraphLocationForDocumentUrl(documentUrl, { pageNo, pdfPageNo, paragraphNo })
       .then((data) => {
         if (!cancelled) {
           setState({ status: "ready", data });
@@ -591,19 +721,36 @@ function KnowledgeCitationPdfViewer({
     return () => {
       cancelled = true;
     };
-  }, [filename, pageNo, pdfPageNo, paragraphNo]);
+  }, [documentUrl, pageNo, pdfPageNo, paragraphNo]);
 
   useEffect(() => {
-    const loadingTask = pdfjs.getDocument(pdfUrl);
-    loadingTask.promise
-      .then((document) => {
-        setNumPages(document.numPages);
-      })
-      .catch(() => {
-        setNumPages(null);
-      });
+    let cancelled = false;
+    let cleanup: (() => Promise<void>) | null = null;
+
+    void (async () => {
+      try {
+        const { pdfjs } = await import("react-pdf");
+        const loadingTask = pdfjs.getDocument(pdfUrl);
+        cleanup = async () => {
+          await loadingTask.destroy();
+        };
+
+        const document = await loadingTask.promise;
+        if (!cancelled) {
+          setNumPages(document.numPages);
+        }
+      } catch {
+        if (!cancelled) {
+          setNumPages(null);
+        }
+      }
+    })();
+
     return () => {
-      void loadingTask.destroy();
+      cancelled = true;
+      if (cleanup) {
+        void cleanup();
+      }
     };
   }, [pdfUrl]);
 
@@ -638,11 +785,14 @@ function KnowledgeCitationPdfViewer({
     setImageNaturalSize(null);
   }, [currentPdfPageNo]);
 
+  const totalPages =
+    state.status === "ready" ? numPages ?? state.data.page_count ?? null : numPages;
+
   const goToPage = (page: number) => {
     if (page < 1) {
       return;
     }
-    if (numPages && page > numPages) {
+    if (totalPages && page > totalPages) {
       return;
     }
     setCurrentPdfPageNo(page);
@@ -660,7 +810,7 @@ function KnowledgeCitationPdfViewer({
     if (!currentPdfPageNo) {
       return;
     }
-    if (numPages && currentPdfPageNo >= numPages) {
+    if (totalPages && currentPdfPageNo >= totalPages) {
       return;
     }
     goToPage(currentPdfPageNo + 1);
@@ -684,7 +834,7 @@ function KnowledgeCitationPdfViewer({
 
   const { data } = state;
   const imageUrl = currentPdfPageNo
-    ? buildKnowledgePageImageURL(filename, currentPdfPageNo)
+    ? buildKnowledgePageImageURLForDocumentUrl(documentUrl, currentPdfPageNo)
     : null;
   const isCitationPage = currentPdfPageNo === data.pdf_page_no;
   const pageWidth = data.page_meta?.page_width ?? null;
@@ -758,17 +908,23 @@ function KnowledgeCitationPdfViewer({
                 }
               }}
             />
-            <span className="text-muted-foreground">/ {numPages ?? "?"}</span>
+            <span className="text-muted-foreground">/ {totalPages ?? "?"}</span>
           </div>
           <Button
             variant="ghost"
             size="icon"
             className="size-8"
             onClick={goToNextPage}
-            disabled={!currentPdfPageNo || (numPages ? currentPdfPageNo >= numPages : false)}
+            disabled={!currentPdfPageNo || (totalPages ? currentPdfPageNo >= totalPages : false)}
           >
             <ChevronRightIcon className="size-4" />
           </Button>
+          <div className="ml-2 flex items-center gap-2">
+            <KnowledgePaneModeButtons
+              mode={sidePaneMode}
+              onModeChange={setSidePaneMode}
+            />
+          </div>
         </div>
         <div className="text-xs text-muted-foreground">
           {isCitationPage && data.paragraph_no
@@ -776,56 +932,77 @@ function KnowledgeCitationPdfViewer({
             : "当前页预览"}
         </div>
       </div>
-      {imageUrl ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+      <div
+        className="grid min-h-0 flex-1"
+        style={{
+          gridTemplateColumns: sidePaneOpen
+            ? `minmax(0, 1fr) ${KNOWLEDGE_SIDE_PANE_WIDTH}px`
+            : "minmax(0, 1fr)",
+        }}
+      >
+        {imageUrl ? (
           <div
-            ref={viewportRef}
-            className="flex h-full w-full items-center justify-center overflow-hidden"
+            className={cn(
+              "flex min-h-0 min-w-0 p-4",
+              sidePaneOpen ? "items-center justify-center pl-3 pr-2" : "items-center justify-center",
+            )}
           >
             <div
-              className="relative shrink-0 overflow-hidden rounded-md bg-white shadow-lg"
-              style={
-                renderedWidth && renderedHeight
-                  ? {
-                      width: `${renderedWidth}px`,
-                      height: `${renderedHeight}px`,
-                    }
-                  : undefined
-              }
-            >
-              <img
-                src={imageUrl}
-                alt={`${data.title} PDF page ${data.pdf_page_no ?? ""}`}
-                className="block bg-white object-contain"
-                style={
-                  renderedWidth && renderedHeight
-                    ? {
-                        width: `${renderedWidth}px`,
-                        height: `${renderedHeight}px`,
-                      }
-                    : undefined
-                }
-                onLoad={(event) => {
-                  setImageNaturalSize({
-                    width: event.currentTarget.naturalWidth,
-                    height: event.currentTarget.naturalHeight,
-                  });
-                }}
-              />
-              {overlayStyle && (
-                <div
-                  className="pointer-events-none absolute rounded-md border-2 border-emerald-500/90 bg-emerald-300/12"
-                  style={overlayStyle}
-                />
+              ref={viewportRef}
+              className={cn(
+                "flex h-full w-full overflow-hidden justify-center",
+                sidePaneOpen ? "items-center" : "items-center",
               )}
+            >
+              <KnowledgePageSurface
+                width={renderedWidth}
+                height={renderedHeight}
+              >
+                <img
+                  src={imageUrl}
+                  alt={`${data.title} PDF page ${data.pdf_page_no ?? ""}`}
+                  className="block bg-white object-contain"
+                  style={
+                    renderedWidth && renderedHeight
+                      ? {
+                          width: `${renderedWidth}px`,
+                          height: `${renderedHeight}px`,
+                        }
+                      : undefined
+                  }
+                  onLoad={(event) => {
+                    setImageNaturalSize({
+                      width: event.currentTarget.naturalWidth,
+                      height: event.currentTarget.naturalHeight,
+                    });
+                  }}
+                />
+                {overlayStyle && (
+                  <div
+                    className="pointer-events-none absolute rounded-md border-2 border-emerald-500/90 bg-emerald-300/12"
+                    style={overlayStyle}
+                  />
+                )}
+              </KnowledgePageSurface>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="flex size-full items-center justify-center p-4 text-sm text-muted-foreground">
-          当前 citation 缺少 PDF 页码，无法渲染整页预览。
-        </div>
-      )}
+        ) : (
+          <div className="flex size-full items-center justify-center p-4 text-sm text-muted-foreground">
+            当前 citation 缺少 PDF 页码，无法渲染整页预览。
+          </div>
+        )}
+        {sidePaneMode && (
+          <KnowledgeSidePane
+            documentUrl={documentUrl}
+            currentPdfPageNo={currentPdfPageNo}
+            originFilename={data.filename}
+            originTitle={data.title}
+            mode={sidePaneMode}
+            referencePageWidth={renderedWidth}
+            referencePageHeight={renderedHeight}
+          />
+        )}
+      </div>
     </div>
   );
 }

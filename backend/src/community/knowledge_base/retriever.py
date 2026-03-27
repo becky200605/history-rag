@@ -4,6 +4,7 @@ from qdrant_client import QdrantClient
 from qdrant_client import models
 
 from src.community.knowledge_base.common import get_thread_collection_name
+from src.community.knowledge_base.common import get_user_collection_name
 from src.community.knowledge_base.lexical_search import lexical_search_documents
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.reflection import resolve_variable
@@ -13,6 +14,19 @@ Module for retrieving documents from the knowledge base using Qdrant.
 """
 
 _retriever_instance = None
+SCOPE_BOOSTS = {
+    "user": 1.05,
+    "thread": 1.0,
+    "global": 0.95,
+}
+SOURCE_KIND_BOOSTS = {
+    "annotation": 1.30,
+    "excerpt": 1.20,
+    "upload": 1.10,
+    "thread_upload": 1.00,
+    "global_document": 0.95,
+    "translation": 0.85,
+}
 
 
 def get_embedding_model() -> Embeddings:
@@ -51,6 +65,22 @@ class KnowledgeBaseRetriever:
         self.config = get_knowledge_base_config()
         self.client = get_qdrant_client()
         self.embeddings = get_embedding_model()
+
+    def _score_result(self, result: dict) -> float:
+        metadata = result.get("metadata", {})
+        scope = str(metadata.get("scope") or "global")
+        source_kind = str(
+            metadata.get("source_kind")
+            or (
+                "thread_upload"
+                if scope == "thread"
+                else "upload"
+                if scope == "user"
+                else "global_document"
+            )
+        )
+        base_score = float(result.get("score", 0.0) or 0.0)
+        return base_score * SCOPE_BOOSTS.get(scope, 1.0) * SOURCE_KIND_BOOSTS.get(source_kind, 1.0)
 
     def _search_collection(
         self,
@@ -106,24 +136,42 @@ class KnowledgeBaseRetriever:
         self,
         query: str,
         thread_id: str | None = None,
+        user_id: str | None = None,
         doc_ids: list[str] | None = None,
+        scopes: list[str] | None = None,
     ) -> list[dict]:
         """Search for relevant documents."""
-        collections = [self.config.qdrant.collection_name]
-        if thread_id:
-            collections.insert(
-                0,
-                get_thread_collection_name(
+        enabled_scopes = scopes or ["user", "thread", "global"]
+        collections: list[str] = []
+        if user_id and "user" in enabled_scopes:
+            collections.append(
+                get_user_collection_name(
                     self.config.qdrant.collection_name,
-                    thread_id,
+                    user_id,
                 ),
             )
+        if thread_id:
+            if "thread" in enabled_scopes:
+                collections.append(
+                    get_thread_collection_name(
+                        self.config.qdrant.collection_name,
+                        thread_id,
+                    ),
+                )
+        if "global" in enabled_scopes:
+            collections.append(self.config.qdrant.collection_name)
 
         merged_results: list[dict] = []
         for collection_name in collections:
             try:
                 merged_results.extend(
-                    self._search_collection(collection_name, query, doc_ids=doc_ids)
+                    self._search_collection(
+                        collection_name,
+                        query,
+                        doc_ids=doc_ids
+                        if collection_name == self.config.qdrant.collection_name
+                        else None,
+                    )
                 )
             except Exception:
                 continue
@@ -133,21 +181,28 @@ class KnowledgeBaseRetriever:
                 lexical_search_documents(
                     query,
                     thread_id=thread_id,
+                    user_id=user_id,
                     doc_ids=doc_ids,
+                    scopes=enabled_scopes,
                     top_k=self.config.retrieval.top_k,
                 )
             )
         except Exception:
             pass
 
-        merged_results.sort(key=lambda item: item.get("score", 0), reverse=True)
+        for result in merged_results:
+            result["weighted_score"] = self._score_result(result)
+
+        merged_results.sort(key=lambda item: item.get("weighted_score", item.get("score", 0)), reverse=True)
 
         deduped_results: list[dict] = []
-        seen_keys: set[tuple[str, int | None, int | None, str]] = set()
+        seen_keys: set[tuple[str, int | None, int | None, str, str]] = set()
         for result in merged_results:
             metadata = result.get("metadata", {})
             dedupe_key = (
-                result.get("filename", ""),
+                metadata.get("origin_doc_id")
+                or metadata.get("doc_id")
+                or result.get("filename", ""),
                 metadata.get("pdf_page_no")
                 or metadata.get("page_no")
                 or metadata.get("page")
@@ -156,6 +211,7 @@ class KnowledgeBaseRetriever:
                 or metadata.get("paragraph_no")
                 or metadata.get("line_end"),
                 result.get("content", ""),
+                metadata.get("source_kind", ""),
             )
             if dedupe_key in seen_keys:
                 continue

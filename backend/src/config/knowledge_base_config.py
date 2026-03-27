@@ -102,6 +102,64 @@ class MineruConfig(BaseModel):
     )
 
 
+class TranslationRpcConfig(BaseModel):
+    """Configuration for translation gRPC service."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Whether the translation gRPC service is enabled.",
+    )
+    target: str | None = Field(
+        default=None,
+        description="Optional gRPC target for the internal translation service. Defaults to MinerU host with the translation port when omitted.",
+    )
+    use_tls: bool = Field(
+        default=False,
+        description="Whether to connect to the translation gRPC service with TLS.",
+    )
+    api_token: str | None = Field(
+        default=None,
+        description="Optional bearer token sent as gRPC metadata.",
+    )
+    request_timeout: int = Field(
+        default=60,
+        description="Timeout in seconds for the translation gRPC request.",
+    )
+
+
+class BookMetadataConfig(BaseModel):
+    """Configuration for AI-generated book routing metadata."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Whether AI-generated book metadata is enabled after OCR/parse.",
+    )
+    model_name: str | None = Field(
+        default=None,
+        description="Optional chat model name used for metadata generation. Defaults to the app default model.",
+    )
+    front_page_limit: int = Field(
+        default=10,
+        ge=1,
+        le=30,
+        description="Number of leading pages to include in the metadata prompt bundle.",
+    )
+    body_sample_count: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description="Number of evenly sampled body pages to include after the front-page window.",
+    )
+    max_excerpt_chars: int = Field(
+        default=1200,
+        ge=200,
+        le=4000,
+        description="Maximum characters per sampled page excerpt.",
+    )
+
+    model_config = ConfigDict(protected_namespaces=())
+
+
 class KnowledgeBaseConfig(BaseModel):
     """Configuration for the Knowledge Base RAG system."""
 
@@ -132,6 +190,14 @@ class KnowledgeBaseConfig(BaseModel):
     mineru: MineruConfig | None = Field(
         default=None,
         description="Optional MinerU KIE configuration for PDF → Markdown conversion.",
+    )
+    translation_rpc: TranslationRpcConfig | None = Field(
+        default=None,
+        description="Optional translation gRPC service configuration.",
+    )
+    book_metadata: BookMetadataConfig | None = Field(
+        default=None,
+        description="Optional AI-generated book routing metadata configuration.",
     )
 
     model_config = ConfigDict(extra="allow")

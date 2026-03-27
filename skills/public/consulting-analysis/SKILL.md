@@ -303,7 +303,7 @@ Assemble all outputs into a single, structured **Analysis Framework Document**:
 
 # Phase 1→2 Handoff: Data Collection & Chart Generation
 
-After the analysis framework is generated, it is handed off to **other data collection skills** (e.g., deep-research, data-analysis, web search agents) to:
+After the analysis framework is generated, it is handed off to **other data collection skills** (e.g., data-analysis, web search agents) to:
 
 1. Execute the **Search Keywords** from each chapter's data requirements
 2. Collect quantitative data, qualitative insights, and source URLs
@@ -621,7 +621,7 @@ reasoning_locale = en
 
 - This skill operates in **two phases** of a multi-step agentic workflow:
   - **Phase 1** produces the analysis framework and data collection requirements
-  - **Data collection** is performed by other skills (deep-research, data-analysis, etc.)
+  - **Data collection** is performed by other skills (data-analysis, web search, etc.)
   - **Phase 2** receives the collected data and produces the final report
 - Dynamic titling: **Rewrite** topics from the Framework into professional, concise subject-based headers
 - The Conclusion section must contain **NO** detailed recommendations — those belong in the preceding body chapters

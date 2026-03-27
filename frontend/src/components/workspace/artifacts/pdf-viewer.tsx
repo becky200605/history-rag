@@ -8,7 +8,7 @@ import {
   MinusIcon,
   PlusIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -24,6 +24,7 @@ export interface PdfViewerProps {
   initialPage?: number;
   className?: string;
   onPageChange?: (page: number) => void;
+  toolbarExtra?: ReactNode;
 }
 
 export function PdfViewer({
@@ -31,6 +32,7 @@ export function PdfViewer({
   initialPage = 0,
   className,
   onPageChange,
+  toolbarExtra,
 }: PdfViewerProps) {
   const [numPages, setNumPages] = useState<number | null>(null);
   const [pageNumber, setPageNumber] = useState<number>(initialPage + 1);
@@ -249,12 +251,14 @@ export function PdfViewer({
           </Button>
         </div>
 
-        {/* Download */}
-        <a href={url} target="_blank" rel="noopener noreferrer">
-          <Button variant="ghost" size="icon" className="size-8">
-            <DownloadIcon className="size-4" />
-          </Button>
-        </a>
+        <div className="flex items-center gap-1">
+          {toolbarExtra}
+          <a href={url} target="_blank" rel="noopener noreferrer">
+            <Button variant="ghost" size="icon" className="size-8">
+              <DownloadIcon className="size-4" />
+            </Button>
+          </a>
+        </div>
       </div>
 
       {/* PDF Content */}

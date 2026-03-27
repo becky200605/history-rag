@@ -19,5 +19,5 @@
   "index_target_format": "structured_json",
   "hints": {},
   "error": null,
-  "replace_existing_index": false
+  "replace_existing_index": true
 }

@@ -19,10 +19,14 @@ interface KnowledgeDocInfo {
 }
 
 function parseKnowledgeDocUrl(url: string): KnowledgeDocInfo | null {
-  if (!url.startsWith("/api/knowledge/docs/")) return null;
-
   try {
     const urlObj = new URL(url, window.location.origin);
+    if (
+      !urlObj.pathname.startsWith("/api/knowledge/docs/") &&
+      !urlObj.pathname.startsWith("/api/secure-knowledge/users/me/knowledge/docs/")
+    ) {
+      return null;
+    }
     const pathParts = urlObj.pathname.split("/");
     const filename = decodeURIComponent(pathParts[pathParts.length - 1] ?? "");
     const isPdf = filename.toLowerCase().endsWith(".pdf");
@@ -165,13 +169,13 @@ function extractDomain(url: string): string {
   if (url.startsWith("/")) {
     try {
       const urlObj = new URL(url, window.location.origin);
-      const match = /\/api\/knowledge\/docs\/(.+)$/.exec(urlObj.pathname);
+      const match = /\/api\/(?:knowledge\/docs|secure-knowledge\/users\/me\/knowledge\/docs)\/(.+)$/.exec(urlObj.pathname);
       if (match) {
         return decodeURIComponent(match[1] ?? "知识库文档");
       }
       return "知识库文档";
     } catch {
-      const match = /\/api\/knowledge\/docs\/([^?]+)/.exec(url);
+      const match = /\/api\/(?:knowledge\/docs|secure-knowledge\/users\/me\/knowledge\/docs)\/([^?]+)/.exec(url);
       return match ? decodeURIComponent(match[1] ?? "知识库文档") : "知识库文档";
     }
   }

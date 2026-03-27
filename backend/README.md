@@ -131,6 +131,8 @@ FastAPI application providing REST endpoints for frontend integration:
 | `GET /api/threads/{id}/uploads/list` | List uploaded files |
 | `GET /api/threads/{id}/artifacts/{path}` | Serve generated artifacts |
 
+Internal book-metadata sidecars are prepared by `src/community/knowledge_base/book_metadata.py` and stored under a dedicated `.book-metadata/` subdirectory so they do not collide with existing ingestion `*.json` loaders.
+
 ---
 
 ## Quick Start

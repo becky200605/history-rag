@@ -3,28 +3,24 @@
 import json
 from pathlib import Path
 
-from langchain_community.document_loaders import DirectoryLoader
-from langchain_community.document_loaders import PyMuPDFLoader
-from langchain_community.document_loaders import TextLoader
-from langchain_community.document_loaders import UnstructuredMarkdownLoader
+from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader, TextLoader, UnstructuredMarkdownLoader
 from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from qdrant_client import models
 from qdrant_client.models import Distance, VectorParams
 
-from src.community.knowledge_base.common import derive_global_doc_id
-from src.community.knowledge_base.common import derive_thread_doc_id
-from src.community.knowledge_base.common import extract_title_from_text
-from src.community.knowledge_base.common import get_thread_collection_name
-from src.community.knowledge_base.common import resolve_project_path
+from src.community.knowledge_base.common import derive_global_doc_id, derive_thread_doc_id, derive_user_doc_id, extract_title_from_text, get_thread_collection_name, get_user_collection_name, resolve_project_path
 from src.community.knowledge_base.ingestion import build_record_lookup, list_ingestion_records
 from src.community.knowledge_base.retriever import get_embedding_model, get_qdrant_client
 from src.community.knowledge_base.structured_document import build_bbox_from_position, load_structured_document
+from src.community.knowledge_base.user_store import list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
 INDEXABLE_EXTENSIONS = {".md", ".txt", ".pdf"}
 STRUCTURED_INDEXABLE_EXTENSIONS = INDEXABLE_EXTENSIONS | {".json"}
+STRUCTURED_SOURCE_TYPE = "structured"
 
 
 def _load_safe_directory(loader_cls, docs_path: Path, glob_pattern: str) -> list[Document]:
@@ -148,6 +144,26 @@ def _clear_collection_if_exists(client, collection_name: str) -> None:
         pass
 
 
+def _delete_points_by_doc_ids(client, collection_name: str, doc_ids: list[str]) -> None:
+    if not doc_ids:
+        return
+    try:
+        client.delete(
+            collection_name=collection_name,
+            points_selector=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="metadata.doc_id",
+                        match=models.MatchAny(any=doc_ids),
+                    )
+                ]
+            ),
+            wait=True,
+        )
+    except Exception:
+        pass
+
+
 def _annotate_chunks(
     chunks: list[Document],
     source_text_by_path: dict[str, str],
@@ -194,6 +210,8 @@ def _annotate_chunks(
                 "paragraph_id": chunk.metadata.get("paragraph_id"),
                 "paragraph_no": chunk.metadata.get("paragraph_no"),
                 "paragraph_no_in_doc": chunk.metadata.get("paragraph_no_in_doc"),
+                "paragraph_chunk_index": chunk.metadata.get("paragraph_chunk_index"),
+                "paragraph_chunk_count": chunk.metadata.get("paragraph_chunk_count"),
                 "bbox": chunk.metadata.get("bbox"),
                 "bbox_source": chunk.metadata.get("bbox_source"),
                 "source_type": chunk.metadata.get("source_type", "unknown"),
@@ -203,19 +221,63 @@ def _annotate_chunks(
     return chunks
 
 
-def _build_chunks(documents: list[Document], scope: str, thread_id: str | None) -> list[Document]:
-    kb_config = get_knowledge_base_config()
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=kb_config.chunking.chunk_size,
-        chunk_overlap=kb_config.chunking.chunk_overlap,
+def _is_structured_document(document: Document) -> bool:
+    return str(document.metadata.get("source_type", "")).lower() == STRUCTURED_SOURCE_TYPE
+
+
+def _build_document_splitter(chunk_size: int, chunk_overlap: int) -> RecursiveCharacterTextSplitter:
+    return RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
         add_start_index=True,
     )
+
+
+def _split_structured_document(
+    document: Document,
+    splitter: RecursiveCharacterTextSplitter,
+    chunk_size: int,
+) -> list[Document]:
+    text = document.page_content.strip()
+    if not text:
+        return []
+    if len(text) <= chunk_size:
+        return [document]
+
+    chunks = splitter.split_documents([document])
+    if len(chunks) <= 1:
+        return [document]
+
+    total_chunks = len(chunks)
+    for index, chunk in enumerate(chunks, start=1):
+        chunk.metadata["paragraph_chunk_index"] = index
+        chunk.metadata["paragraph_chunk_count"] = total_chunks
+    return chunks
+
+
+def _split_regular_document(document: Document, splitter: RecursiveCharacterTextSplitter) -> list[Document]:
+    chunks = splitter.split_documents([document])
+    return chunks or [document]
+
+
+def _build_chunks(documents: list[Document], scope: str, thread_id: str | None) -> list[Document]:
+    kb_config = get_knowledge_base_config()
+    splitter = _build_document_splitter(
+        kb_config.chunking.chunk_size,
+        kb_config.chunking.chunk_overlap,
+    )
+    chunk_size = kb_config.chunking.chunk_size
     source_text_by_path = {
         str(document.metadata.get("source", "")): document.page_content
         for document in documents
         if document.metadata.get("source")
     }
-    chunks = splitter.split_documents(documents)
+    chunks: list[Document] = []
+    for document in documents:
+        if _is_structured_document(document):
+            chunks.extend(_split_structured_document(document, splitter, chunk_size))
+        else:
+            chunks.extend(_split_regular_document(document, splitter))
     return _annotate_chunks(chunks, source_text_by_path, scope=scope, thread_id=thread_id)
 
 
@@ -242,6 +304,41 @@ def index_documents(
     )
     vector_store.add_documents(chunks)
     return len(chunks)
+
+
+def upsert_documents(
+    documents: list[Document],
+    collection_name: str,
+    scope: str,
+    thread_id: str | None = None,
+    replace_doc_ids: list[str] | None = None,
+) -> int:
+    """Upsert documents by replacing only the specified doc IDs."""
+    doc_ids = [doc_id for doc_id in (replace_doc_ids or []) if doc_id]
+    client = get_qdrant_client()
+
+    if not documents:
+        _delete_points_by_doc_ids(client, collection_name, doc_ids)
+        return 0
+
+    chunks = _build_chunks(documents, scope=scope, thread_id=thread_id)
+    embeddings = get_embedding_model()
+    _ensure_collection(client, collection_name, embeddings)
+    _delete_points_by_doc_ids(client, collection_name, doc_ids)
+
+    vector_store = QdrantVectorStore(
+        client=client,
+        collection_name=collection_name,
+        embedding=embeddings,
+    )
+    vector_store.add_documents(chunks)
+    return len(chunks)
+
+
+def delete_documents_by_doc_ids(collection_name: str, doc_ids: list[str]) -> None:
+    """Delete vectors for the given doc IDs from a collection."""
+    client = get_qdrant_client()
+    _delete_points_by_doc_ids(client, collection_name, [doc_id for doc_id in doc_ids if doc_id])
 
 
 def rebuild_global_knowledge_index() -> int:
@@ -335,6 +432,86 @@ def rebuild_global_knowledge_index() -> int:
         scope="global",
         thread_id=None,
     )
+
+
+def _load_global_records_by_source_filename(docs_root: Path) -> dict[str, dict[str, object]]:
+    records_by_source_filename: dict[str, dict[str, object]] = {}
+    ingestion_dir = docs_root / ".ingestion"
+    if not ingestion_dir.exists():
+        return records_by_source_filename
+
+    for path in sorted(ingestion_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if payload.get("schema_version") == 1:
+            continue
+        source_filename = payload.get("source_filename")
+        if source_filename:
+            records_by_source_filename[str(source_filename)] = payload
+    return records_by_source_filename
+
+
+def upsert_global_knowledge_records(source_filenames: list[str]) -> int:
+    kb_config = get_knowledge_base_config()
+    docs_root = resolve_project_path(kb_config.docs_path)
+    records_by_source_filename = _load_global_records_by_source_filename(docs_root)
+    documents: list[Document] = []
+    replace_doc_ids: list[str] = []
+
+    for source_filename in source_filenames:
+        record = records_by_source_filename.get(str(source_filename))
+        if not record:
+            continue
+
+        doc_id = derive_global_doc_id(docs_root, docs_root / str(source_filename))
+        replace_doc_ids.append(doc_id)
+
+        if not record.get("indexable") or not record.get("index_target_path"):
+            continue
+
+        path = Path(str(record["index_target_path"]))
+        if not path.exists():
+            continue
+
+        for document in _load_documents_from_paths([path]):
+            source_path = Path(str(document.metadata.get("source", "")))
+            title = document.metadata.get("structured_title") or Path(str(source_filename)).stem
+            document.metadata["doc_id"] = doc_id
+            document.metadata["title"] = title
+            document.metadata["filename"] = str(record.get("preview_filename") or source_filename)
+            document.metadata["detected_title"] = extract_title_from_text(
+                document.page_content[:800],
+                source_path.stem,
+            )
+            if record.get("preview_filename"):
+                document.metadata["preview_filename"] = record.get("preview_filename")
+            if (
+                record.get("source_filename")
+                and record.get("source_filename") != record.get("preview_filename")
+            ):
+                document.metadata["origin_filename"] = record.get("source_filename")
+            documents.append(document)
+
+    return upsert_documents(
+        documents,
+        collection_name=kb_config.qdrant.collection_name,
+        scope="global",
+        thread_id=None,
+        replace_doc_ids=replace_doc_ids,
+    )
+
+
+def delete_global_knowledge_documents(source_filenames: list[str]) -> None:
+    kb_config = get_knowledge_base_config()
+    docs_root = resolve_project_path(kb_config.docs_path)
+    doc_ids = [
+        derive_global_doc_id(docs_root, docs_root / str(source_filename))
+        for source_filename in source_filenames
+        if source_filename
+    ]
+    delete_documents_by_doc_ids(kb_config.qdrant.collection_name, doc_ids)
 
 
 def rebuild_thread_upload_index(thread_id: str) -> int:
@@ -448,6 +625,265 @@ def rebuild_thread_upload_index(thread_id: str) -> int:
         scope="thread",
         thread_id=thread_id,
     )
+
+
+def upsert_thread_upload_records(thread_id: str, source_filenames: list[str]) -> int:
+    kb_config = get_knowledge_base_config()
+    collection_name = get_thread_collection_name(kb_config.qdrant.collection_name, thread_id)
+    source_lookup = {
+        str(record.get("source_filename")): record
+        for record in list_ingestion_records(thread_id)
+        if record.get("source_filename")
+    }
+    documents: list[Document] = []
+    replace_doc_ids: list[str] = []
+    for source_filename in source_filenames:
+        record = source_lookup.get(str(source_filename))
+        if not record:
+            continue
+
+        doc_id = derive_thread_doc_id(Path(str(source_filename)))
+        replace_doc_ids.append(doc_id)
+
+        if not record.get("indexable") or not record.get("index_target_path"):
+            continue
+
+        path = Path(str(record["index_target_path"]))
+        if not path.exists():
+            continue
+
+        for document in _load_documents_from_paths([path]):
+            source_path = Path(str(document.metadata.get("source", "")))
+            preview_filename = record.get("preview_filename") or source_filename
+            document.metadata["scope"] = "thread"
+            document.metadata["thread_id"] = thread_id
+            document.metadata["filename"] = preview_filename
+            document.metadata["doc_id"] = doc_id
+            document.metadata["title"] = record.get("display_title", Path(str(source_filename)).stem)
+            document.metadata["parse_method"] = record.get("parse_method")
+            document.metadata["parse_status"] = record.get("parse_status")
+            hints = record.get("hints") or {}
+            for key, value in hints.items():
+                document.metadata[key] = value
+            source_virtual_path = (
+                record.get("preview_virtual_path")
+                or record.get("source_virtual_path")
+            )
+            if source_virtual_path:
+                document.metadata["source_virtual_path"] = source_virtual_path
+            if source_filename != preview_filename:
+                document.metadata["origin_filename"] = source_filename
+                document.metadata["origin_virtual_path"] = record.get("source_virtual_path")
+            if "source_virtual_path" not in document.metadata:
+                document.metadata["source_virtual_path"] = f"/mnt/user-data/uploads/{preview_filename}"
+            document.metadata["detected_title"] = extract_title_from_text(
+                document.page_content[:800],
+                source_path.stem,
+            )
+            documents.append(document)
+
+    if not documents:
+        delete_documents_by_doc_ids(collection_name, replace_doc_ids)
+        return 0
+
+    return upsert_documents(
+        documents,
+        collection_name=collection_name,
+        scope="thread",
+        thread_id=thread_id,
+        replace_doc_ids=replace_doc_ids,
+    )
+
+
+def delete_thread_upload_records(thread_id: str, source_filenames: list[str]) -> None:
+    kb_config = get_knowledge_base_config()
+    collection_name = get_thread_collection_name(kb_config.qdrant.collection_name, thread_id)
+    doc_ids = [
+        derive_thread_doc_id(Path(str(source_filename)))
+        for source_filename in source_filenames
+        if source_filename
+    ]
+    delete_documents_by_doc_ids(collection_name, doc_ids)
+
+
+def rebuild_user_knowledge_index(user_id: str) -> int:
+    """Rebuild the per-user personal knowledge collection from indexed user files."""
+    kb_config = get_knowledge_base_config()
+    collection_name = get_user_collection_name(kb_config.qdrant.collection_name, user_id)
+
+    try:
+        get_paths().ensure_user_knowledge_dirs(user_id)
+        docs_dir = get_paths().user_knowledge_docs_dir(user_id)
+    except ValueError:
+        _clear_collection_if_exists(get_qdrant_client(), collection_name)
+        raise
+
+    records = list_user_records(user_id)
+    candidate_paths: list[Path] = []
+    seen_paths: set[Path] = set()
+    records_by_index_target: dict[str, dict[str, object]] = {}
+    preview_filenames_to_skip: set[str] = set()
+    recorded_source_filenames: set[str] = set()
+
+    for record in records:
+        target_filename = record.get("index_target_filename")
+        target_path = record.get("index_target_path")
+        preview_filename = record.get("preview_filename")
+        source_filename = record.get("source_filename")
+        if preview_filename:
+            preview_filenames_to_skip.add(str(preview_filename))
+        if source_filename:
+            recorded_source_filenames.add(str(source_filename))
+        if target_filename:
+            records_by_index_target[str(target_filename)] = record
+            recorded_source_filenames.add(str(target_filename))
+        if not record.get("retrieval_enabled") or not record.get("indexable"):
+            continue
+        if not target_filename or not target_path:
+            continue
+        path = Path(str(target_path))
+        if not path.exists() or path in seen_paths:
+            continue
+        candidate_paths.append(path)
+        seen_paths.add(path)
+
+    if docs_dir.exists():
+        for path in docs_dir.iterdir():
+            if not path.is_file() or path.suffix.lower() not in INDEXABLE_EXTENSIONS:
+                continue
+            if path.name in preview_filenames_to_skip or path.name in recorded_source_filenames:
+                continue
+            if path in seen_paths:
+                continue
+            candidate_paths.append(path)
+            seen_paths.add(path)
+
+    if not candidate_paths:
+        _clear_collection_if_exists(get_qdrant_client(), collection_name)
+        return 0
+
+    documents = _load_documents_from_paths(candidate_paths)
+    if not documents:
+        _clear_collection_if_exists(get_qdrant_client(), collection_name)
+        return 0
+
+    for document in documents:
+        source_path = Path(str(document.metadata.get("source", "")))
+        if not source_path.name:
+            continue
+        record = records_by_index_target.get(source_path.name)
+
+        document.metadata["scope"] = "user"
+        document.metadata["user_id"] = user_id
+        document.metadata["filename"] = source_path.name
+        if record:
+            record_id = str(record.get("id") or source_path.stem)
+            source_filename = str(record.get("source_filename") or source_path.name)
+            preview_filename = str(record.get("preview_filename") or source_filename)
+            document.metadata["doc_id"] = derive_user_doc_id(record_id)
+            document.metadata["title"] = record.get("display_title", Path(source_filename).stem)
+            document.metadata["filename"] = preview_filename
+            document.metadata["parse_method"] = record.get("parse_method")
+            document.metadata["parse_status"] = record.get("parse_status")
+            document.metadata["source_kind"] = record.get("source_kind", "upload")
+            document.metadata["origin_scope"] = record.get("origin_scope")
+            document.metadata["origin_doc_id"] = record.get("origin_doc_id")
+            document.metadata["origin_filename"] = record.get("origin_filename")
+            document.metadata["origin_anchor"] = record.get("origin_anchor")
+            hints = record.get("hints") or {}
+            for key, value in hints.items():
+                document.metadata[key] = value
+            document.metadata["source_artifact_url"] = record.get("preview_artifact_url") or record.get("source_artifact_url")
+        else:
+            document.metadata["doc_id"] = derive_user_doc_id(source_path.name)
+            document.metadata["title"] = source_path.stem
+            document.metadata["source_kind"] = "upload"
+            document.metadata["source_artifact_url"] = None
+        document.metadata["detected_title"] = extract_title_from_text(
+            document.page_content[:800],
+            source_path.stem,
+        )
+
+    return index_documents(
+        documents,
+        collection_name=collection_name,
+        scope="user",
+        thread_id=None,
+    )
+
+
+def upsert_user_knowledge_records(user_id: str, record_ids: list[str]) -> int:
+    kb_config = get_knowledge_base_config()
+    collection_name = get_user_collection_name(kb_config.qdrant.collection_name, user_id)
+    records_by_id = {
+        str(record.get("id")): record
+        for record in list_user_records(user_id)
+        if record.get("id")
+    }
+    documents: list[Document] = []
+    replace_doc_ids: list[str] = []
+
+    for record_id in record_ids:
+        record = records_by_id.get(str(record_id))
+        if not record:
+            continue
+
+        doc_id = derive_user_doc_id(str(record_id))
+        replace_doc_ids.append(doc_id)
+
+        if not record.get("retrieval_enabled") or not record.get("indexable") or not record.get("index_target_path"):
+            continue
+
+        path = Path(str(record["index_target_path"]))
+        if not path.exists():
+            continue
+
+        for document in _load_documents_from_paths([path]):
+            source_path = Path(str(document.metadata.get("source", "")))
+            source_filename = str(record.get("source_filename") or source_path.name)
+            preview_filename = str(record.get("preview_filename") or source_filename)
+            document.metadata["scope"] = "user"
+            document.metadata["user_id"] = user_id
+            document.metadata["filename"] = preview_filename
+            document.metadata["doc_id"] = doc_id
+            document.metadata["title"] = record.get("display_title", Path(source_filename).stem)
+            document.metadata["parse_method"] = record.get("parse_method")
+            document.metadata["parse_status"] = record.get("parse_status")
+            document.metadata["source_kind"] = record.get("source_kind", "upload")
+            document.metadata["origin_scope"] = record.get("origin_scope")
+            document.metadata["origin_doc_id"] = record.get("origin_doc_id")
+            document.metadata["origin_filename"] = record.get("origin_filename")
+            document.metadata["origin_anchor"] = record.get("origin_anchor")
+            hints = record.get("hints") or {}
+            for key, value in hints.items():
+                document.metadata[key] = value
+            document.metadata["source_artifact_url"] = (
+                record.get("preview_artifact_url") or record.get("source_artifact_url")
+            )
+            document.metadata["detected_title"] = extract_title_from_text(
+                document.page_content[:800],
+                source_path.stem,
+            )
+            documents.append(document)
+
+    if not documents:
+        delete_documents_by_doc_ids(collection_name, replace_doc_ids)
+        return 0
+
+    return upsert_documents(
+        documents,
+        collection_name=collection_name,
+        scope="user",
+        thread_id=None,
+        replace_doc_ids=replace_doc_ids,
+    )
+
+
+def delete_user_knowledge_records(user_id: str, record_ids: list[str]) -> None:
+    kb_config = get_knowledge_base_config()
+    collection_name = get_user_collection_name(kb_config.qdrant.collection_name, user_id)
+    doc_ids = [derive_user_doc_id(str(record_id)) for record_id in record_ids if record_id]
+    delete_documents_by_doc_ids(collection_name, doc_ids)
 
 
 def run_indexer() -> None:

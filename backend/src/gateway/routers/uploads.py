@@ -1,18 +1,22 @@
 """Upload router for handling file uploads."""
 
 import logging
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from src.community.knowledge_base.book_metadata_runtime import maybe_generate_book_metadata
 from src.community.knowledge_base.document_parsers import (
     OFFICE_EXTENSIONS,
     PDF_EXTENSIONS,
     extract_office_text_with_markitdown,
 )
-from src.community.knowledge_base.indexer import rebuild_thread_upload_index
+from src.community.knowledge_base.indexer import (
+    delete_thread_upload_records,
+    upsert_thread_upload_records,
+)
 from src.community.knowledge_base.ingestion import (
     build_ingestion_record,
     build_ingestion_urls,
@@ -27,6 +31,7 @@ from src.community.knowledge_base.ingestion import (
 )
 from src.community.knowledge_base.mineru_grpc import build_structured_document_from_mineru_grpc
 from src.community.knowledge_base.structured_document import build_structured_document
+from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import VIRTUAL_PATH_PREFIX, get_paths
 from src.sandbox.sandbox_provider import get_sandbox_provider
 
@@ -95,7 +100,7 @@ async def upload_files(
 
     uploads_dir = get_uploads_dir(thread_id)
     uploaded_files = []
-    needs_reindex = False
+    indexed_source_filenames: list[str] = []
     hints = {
         key: value
         for key, value in {
@@ -110,6 +115,7 @@ async def upload_files(
     sandbox_id = sandbox_provider.acquire(thread_id)
     sandbox = sandbox_provider.get(sandbox_id)
     is_local_sandbox = sandbox_id == "local"
+    metadata_config = get_knowledge_base_config().book_metadata
 
     for file in files:
         if not file.filename:
@@ -175,6 +181,13 @@ async def upload_files(
                         safe_filename,
                         structured_payload,
                     )
+                    maybe_generate_book_metadata(
+                        structured_payload=structured_payload,
+                        source_filename=safe_filename,
+                        title=record["display_title"],
+                        output_dir=uploads_dir,
+                        config=metadata_config,
+                    )
                     if not is_local_sandbox:
                         ingestion_urls = build_ingestion_urls(thread_id, structured_filename)
                         sandbox.update_file(
@@ -190,7 +203,7 @@ async def upload_files(
                     file_info["structured_artifact_url"] = record["structured_artifact_url"]
                     file_info["index_target_filename"] = structured_filename
                     file_info["parse_status"] = record["parse_status"]
-                    needs_reindex = True
+                    indexed_source_filenames.append(str(record["source_filename"]))
                 else:
                     record = mark_record_failed(record, "MinerU gRPC returned no structured text")
                     file_info["parse_status"] = record["parse_status"]
@@ -210,6 +223,13 @@ async def upload_files(
                         safe_filename,
                         structured_payload,
                     )
+                    maybe_generate_book_metadata(
+                        structured_payload=structured_payload,
+                        source_filename=safe_filename,
+                        title=record["display_title"],
+                        output_dir=uploads_dir,
+                        config=metadata_config,
+                    )
                     if not is_local_sandbox:
                         ingestion_urls = build_ingestion_urls(thread_id, structured_filename)
                         sandbox.update_file(
@@ -225,7 +245,7 @@ async def upload_files(
                     file_info["structured_artifact_url"] = record["structured_artifact_url"]
                     file_info["index_target_filename"] = structured_filename
                     file_info["parse_status"] = record["parse_status"]
-                    needs_reindex = True
+                    indexed_source_filenames.append(str(record["source_filename"]))
                 else:
                     record = mark_record_failed(record, "Office parser returned no text")
                     file_info["parse_status"] = record["parse_status"]
@@ -243,6 +263,13 @@ async def upload_files(
                     safe_filename,
                     structured_payload,
                 )
+                maybe_generate_book_metadata(
+                    structured_payload=structured_payload,
+                    source_filename=safe_filename,
+                    title=record["display_title"],
+                    output_dir=uploads_dir,
+                    config=metadata_config,
+                )
                 if not is_local_sandbox:
                     ingestion_urls = build_ingestion_urls(thread_id, structured_filename)
                     sandbox.update_file(
@@ -259,7 +286,7 @@ async def upload_files(
                 file_info["structured_artifact_url"] = record["structured_artifact_url"]
                 file_info["index_target_filename"] = structured_filename
                 file_info["parse_status"] = record["parse_status"]
-                needs_reindex = True
+                indexed_source_filenames.append(str(record["source_filename"]))
             else:
                 record["parse_status"] = "uploaded"
 
@@ -270,9 +297,9 @@ async def upload_files(
             logger.error(f"Failed to upload {file.filename}: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to upload {file.filename}: {str(e)}")
 
-    if needs_reindex:
+    if indexed_source_filenames:
         try:
-            rebuild_thread_upload_index(thread_id)
+            upsert_thread_upload_records(thread_id, indexed_source_filenames)
             mark_thread_records_indexed(thread_id)
         except Exception as exc:
             logger.warning("Failed to rebuild thread upload index for %s: %s", thread_id, exc)
@@ -396,10 +423,10 @@ async def delete_uploaded_file(thread_id: str, filename: str) -> dict:
             if source_filename:
                 remove_ingestion_record(thread_id, source_filename)
         try:
-            rebuild_thread_upload_index(thread_id)
+            delete_thread_upload_records(thread_id, [record.get("source_filename") or filename] if record else [filename])
             mark_thread_records_indexed(thread_id)
         except Exception as exc:
-            logger.warning("Failed to rebuild thread upload index for %s after delete: %s", thread_id, exc)
+            logger.warning("Failed to update thread upload index for %s after delete: %s", thread_id, exc)
         logger.info(f"Deleted file: {filename}")
         return {"success": True, "message": f"Deleted {filename}"}
     except Exception as e:

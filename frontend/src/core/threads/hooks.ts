@@ -6,6 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import { env } from "@/env";
+import { authClient } from "@/server/better-auth/client";
 
 import { getAPIClient } from "../api";
 import { useUpdateSubtask } from "../tasks/context";
@@ -58,7 +60,10 @@ export function useThreadStream({
           queryKey: ["threads", "search"],
           exact: false,
         },
-        (oldData: Array<AgentThread>) => {
+        (oldData: Array<AgentThread> | undefined) => {
+          if (!oldData) {
+            return oldData;
+          }
           return oldData.map((t) => {
             if (t.thread_id === threadId) {
               return {
@@ -89,12 +94,21 @@ export function useSubmitThread({
   threadId: string | null | undefined;
   thread: UseStream<AgentThreadState>;
   threadContext: Omit<AgentThreadContext, "thread_id">;
-  afterSubmit?: () => void;
+  afterSubmit?: () => void | Promise<void>;
 }) {
   const queryClient = useQueryClient();
+  const { data: session } = authClient.useSession();
   const callback = useCallback(
     async (message: PromptInputMessage) => {
       const text = message.text.trim();
+      const userId = session?.user.id;
+
+      if (
+        env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
+        (!userId || !threadId)
+      ) {
+        throw new Error("Missing authenticated user or thread ID.");
+      }
 
       // Upload files first if any
       if (message.files && message.files.length > 0) {
@@ -152,6 +166,12 @@ export function useSubmitThread({
         },
         {
           threadId: isNewThread ? threadId! : undefined,
+          metadata:
+            env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && userId
+              ? {
+                  user_id: userId,
+                }
+              : undefined,
           streamSubgraphs: true,
           streamResumable: true,
           streamMode: ["values", "messages-tuple", "custom"],
@@ -161,13 +181,22 @@ export function useSubmitThread({
           context: {
             ...threadContext,
             thread_id: threadId,
+            ...(userId ? { user_id: userId } : {}),
           },
         },
       );
       void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
-      afterSubmit?.();
+      await afterSubmit?.();
     },
-    [thread, isNewThread, threadId, threadContext, queryClient, afterSubmit],
+    [
+      thread,
+      isNewThread,
+      threadId,
+      threadContext,
+      queryClient,
+      afterSubmit,
+      session?.user.id,
+    ],
   );
   return callback;
 }
@@ -180,10 +209,23 @@ export function useThreads(
   },
 ) {
   const apiClient = getAPIClient();
+  const { data: session, isPending } = authClient.useSession();
+  const userId = session?.user.id;
+  const shouldUseMetadataFilter = env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
+
   return useQuery<AgentThread[]>({
-    queryKey: ["threads", "search", params],
+    queryKey: ["threads", "search", params, userId],
+    enabled: env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" || (!!userId && !isPending),
     queryFn: async () => {
-      const response = await apiClient.threads.search<AgentThreadState>(params);
+      const response = await apiClient.threads.search<AgentThreadState>({
+        ...params,
+        metadata:
+          shouldUseMetadataFilter && userId
+            ? {
+                user_id: userId,
+              }
+            : params.metadata,
+      });
       return response as AgentThread[];
     },
   });
@@ -202,7 +244,10 @@ export function useDeleteThread() {
           queryKey: ["threads", "search"],
           exact: false,
         },
-        (oldData: Array<AgentThread>) => {
+        (oldData: Array<AgentThread> | undefined) => {
+          if (!oldData) {
+            return oldData;
+          }
           return oldData.filter((t) => t.thread_id !== threadId);
         },
       );
@@ -231,7 +276,10 @@ export function useRenameThread() {
           queryKey: ["threads", "search"],
           exact: false,
         },
-        (oldData: Array<AgentThread>) => {
+        (oldData: Array<AgentThread> | undefined) => {
+          if (!oldData) {
+            return oldData;
+          }
           return oldData.map((t) => {
             if (t.thread_id === threadId) {
               return {

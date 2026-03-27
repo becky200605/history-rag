@@ -351,3 +351,10 @@ memory:
 #     api_token: $MINERU_API_TOKEN
 #     model_version: $MINERU_MODEL_VERSION
 #     request_timeout: 600
+#   translation_rpc:
+#     enabled: $TRANSLATION_RPC_ENABLED
+#     # Defaults to the same host/IP as MinerU, but keeps its own port/auth config
+#     # target: 127.0.0.1:50052
+#     use_tls: $TRANSLATION_RPC_USE_TLS
+#     api_token: $TRANSLATION_RPC_API_TOKEN
+#     request_timeout: 60

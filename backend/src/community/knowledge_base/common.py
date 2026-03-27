@@ -16,6 +16,11 @@ def get_thread_collection_name(base_collection_name: str, thread_id: str) -> str
     return f"{base_collection_name}__thread__{sanitize_collection_suffix(thread_id)}"
 
 
+def get_user_collection_name(base_collection_name: str, user_id: str) -> str:
+    """Build the per-user collection name for personal knowledge docs."""
+    return f"{base_collection_name}__user__{sanitize_collection_suffix(user_id)}"
+
+
 def resolve_project_path(path_value: str) -> Path:
     """Resolve a project-relative path from either repo root or backend cwd."""
     path = Path(path_value)
@@ -40,6 +45,11 @@ def derive_global_doc_id(docs_root: Path, source_path: Path) -> str:
 def derive_thread_doc_id(source_path: Path) -> str:
     """Build a stable doc_id for thread uploads."""
     return source_path.name
+
+
+def derive_user_doc_id(record_id: str) -> str:
+    """Build a stable doc_id for user knowledge records."""
+    return record_id
 
 
 def extract_title_from_text(text: str, fallback: str) -> str:

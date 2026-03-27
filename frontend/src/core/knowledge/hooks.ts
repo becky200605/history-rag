@@ -8,8 +8,10 @@ import {
   listKnowledgeFiles,
   loadKnowledgeStatus,
   triggerReindex,
+  updateKnowledgeFileMetadata,
   type KnowledgeBaseStatus,
   type KnowledgeDocumentListResponse,
+  type KnowledgeMetadataUpdateInput,
   type KnowledgeUploadOptions,
   type KnowledgeUploadResponse,
   type ReindexResponse,
@@ -26,6 +28,13 @@ import {
 const KNOWLEDGE_FILES_QUERY_KEY = ["knowledge", "uploads"];
 const KNOWLEDGE_STATUS_QUERY_KEY = ["knowledgeStatus"];
 const KNOWLEDGE_DOCS_QUERY_KEY = ["knowledgeDocs"];
+const ACTIVE_KNOWLEDGE_JOB_STATUSES = [
+  "queued",
+  "queued_ocr",
+  "parsing",
+  "queued_embedding",
+  "indexing",
+];
 
 export function useKnowledgeFiles() {
   return useQuery({
@@ -34,7 +43,7 @@ export function useKnowledgeFiles() {
     refetchInterval: (query) => {
       const files = query.state.data?.files ?? [];
       const hasActiveJobs = files.some((file) =>
-        ["queued", "parsing", "indexing"].includes(file.parse_status ?? ""),
+        ACTIVE_KNOWLEDGE_JOB_STATUSES.includes(file.parse_status ?? ""),
       );
       return hasActiveJobs ? 2000 : false;
     },
@@ -64,6 +73,22 @@ export function useDeleteKnowledgeFile() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
+    },
+  });
+}
+
+export function useUpdateKnowledgeFileMetadata() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    { success: boolean; message: string; metadata: KnowledgeMetadataUpdateInput & { tags?: string[] } },
+    Error,
+    { filename: string; payload: KnowledgeMetadataUpdateInput }
+  >({
+    mutationFn: ({ filename, payload }) =>
+      updateKnowledgeFileMetadata(filename, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
     },
   });

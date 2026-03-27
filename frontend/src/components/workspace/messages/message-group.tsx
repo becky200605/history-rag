@@ -29,6 +29,7 @@ import {
   findToolCallResult,
 } from "@/core/messages/utils";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
+import { getToolCallLabel } from "@/core/tools/utils";
 import { extractTitleFromMarkdown } from "@/core/utils/markdown";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
@@ -203,12 +204,9 @@ function ToolCall({
   const { t } = useI18n();
   const { setOpen, autoOpen, autoSelect, selectedArtifact, select } =
     useArtifacts();
+  const label = getToolCallLabel(name, args, t);
 
   if (name === "web_search") {
-    let label: React.ReactNode = t.toolCalls.searchForRelatedInfo;
-    if (typeof args.query === "string") {
-      label = t.toolCalls.searchOnWebFor(args.query);
-    }
     return (
       <ChainOfThoughtStep key={id} label={label} icon={SearchIcon}>
         {Array.isArray(result) && (
@@ -225,10 +223,6 @@ function ToolCall({
       </ChainOfThoughtStep>
     );
   } else if (name === "image_search") {
-    let label: React.ReactNode = t.toolCalls.searchForRelatedImages;
-    if (typeof args.query === "string") {
-      label = t.toolCalls.searchForRelatedImagesFor(args.query);
-    }
     const results = (
       result as {
         results: {
@@ -281,7 +275,7 @@ function ToolCall({
       <ChainOfThoughtStep
         key={id}
         className="cursor-pointer"
-        label={t.toolCalls.viewWebPage}
+        label={label}
         icon={GlobeIcon}
         onClick={() => {
           window.open(url, "_blank");
@@ -296,15 +290,22 @@ function ToolCall({
         </ChainOfThoughtSearchResult>
       </ChainOfThoughtStep>
     );
+  } else if (
+    name === "book_search" ||
+    name === "knowledge_search" ||
+    name === "knowledge_locate"
+  ) {
+    return (
+      <ChainOfThoughtStep
+        key={id}
+        label={label}
+        icon={name === "book_search" ? BookOpenTextIcon : SearchIcon}
+      ></ChainOfThoughtStep>
+    );
   } else if (name === "ls") {
-    let description: string | undefined = (args as { description: string })
-      ?.description;
-    if (!description) {
-      description = t.toolCalls.listFolder;
-    }
     const path: string | undefined = (args as { path: string })?.path;
     return (
-      <ChainOfThoughtStep key={id} label={description} icon={FolderOpenIcon}>
+      <ChainOfThoughtStep key={id} label={label} icon={FolderOpenIcon}>
         {path && (
           <ChainOfThoughtSearchResult className="cursor-pointer">
             {path}
@@ -313,14 +314,9 @@ function ToolCall({
       </ChainOfThoughtStep>
     );
   } else if (name === "read_file") {
-    let description: string | undefined = (args as { description: string })
-      ?.description;
-    if (!description) {
-      description = t.toolCalls.readFile;
-    }
     const { path } = args as { path: string; content: string };
     return (
-      <ChainOfThoughtStep key={id} label={description} icon={BookOpenTextIcon}>
+      <ChainOfThoughtStep key={id} label={label} icon={BookOpenTextIcon}>
         {path && (
           <ChainOfThoughtSearchResult className="cursor-pointer">
             {path}
@@ -329,11 +325,6 @@ function ToolCall({
       </ChainOfThoughtStep>
     );
   } else if (name === "write_file" || name === "str_replace") {
-    let description: string | undefined = (args as { description: string })
-      ?.description;
-    if (!description) {
-      description = t.toolCalls.writeFile;
-    }
     const path: string | undefined = (args as { path: string })?.path;
     if (isLoading && isLast && autoOpen && autoSelect && path) {
       setTimeout(() => {
@@ -352,7 +343,7 @@ function ToolCall({
       <ChainOfThoughtStep
         key={id}
         className="cursor-pointer"
-        label={description}
+        label={label}
         icon={NotebookPenIcon}
         onClick={() => {
           select(
@@ -371,16 +362,11 @@ function ToolCall({
       </ChainOfThoughtStep>
     );
   } else if (name === "bash") {
-    const description: string | undefined = (args as { description: string })
-      ?.description;
-    if (!description) {
-      return t.toolCalls.executeCommand;
-    }
     const command: string | undefined = (args as { command: string })?.command;
     return (
       <ChainOfThoughtStep
         key={id}
-        label={description}
+        label={label}
         icon={SquareTerminalIcon}
       >
         {command && (
@@ -397,7 +383,7 @@ function ToolCall({
     return (
       <ChainOfThoughtStep
         key={id}
-        label={t.toolCalls.needYourHelp}
+        label={label}
         icon={MessageCircleQuestionMarkIcon}
       ></ChainOfThoughtStep>
     );
@@ -405,19 +391,13 @@ function ToolCall({
     return (
       <ChainOfThoughtStep
         key={id}
-        label={t.toolCalls.writeTodos}
+        label={label}
         icon={ListTodoIcon}
       ></ChainOfThoughtStep>
     );
   } else {
-    const description: string | undefined = (args as { description: string })
-      ?.description;
     return (
-      <ChainOfThoughtStep
-        key={id}
-        label={description ?? t.toolCalls.useTool(name)}
-        icon={WrenchIcon}
-      ></ChainOfThoughtStep>
+      <ChainOfThoughtStep key={id} label={label} icon={WrenchIcon}></ChainOfThoughtStep>
     );
   }
 }

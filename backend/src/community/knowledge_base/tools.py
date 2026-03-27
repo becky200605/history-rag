@@ -1,17 +1,40 @@
-from urllib.parse import quote, urlencode
+from __future__ import annotations
 
-from langchain.tools import ToolRuntime, tool
-from langgraph.typing import ContextT
+from typing import Any, Generic, TYPE_CHECKING, TypeVar
+try:
+    from langchain.tools import ToolRuntime, tool
+except ImportError:  # pragma: no cover - compatibility with older LangChain layouts
+    from langchain.tools import tool
 
-from src.agents.thread_state import ThreadState
-from src.community.knowledge_base.catalog import search_book_catalog
+    _ToolRuntimeContextT = TypeVar("_ToolRuntimeContextT")
+    _ToolRuntimeStateT = TypeVar("_ToolRuntimeStateT")
+
+    class ToolRuntime(Generic[_ToolRuntimeContextT, _ToolRuntimeStateT]):  # type: ignore[no-redef]
+        pass
+try:
+    from langgraph.typing import ContextT
+except ImportError:  # pragma: no cover - compatibility with older LangGraph layouts
+    ContextT = TypeVar("ContextT")
+
+if TYPE_CHECKING:
+    from src.agents.thread_state import ThreadState
+else:  # pragma: no cover - runtime fallback for import-light utility modules
+    ThreadState = Any  # type: ignore[assignment]
+from src.community.knowledge_base.catalog import (
+    CORE_TYPE,
+    REFERENCE_TYPE,
+    SPECIALIZED_TYPE,
+    BookCatalogEntry,
+    search_book_catalog,
+)
+from src.community.knowledge_base.citations import resolve_result_citation_context
 from src.community.knowledge_base.locator import extract_document_context, locate_document
-from src.community.knowledge_base.retriever import get_retriever
 
-BOOK_SEARCH_TOP_K = 5
+BOOK_SEARCH_TOP_K = 8
 KNOWLEDGE_SEARCH_TOP_K = 3
 KNOWLEDGE_RESULT_MAX_CHARS = 900
 KNOWLEDGE_RESULT_MAX_LINES = 24
+ALLOWED_SEARCH_SCOPES = {"user", "thread", "global"}
 
 
 def _parse_doc_ids(doc_ids: str | None) -> list[str] | None:
@@ -21,44 +44,18 @@ def _parse_doc_ids(doc_ids: str | None) -> list[str] | None:
     return parsed or None
 
 
-def _encode_source_url(url: str | None) -> str | None:
-    if not url:
-        return url
-    return quote(url, safe="/:?=&%#")
-
-
-def _append_pdf_page_fragment(url: str | None, pdf_page_no: int | None) -> str | None:
-    if not url or not pdf_page_no or "#page=" in url:
-        return url
-    return f"{url}#page={pdf_page_no}"
-
-
-def _append_location_params(
-    url: str | None,
-    *,
-    page: int | None = None,
-    page_no: int | None = None,
-    pdf_page_no: int | None = None,
-    paragraph_no: int | None = None,
-) -> str | None:
-    if not url:
-        return url
-    base, sep, fragment = url.partition("#")
-    params: dict[str, int] = {}
-    if page is not None:
-        params["page"] = page
-    if page_no:
-        params["page_no"] = page_no
-    if pdf_page_no:
-        params["pdf_page_no"] = pdf_page_no
-    if paragraph_no:
-        params["paragraph_no"] = paragraph_no
-    if params:
-        joiner = "&" if "?" in base else "?"
-        base = f"{base}{joiner}{urlencode(params)}"
-    if sep:
-        return f"{base}#{fragment}"
-    return base
+def _parse_scopes(scopes: str | None) -> list[str] | None:
+    if not scopes:
+        return None
+    parsed = []
+    seen: set[str] = set()
+    for item in scopes.split(","):
+        normalized = item.strip().lower()
+        if not normalized or normalized not in ALLOWED_SEARCH_SCOPES or normalized in seen:
+            continue
+        seen.add(normalized)
+        parsed.append(normalized)
+    return parsed or None
 
 
 def _build_location_text(
@@ -127,6 +124,45 @@ def _truncate_text(text: str, *, max_chars: int, max_lines: int | None = None) -
     return normalized
 
 
+def _normalize_type(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in {CORE_TYPE, SPECIALIZED_TYPE, REFERENCE_TYPE}:
+        return normalized
+    return "unknown"
+
+
+def _format_book_metadata(candidate: BookCatalogEntry) -> str:
+    parts: list[str] = []
+    book_type = _normalize_type(candidate.type)
+    if book_type != "unknown":
+        parts.append(f"类型: {book_type}")
+    if candidate.categories:
+        parts.append(f"分类: {'、'.join(candidate.categories)}")
+    if candidate.eras:
+        parts.append(f"时代: {'、'.join(candidate.eras)}")
+    if candidate.regions:
+        parts.append(f"地区: {'、'.join(candidate.regions)}")
+    if candidate.priority is not None:
+        parts.append(f"优先级: {candidate.priority}")
+    if candidate.score is not None:
+        parts.append(f"相关度: {candidate.score:.2f}")
+    if candidate.summary:
+        parts.append(f"摘要: {candidate.summary}")
+    return " | ".join(parts)
+
+
+def _group_book_candidates(candidates: list[BookCatalogEntry]) -> dict[str, list[BookCatalogEntry]]:
+    grouped = {
+        CORE_TYPE: [],
+        SPECIALIZED_TYPE: [],
+        REFERENCE_TYPE: [],
+        "unknown": [],
+    }
+    for candidate in candidates:
+        grouped.setdefault(_normalize_type(candidate.type), grouped["unknown"]).append(candidate)
+    return grouped
+
+
 @tool("book_search", parse_docstring=True)
 def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) -> str:
     """Search candidate books before full-text retrieval.
@@ -142,17 +178,46 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
     if not candidates:
         return "No likely books found for this query."
 
+    grouped = _group_book_candidates(candidates)
     lines = ["## 候选书目", ""]
-    for index, candidate in enumerate(candidates, 1):
-        lines.append(f"### 书目 {index}: {candidate.title}")
-        lines.append(f"doc_id: {candidate.doc_id}")
-        lines.append(f"范围: {candidate.scope}")
-        lines.append("")
+    section_titles = (
+        (CORE_TYPE, "核心通用书"),
+        (SPECIALIZED_TYPE, "专题支撑书"),
+        (REFERENCE_TYPE, "参考/工具书"),
+        ("unknown", "其他候选书"),
+    )
+    for role, title in section_titles:
+        items = grouped.get(role, [])
+        if not items:
+            continue
+        lines.append(f"### {title}")
+        for index, candidate in enumerate(items, 1):
+            lines.append(f"#### 书目 {index}: {candidate.title}")
+            lines.append(f"doc_id: {candidate.doc_id}")
+            lines.append(f"范围: {candidate.scope}")
+            metadata_text = _format_book_metadata(candidate)
+            if metadata_text:
+                lines.append(metadata_text)
+            lines.append("")
 
-    doc_ids = ", ".join(candidate.doc_id for candidate in candidates)
+    core_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[CORE_TYPE])
+    specialized_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[SPECIALIZED_TYPE])
+    reference_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[REFERENCE_TYPE])
+    all_doc_ids = ", ".join(candidate.doc_id for candidate in candidates)
+
     lines.append("---")
-    lines.append("如果这些候选书看起来相关，下一步调用 `knowledge_search`，并传入下面这串 doc_ids：")
-    lines.append(doc_ids)
+    lines.append("推荐链路:")
+    lines.append("1. 先查个人知识：`knowledge_search(query=..., scopes=\"user\")`。")
+    lines.append("2. 如果个人知识不足，再优先用 `core doc_ids` 调 `knowledge_search(query=..., doc_ids=..., scopes=\"global\")`。")
+    lines.append("3. 只有核心通用书证据不足且问题明显需要专题材料时，才扩大到 `specialized doc_ids` 或 `reference doc_ids`。")
+    lines.append("4. `all doc_ids` 或不带 `doc_ids` 的整库检索，仅在最后阶段使用。")
+    if core_doc_ids:
+        lines.append(f"core doc_ids: {core_doc_ids}")
+    if specialized_doc_ids:
+        lines.append(f"specialized doc_ids: {specialized_doc_ids}")
+    if reference_doc_ids:
+        lines.append(f"reference doc_ids: {reference_doc_ids}")
+    lines.append(f"all doc_ids: {all_doc_ids}")
     return "\n".join(lines)
 
 
@@ -161,11 +226,16 @@ def knowledge_search_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     query: str,
     doc_ids: str | None = None,
+    scopes: str | None = None,
 ) -> str:
     """Search the internal knowledge base for domain-specific information.
 
-    Use this tool when the user asks questions about specialized domain knowledge,
-    internal company information, or topics covered in the knowledge base.
+    Use this tool in staged retrieval:
+    1. Search personal knowledge first with `scopes="user"`.
+    2. If still insufficient, search global/core knowledge with `scopes="global"` and
+       candidate `doc_ids` from `book_search`.
+    3. Search specialized/global-wide material only at a later stage when the earlier
+       evidence is insufficient or the query explicitly asks for exact wording.
 
     This tool searches through curated internal documents and returns relevant
     knowledge snippets with source document references.
@@ -173,14 +243,20 @@ def knowledge_search_tool(
     Args:
         query: The search query describing what information you need.
         doc_ids: Optional comma-separated candidate book IDs from `book_search`.
+        scopes: Optional comma-separated scopes: `user`, `thread`, `global`.
     """
     try:
+        from src.community.knowledge_base.retriever import get_retriever
+
         retriever = get_retriever()
         parsed_doc_ids = _parse_doc_ids(doc_ids)
+        parsed_scopes = _parse_scopes(scopes)
         results = retriever.search(
             query,
             thread_id=runtime.context.get("thread_id"),
+            user_id=runtime.context.get("user_id"),
             doc_ids=parsed_doc_ids,
+            scopes=parsed_scopes,
         )
     except Exception as e:
         return f"Error searching knowledge base: {e}"
@@ -203,76 +279,39 @@ def knowledge_search_tool(
         doc_id = metadata.get("doc_id")
         line_start = metadata.get("line_start")
         line_end = metadata.get("line_end")
-        page_no = metadata.get("page_no")
-        pdf_page_no = metadata.get("pdf_page_no")
-        paragraph_no = metadata.get("paragraph_no")
-        page = result.get("page")
-        source_type = result.get("source_type", metadata.get("source_type", "unknown"))
-        scope = metadata.get("scope", "global")
-
-        if scope == "thread":
-            thread_id = metadata.get("thread_id") or runtime.context.get("thread_id")
-            source_virtual_path = metadata.get(
-                "source_virtual_path",
-                f"/mnt/user-data/uploads/{filename}",
-            )
-            source_url = (
-                f"/api/threads/{thread_id}/artifacts{source_virtual_path}"
-                if thread_id
-                else source_virtual_path
-            )
-            original_virtual_path = metadata.get("origin_virtual_path")
-            original_url = (
-                f"/api/threads/{thread_id}/artifacts{original_virtual_path}"
-                if thread_id and original_virtual_path
-                else original_virtual_path
-            )
-        else:
-            source_url = f"/api/knowledge/docs/{filename}"
-            origin_filename = metadata.get("origin_filename")
-            original_url = f"/api/knowledge/docs/{origin_filename}" if origin_filename else None
-
-        if source_type == "pdf" and page is not None and pdf_page_no is None:
-            source_url = _append_location_params(source_url, page=page)
-            original_url = _append_location_params(original_url, page=page)
-        else:
-            source_url = _append_pdf_page_fragment(source_url, pdf_page_no)
-            original_url = _append_pdf_page_fragment(original_url, pdf_page_no)
-            source_url = _append_location_params(
-                source_url,
-                page_no=page_no,
-                pdf_page_no=pdf_page_no,
-                paragraph_no=paragraph_no,
-            )
-            original_url = _append_location_params(
-                original_url,
-                page_no=page_no,
-                pdf_page_no=pdf_page_no,
-                paragraph_no=paragraph_no,
-            )
-
-        source_url = _encode_source_url(source_url)
-        original_url = _encode_source_url(original_url)
+        citation_context = resolve_result_citation_context(
+            result,
+            thread_id=runtime.context.get("thread_id"),
+            user_id=runtime.context.get("user_id"),
+        )
+        source_url = citation_context["source_url"]
+        original_url = citation_context["original_url"]
         citation_label = _build_citation_label(
-            title,
-            page_no,
-            pdf_page_no,
-            paragraph_no,
-            page=page,
+            str(citation_context["citation_title"] or title),
+            citation_context["citation_page_no"],
+            citation_context["citation_pdf_page_no"],
+            citation_context["citation_paragraph_no"],
+            page=citation_context["citation_page"],
         )
         citation = _build_citation(citation_label, original_url or source_url)
 
         formatted_output += f"### 来源 {i}: {title} - 相关度: {score:.2f}\n"
         if doc_id:
             formatted_output += f"doc_id: {doc_id}\n"
+        if (
+            citation_context.get("source_scope") == "user"
+            and citation_context.get("original_title")
+            and citation_context.get("original_title") != title
+        ):
+            formatted_output += f"原文来源: {citation_context['original_title']}\n"
         if citation:
             formatted_output += f"citation: {citation}\n"
 
         location = _build_location_text(
-            page=page,
-            page_no=page_no,
-            pdf_page_no=pdf_page_no,
-            paragraph_no=paragraph_no,
+            page=citation_context["citation_page"],
+            page_no=citation_context["citation_page_no"],
+            pdf_page_no=citation_context["citation_pdf_page_no"],
+            paragraph_no=citation_context["citation_paragraph_no"],
         )
         if location:
             formatted_output += f"定位: {location}\n"
@@ -323,6 +362,7 @@ def knowledge_locate_tool(
     try:
         document = locate_document(
             runtime.context.get("thread_id"),
+            user_id=runtime.context.get("user_id"),
             doc_id=doc_id,
             filename=filename,
         )

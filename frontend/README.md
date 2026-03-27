@@ -24,6 +24,9 @@ pnpm install
 # Copy environment variables
 cp .env.example .env
 # Edit .env with your configuration
+
+# Initialize Better Auth tables in MySQL
+pnpm auth:migrate
 ```
 
 ### Development
@@ -34,6 +37,8 @@ pnpm dev
 
 # The app will be available at http://localhost:3000
 ```
+
+Authentication UI is available at `http://localhost:3000/auth`.
 
 ### Build
 
@@ -67,6 +72,10 @@ pnpm start
 Key environment variables (see `.env.example` for full list):
 
 ```bash
+# Better Auth
+BETTER_AUTH_SECRET="replace-with-a-random-32-char-secret"
+DATABASE_URL="mysql://root:password@127.0.0.1:3306/history_rag"
+
 # Backend API URLs (optional, uses nginx proxy by default)
 NEXT_PUBLIC_BACKEND_BASE_URL="http://localhost:8001"
 # LangGraph API URLs (optional, uses nginx proxy by default)
@@ -108,15 +117,16 @@ src/
 
 ## Scripts
 
-| Command          | Description                             |
-| ---------------- | --------------------------------------- |
-| `pnpm dev`       | Start development server with Turbopack |
-| `pnpm build`     | Build for production                    |
-| `pnpm start`     | Start production server                 |
-| `pnpm lint`      | Run ESLint                              |
-| `pnpm lint:fix`  | Fix ESLint issues                       |
-| `pnpm typecheck` | Run TypeScript type checking            |
-| `pnpm check`     | Run both lint and typecheck             |
+| Command             | Description                             |
+| ------------------- | --------------------------------------- |
+| `pnpm auth:migrate` | Create/update Better Auth tables in MySQL |
+| `pnpm dev`          | Start development server with Turbopack |
+| `pnpm build`        | Build for production                    |
+| `pnpm start`        | Start production server                 |
+| `pnpm lint`         | Run ESLint                              |
+| `pnpm lint:fix`     | Fix ESLint issues                       |
+| `pnpm typecheck`    | Run TypeScript type checking            |
+| `pnpm check`        | Run both lint and typecheck             |
 
 ## Development Notes
 

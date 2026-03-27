@@ -1,12 +1,16 @@
 import type { AgentThreadContext } from "../threads";
 
+export type AgentScenario = "research" | "qa";
+export type AgentTier = "pro" | "ultra";
+
 export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   notification: {
     enabled: true,
   },
   context: {
     model_name: undefined,
-    mode: undefined,
+    scenario: "research",
+    tier: "pro",
   },
   layout: {
     sidebar_collapsed: false,
@@ -21,13 +25,49 @@ export interface LocalSettings {
   };
   context: Omit<
     AgentThreadContext,
-    "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
+    | "thread_id"
+    | "is_plan_mode"
+    | "thinking_enabled"
+    | "subagent_enabled"
+    | "qa_mode"
+    | "concise_answers"
   > & {
-    mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
+    scenario: AgentScenario;
+    tier: AgentTier;
   };
   layout: {
     sidebar_collapsed: boolean;
   };
+}
+
+function migrateStoredContext(raw: unknown): LocalSettings["context"] {
+  const base = { ...DEFAULT_LOCAL_SETTINGS.context };
+  if (!raw || typeof raw !== "object") {
+    return base;
+  }
+  const c = raw as Record<string, unknown>;
+  const model_name =
+    typeof c.model_name === "string" || c.model_name === undefined
+      ? (c.model_name as string | undefined)
+      : base.model_name;
+  if (c.scenario === "research" || c.scenario === "qa") {
+    const tier = c.tier === "ultra" ? "ultra" : "pro";
+    return { model_name, scenario: c.scenario, tier };
+  }
+  const mode = c.mode as string | undefined;
+  let scenario: AgentScenario = "research";
+  let tier: AgentTier = "pro";
+  if (mode === "flash" || mode === "thinking") {
+    scenario = "qa";
+    tier = mode === "flash" ? "ultra" : "pro";
+  } else if (mode === "ultra") {
+    scenario = "research";
+    tier = "ultra";
+  } else if (mode === "pro") {
+    scenario = "research";
+    tier = "pro";
+  }
+  return { model_name, scenario, tier };
 }
 
 export function getLocalSettings(): LocalSettings {
@@ -40,10 +80,7 @@ export function getLocalSettings(): LocalSettings {
       const settings = JSON.parse(json);
       const mergedSettings = {
         ...DEFAULT_LOCAL_SETTINGS,
-        context: {
-          ...DEFAULT_LOCAL_SETTINGS.context,
-          ...settings.context,
-        },
+        context: migrateStoredContext(settings.context),
         layout: {
           ...DEFAULT_LOCAL_SETTINGS.layout,
           ...settings.layout,

@@ -186,11 +186,19 @@ export default function ChatPage() {
     threadId,
     thread,
     threadContext: {
-      ...settings.context,
-      thinking_enabled: settings.context.mode !== "flash",
-      is_plan_mode:
-        settings.context.mode === "pro" || settings.context.mode === "ultra",
-      subagent_enabled: settings.context.mode === "ultra",
+      model_name: settings.context.model_name,
+      thinking_enabled:
+        settings.context.scenario === "research" ||
+        (settings.context.scenario === "qa" &&
+          settings.context.tier === "pro"),
+      is_plan_mode: settings.context.scenario === "research",
+      subagent_enabled:
+        settings.context.scenario === "research" &&
+        settings.context.tier === "ultra",
+      qa_mode: settings.context.scenario === "qa",
+      concise_answers:
+        settings.context.scenario === "qa" &&
+        settings.context.tier === "ultra",
     },
     afterSubmit() {
       router.push(pathOfThread(threadId!));
@@ -291,7 +299,12 @@ export default function ChatPage() {
                     status={thread.isLoading ? "streaming" : "ready"}
                     context={settings.context}
                     extraHeader={
-                      isNewThread && <Welcome mode={settings.context.mode} />
+                      isNewThread && (
+                        <Welcome
+                          scenario={settings.context.scenario}
+                          tier={settings.context.tier}
+                        />
+                      )
                     }
                     disabled={env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"}
                     onContextChange={(context) =>

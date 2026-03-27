@@ -18,4 +18,8 @@ export interface AgentThreadContext extends Record<string, unknown> {
   thinking_enabled: boolean;
   is_plan_mode: boolean;
   subagent_enabled: boolean;
+  /** 问答模式：系统提示会偏向直接作答 */
+  qa_mode?: boolean;
+  /** 问答 · 极简：提示模型用最短文字回答 */
+  concise_answers?: boolean;
 }

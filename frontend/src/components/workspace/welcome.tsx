@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo } from "react";
 
 import { useI18n } from "@/core/i18n/hooks";
+import type { AgentScenario, AgentTier } from "@/core/settings/local";
 import { cn } from "@/lib/utils";
 
 import { AuroraText } from "../ui/aurora-text";
@@ -12,20 +13,25 @@ let waved = false;
 
 export function Welcome({
   className,
-  mode,
+  scenario,
+  tier,
 }: {
   className?: string;
-  mode?: "ultra" | "pro" | "thinking" | "flash";
+  scenario?: AgentScenario;
+  tier?: AgentTier;
 }) {
   const { t } = useI18n();
   const searchParams = useSearchParams();
-  const isUltra = useMemo(() => mode === "ultra", [mode]);
+  const isResearchUltra = useMemo(
+    () => scenario === "research" && tier === "ultra",
+    [scenario, tier],
+  );
   const colors = useMemo(() => {
-    if (isUltra) {
+    if (isResearchUltra) {
       return ["#efefbb", "#e9c665", "#e3a812"];
     }
     return ["var(--color-foreground)"];
-  }, [isUltra]);
+  }, [isResearchUltra]);
   useEffect(() => {
     waved = true;
   }, []);
@@ -40,9 +46,9 @@ export function Welcome({
         {searchParams.get("mode") === "skill" ? (
           `✨ ${t.welcome.createYourOwnSkill} ✨`
         ) : (
-          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
             <div className={cn("inline-block", !waved ? "animate-wave" : "")}>
-              {isUltra ? "🚀" : "👋"}
+              {isResearchUltra ? "🚀" : "👋"}
             </div>
             <AuroraText colors={colors}>{t.welcome.greeting}</AuroraText>
           </div>

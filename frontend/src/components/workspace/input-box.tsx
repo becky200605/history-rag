@@ -4,7 +4,7 @@ import type { ChatStatus } from "ai";
 import {
   CheckIcon,
   GraduationCapIcon,
-  LightbulbIcon,
+  MessageCircleIcon,
   PaperclipIcon,
   PlusIcon,
   SparklesIcon,
@@ -46,7 +46,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useI18n } from "@/core/i18n/hooks";
 import { useModels } from "@/core/models/hooks";
+import type { AgentScenario, AgentTier } from "@/core/settings/local";
 import type { AgentThreadContext } from "@/core/threads";
+import type { Translations } from "@/core/i18n/locales/types";
 import { cn } from "@/lib/utils";
 
 import {
@@ -69,19 +71,58 @@ import {
 import { ModeHoverGuide } from "./mode-hover-guide";
 import { Tooltip } from "./tooltip";
 
-type InputMode = "flash" | "thinking" | "pro" | "ultra";
+type ContextShape = Omit<
+  AgentThreadContext,
+  | "thread_id"
+  | "is_plan_mode"
+  | "thinking_enabled"
+  | "subagent_enabled"
+  | "qa_mode"
+  | "concise_answers"
+> & {
+  scenario: AgentScenario;
+  tier: AgentTier;
+};
 
-function getResolvedMode(
-  mode: InputMode | undefined,
-  supportsThinking: boolean,
-): InputMode {
-  if (!supportsThinking && mode !== "flash") {
-    return "flash";
+function presetLabelKey(
+  scenario: AgentScenario,
+  tier: AgentTier,
+): keyof Pick<
+  Translations["inputBox"],
+  | "researchProLabel"
+  | "researchUltraLabel"
+  | "qaProLabel"
+  | "qaUltraLabel"
+> {
+  if (scenario === "research" && tier === "ultra") {
+    return "researchUltraLabel";
   }
-  if (mode) {
-    return mode;
+  if (scenario === "qa" && tier === "pro") {
+    return "qaProLabel";
   }
-  return supportsThinking ? "pro" : "flash";
+  if (scenario === "qa" && tier === "ultra") {
+    return "qaUltraLabel";
+  }
+  return "researchProLabel";
+}
+
+function PresetIcon({
+  scenario,
+  tier,
+}: {
+  scenario: AgentScenario;
+  tier: AgentTier;
+}) {
+  if (scenario === "research" && tier === "ultra") {
+    return <RocketIcon className="size-3 text-[#dabb5e]" />;
+  }
+  if (scenario === "qa" && tier === "ultra") {
+    return <ZapIcon className="size-3" />;
+  }
+  if (scenario === "qa" && tier === "pro") {
+    return <MessageCircleIcon className="size-3" />;
+  }
+  return <GraduationCapIcon className="size-3" />;
 }
 
 export function InputBox({
@@ -101,23 +142,11 @@ export function InputBox({
   assistantId?: string | null;
   status?: ChatStatus;
   disabled?: boolean;
-  context: Omit<
-    AgentThreadContext,
-    "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
-  > & {
-    mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
-  };
+  context: ContextShape;
   extraHeader?: React.ReactNode;
   isNewThread?: boolean;
   initialValue?: string;
-  onContextChange?: (
-    context: Omit<
-      AgentThreadContext,
-      "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
-    > & {
-      mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
-    },
-  ) => void;
+  onContextChange?: (context: ContextShape) => void;
   onSubmit?: (message: PromptInputMessage) => void;
   onStop?: () => void;
 }) {
@@ -132,18 +161,13 @@ export function InputBox({
     }
     const currentModel = models.find((m) => m.name === context.model_name);
     const fallbackModel = currentModel ?? models[0]!;
-    const supportsThinking = fallbackModel.supports_thinking ?? false;
     const nextModelName = fallbackModel.name;
-    const nextMode = getResolvedMode(context.mode, supportsThinking);
-
-    if (context.model_name === nextModelName && context.mode === nextMode) {
+    if (context.model_name === nextModelName) {
       return;
     }
-
     onContextChange?.({
       ...context,
       model_name: nextModelName,
-      mode: nextMode,
     });
   }, [context, models, onContextChange]);
 
@@ -154,11 +178,6 @@ export function InputBox({
     return models.find((m) => m.name === context.model_name) ?? models[0];
   }, [context.model_name, models]);
 
-  const supportThinking = useMemo(
-    () => selectedModel?.supports_thinking ?? false,
-    [selectedModel],
-  );
-
   const handleModelSelect = useCallback(
     (model_name: string) => {
       const model = models.find((m) => m.name === model_name);
@@ -168,21 +187,32 @@ export function InputBox({
       onContextChange?.({
         ...context,
         model_name,
-        mode: getResolvedMode(context.mode, model.supports_thinking ?? false),
       });
       setModelDialogOpen(false);
     },
     [onContextChange, context, models],
   );
 
-  const handleModeSelect = useCallback(
-    (mode: InputMode) => {
+  const handlePresetSelect = useCallback(
+    (scenario: AgentScenario, tier: AgentTier) => {
       onContextChange?.({
         ...context,
-        mode: getResolvedMode(mode, supportThinking),
+        scenario,
+        tier,
       });
     },
-    [onContextChange, context, supportThinking],
+    [onContextChange, context],
+  );
+
+  const triggerLabel = useMemo(
+    () => t.inputBox[presetLabelKey(context.scenario, context.tier)],
+    [context.scenario, context.tier, t],
+  );
+
+  const isPreset = useCallback(
+    (scenario: AgentScenario, tier: AgentTier) =>
+      context.scenario === scenario && context.tier === tier,
+    [context.scenario, context.tier],
   );
   const handleSubmit = useCallback(
     async (message: PromptInputMessage) => {
@@ -242,38 +272,20 @@ export function InputBox({
           <AddAttachmentsButton className="px-2!" />
           <PromptInputActionMenu>
             <ModeHoverGuide
-              mode={
-                context.mode === "flash" ||
-                context.mode === "thinking" ||
-                context.mode === "pro" ||
-                context.mode === "ultra"
-                  ? context.mode
-                  : "flash"
-              }
+              scenario={context.scenario}
+              tier={context.tier}
             >
-              <PromptInputActionMenuTrigger className="gap-1! px-2!">
-                <div>
-                  {context.mode === "flash" && <ZapIcon className="size-3" />}
-                  {context.mode === "thinking" && (
-                    <LightbulbIcon className="size-3" />
-                  )}
-                  {context.mode === "pro" && (
-                    <GraduationCapIcon className="size-3" />
-                  )}
-                  {context.mode === "ultra" && (
-                    <RocketIcon className="size-3 text-[#dabb5e]" />
-                  )}
-                </div>
+              <PromptInputActionMenuTrigger className="max-w-38 gap-1! px-2!">
+                <PresetIcon scenario={context.scenario} tier={context.tier} />
                 <div
                   className={cn(
-                    "text-xs font-normal",
-                    context.mode === "ultra" ? "golden-text" : "",
+                    "truncate text-xs font-normal",
+                    context.scenario === "research" &&
+                      context.tier === "ultra" &&
+                      "golden-text",
                   )}
                 >
-                  {(context.mode === "flash" && t.inputBox.flashMode) ||
-                    (context.mode === "thinking" && t.inputBox.reasoningMode) ||
-                    (context.mode === "pro" && t.inputBox.proMode) ||
-                    (context.mode === "ultra" && t.inputBox.ultraMode)}
+                  {triggerLabel}
                 </div>
               </PromptInputActionMenuTrigger>
             </ModeHoverGuide>
@@ -282,127 +294,136 @@ export function InputBox({
                 <DropdownMenuLabel className="text-muted-foreground text-xs">
                   {t.inputBox.mode}
                 </DropdownMenuLabel>
+                <DropdownMenuLabel className="text-muted-foreground pt-2 text-xs">
+                  {t.inputBox.researchScenario}
+                </DropdownMenuLabel>
                 <PromptInputActionMenu>
                   <PromptInputActionMenuItem
                     className={cn(
-                      context.mode === "flash"
+                      isPreset("research", "pro")
                         ? "text-accent-foreground"
                         : "text-muted-foreground/65",
                     )}
-                    onSelect={() => handleModeSelect("flash")}
-                  >
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-1 font-bold">
-                        <ZapIcon
-                          className={cn(
-                            "mr-2 size-4",
-                            context.mode === "flash" &&
-                              "text-accent-foreground",
-                          )}
-                        />
-                        {t.inputBox.flashMode}
-                      </div>
-                      <div className="pl-7 text-xs">
-                        {t.inputBox.flashModeDescription}
-                      </div>
-                    </div>
-                    {context.mode === "flash" ? (
-                      <CheckIcon className="ml-auto size-4" />
-                    ) : (
-                      <div className="ml-auto size-4" />
-                    )}
-                  </PromptInputActionMenuItem>
-                  {supportThinking && (
-                    <PromptInputActionMenuItem
-                      className={cn(
-                        context.mode === "thinking"
-                          ? "text-accent-foreground"
-                          : "text-muted-foreground/65",
-                      )}
-                      onSelect={() => handleModeSelect("thinking")}
-                    >
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-1 font-bold">
-                          <LightbulbIcon
-                            className={cn(
-                              "mr-2 size-4",
-                              context.mode === "thinking" &&
-                                "text-accent-foreground",
-                            )}
-                          />
-                          {t.inputBox.reasoningMode}
-                        </div>
-                        <div className="pl-7 text-xs">
-                          {t.inputBox.reasoningModeDescription}
-                        </div>
-                      </div>
-                      {context.mode === "thinking" ? (
-                        <CheckIcon className="ml-auto size-4" />
-                      ) : (
-                        <div className="ml-auto size-4" />
-                      )}
-                    </PromptInputActionMenuItem>
-                  )}
-                  <PromptInputActionMenuItem
-                    className={cn(
-                      context.mode === "pro"
-                        ? "text-accent-foreground"
-                        : "text-muted-foreground/65",
-                    )}
-                    onSelect={() => handleModeSelect("pro")}
+                    onSelect={() => handlePresetSelect("research", "pro")}
                   >
                     <div className="flex flex-col gap-2">
                       <div className="flex items-center gap-1 font-bold">
                         <GraduationCapIcon
                           className={cn(
                             "mr-2 size-4",
-                            context.mode === "pro" && "text-accent-foreground",
+                            isPreset("research", "pro") &&
+                              "text-accent-foreground",
                           )}
                         />
-                        {t.inputBox.proMode}
+                        {t.inputBox.researchProLabel}
                       </div>
                       <div className="pl-7 text-xs">
-                        {t.inputBox.proModeDescription}
+                        {t.inputBox.researchProDescription}
                       </div>
                     </div>
-                    {context.mode === "pro" ? (
-                      <CheckIcon className="ml-auto size-4" />
+                    {isPreset("research", "pro") ? (
+                      <CheckIcon className="ml-auto size-4 shrink-0" />
                     ) : (
-                      <div className="ml-auto size-4" />
+                      <div className="ml-auto size-4 shrink-0" />
                     )}
                   </PromptInputActionMenuItem>
                   <PromptInputActionMenuItem
                     className={cn(
-                      context.mode === "ultra"
+                      isPreset("research", "ultra")
                         ? "text-accent-foreground"
                         : "text-muted-foreground/65",
                     )}
-                    onSelect={() => handleModeSelect("ultra")}
+                    onSelect={() => handlePresetSelect("research", "ultra")}
                   >
                     <div className="flex flex-col gap-2">
                       <div className="flex items-center gap-1 font-bold">
                         <RocketIcon
                           className={cn(
                             "mr-2 size-4",
-                            context.mode === "ultra" && "text-[#dabb5e]",
+                            isPreset("research", "ultra") &&
+                              "text-[#dabb5e]",
                           )}
                         />
-                        <div
+                        <span
                           className={cn(
-                            context.mode === "ultra" && "golden-text",
+                            isPreset("research", "ultra") && "golden-text",
                           )}
                         >
-                          {t.inputBox.ultraMode}
-                        </div>
+                          {t.inputBox.researchUltraLabel}
+                        </span>
                       </div>
                       <div className="pl-7 text-xs">
-                        {t.inputBox.ultraModeDescription}
+                        {t.inputBox.researchUltraDescription}
                       </div>
                     </div>
-                    {context.mode === "ultra" ? (
-                      <CheckIcon className="ml-auto size-4" />
+                    {isPreset("research", "ultra") ? (
+                      <CheckIcon className="ml-auto size-4 shrink-0" />
                     ) : (
-                      <div className="ml-auto size-4" />
+                      <div className="ml-auto size-4 shrink-0" />
+                    )}
+                  </PromptInputActionMenuItem>
+                </PromptInputActionMenu>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-muted-foreground text-xs">
+                  {t.inputBox.qaScenario}
+                </DropdownMenuLabel>
+                <PromptInputActionMenu>
+                  <PromptInputActionMenuItem
+                    className={cn(
+                      isPreset("qa", "pro")
+                        ? "text-accent-foreground"
+                        : "text-muted-foreground/65",
+                    )}
+                    onSelect={() => handlePresetSelect("qa", "pro")}
+                  >
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-1 font-bold">
+                        <MessageCircleIcon
+                          className={cn(
+                            "mr-2 size-4",
+                            isPreset("qa", "pro") &&
+                              "text-accent-foreground",
+                          )}
+                        />
+                        {t.inputBox.qaProLabel}
+                      </div>
+                      <div className="pl-7 text-xs">
+                        {t.inputBox.qaProDescription}
+                      </div>
+                    </div>
+                    {isPreset("qa", "pro") ? (
+                      <CheckIcon className="ml-auto size-4 shrink-0" />
+                    ) : (
+                      <div className="ml-auto size-4 shrink-0" />
+                    )}
+                  </PromptInputActionMenuItem>
+                  <PromptInputActionMenuItem
+                    className={cn(
+                      isPreset("qa", "ultra")
+                        ? "text-accent-foreground"
+                        : "text-muted-foreground/65",
+                    )}
+                    onSelect={() => handlePresetSelect("qa", "ultra")}
+                  >
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-1 font-bold">
+                        <ZapIcon
+                          className={cn(
+                            "mr-2 size-4",
+                            isPreset("qa", "ultra") &&
+                              "text-accent-foreground",
+                          )}
+                        />
+                        {t.inputBox.qaUltraLabel}
+                      </div>
+                      <div className="pl-7 text-xs">
+                        {t.inputBox.qaUltraDescription}
+                      </div>
+                    </div>
+                    {isPreset("qa", "ultra") ? (
+                      <CheckIcon className="ml-auto size-4 shrink-0" />
+                    ) : (
+                      <div className="ml-auto size-4 shrink-0" />
                     )}
                   </PromptInputActionMenuItem>
                 </PromptInputActionMenu>

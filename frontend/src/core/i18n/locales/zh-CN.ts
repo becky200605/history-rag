@@ -80,6 +80,20 @@ export const zhCN: Translations = {
     ultraMode: "Ultra",
     ultraModeDescription:
       "继承自 Pro 模式，可调用子代理分工协作，适合复杂多步骤任务，能力最强",
+    researchProLabel: "研究 · Pro",
+    researchProDescription:
+      "思考、计划再执行，获得更精准的结果，输出报告",
+    researchUltraLabel: "研究 · Ultra",
+    researchUltraDescription:
+      "在 Pro 基础上可调用子Agents分工协作,能更高效的完成复杂多步骤任务",
+    qaProLabel: "问答 · Pro",
+    qaProDescription:
+      "直接回答问题，先结论后补充；适合日常问答",
+    qaUltraLabel: "问答 · Simplest",
+    qaUltraDescription:
+      "极简作答：最短文字、点到为止，非必要不用工具，适合日常问答",
+    researchScenario: "研究模型",
+    qaScenario: "问答模式",
     searchModels: "搜索模型...",
     surpriseMe: "小惊喜",
     surpriseMePrompt: "给我一个小惊喜吧",

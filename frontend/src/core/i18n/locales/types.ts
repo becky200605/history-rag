@@ -64,6 +64,16 @@ export interface Translations {
     proModeDescription: string;
     ultraMode: string;
     ultraModeDescription: string;
+    researchProLabel: string;
+    researchProDescription: string;
+    researchUltraLabel: string;
+    researchUltraDescription: string;
+    qaProLabel: string;
+    qaProDescription: string;
+    qaUltraLabel: string;
+    qaUltraDescription: string;
+    researchScenario: string;
+    qaScenario: string;
     searchModels: string;
     surpriseMe: string;
     surpriseMePrompt: string;

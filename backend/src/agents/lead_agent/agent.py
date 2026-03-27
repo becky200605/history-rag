@@ -267,6 +267,8 @@ def make_lead_agent(config: RunnableConfig):
     is_plan_mode = config.get("configurable", {}).get("is_plan_mode", False)
     subagent_enabled = config.get("configurable", {}).get("subagent_enabled", False)
     max_concurrent_subagents = config.get("configurable", {}).get("max_concurrent_subagents", 3)
+    qa_mode = config.get("configurable", {}).get("qa_mode", False)
+    concise_answers = config.get("configurable", {}).get("concise_answers", False)
 
     app_config = get_app_config()
     model_config = app_config.get_model_config(model_name) if model_name else None
@@ -275,12 +277,15 @@ def make_lead_agent(config: RunnableConfig):
         thinking_enabled = False
 
     logger.info(
-        "thinking_enabled: %s, model_name: %s, is_plan_mode: %s, subagent_enabled: %s, max_concurrent_subagents: %s",
+        "thinking_enabled: %s, model_name: %s, is_plan_mode: %s, subagent_enabled: %s, max_concurrent_subagents: %s, "
+        "qa_mode: %s, concise_answers: %s",
         thinking_enabled,
         model_name,
         is_plan_mode,
         subagent_enabled,
         max_concurrent_subagents,
+        qa_mode,
+        concise_answers,
     )
 
     # Inject run metadata for LangSmith trace tagging
@@ -292,6 +297,8 @@ def make_lead_agent(config: RunnableConfig):
             "thinking_enabled": thinking_enabled,
             "is_plan_mode": is_plan_mode,
             "subagent_enabled": subagent_enabled,
+            "qa_mode": qa_mode,
+            "concise_answers": concise_answers,
         }
     )
 
@@ -299,6 +306,11 @@ def make_lead_agent(config: RunnableConfig):
         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled),
         tools=get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled),
         middleware=_build_middlewares(config, model_name=model_name),
-        system_prompt=apply_prompt_template(subagent_enabled=subagent_enabled, max_concurrent_subagents=max_concurrent_subagents),
+        system_prompt=apply_prompt_template(
+            subagent_enabled=subagent_enabled,
+            max_concurrent_subagents=max_concurrent_subagents,
+            qa_mode=qa_mode,
+            concise_answers=concise_answers,
+        ),
         state_schema=ThreadState,
     )

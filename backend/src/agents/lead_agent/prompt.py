@@ -365,7 +365,36 @@ You have access to skills that provide optimized workflows for specific tasks. E
 </skill_system>"""
 
 
-def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagents: int = 3) -> str:
+def _build_qa_response_section(*, qa_mode: bool, concise_answers: bool) -> str:
+    if not qa_mode:
+        return ""
+    if concise_answers:
+        return """
+<response_style>
+**极简问答模式**：用户期望最短、最直接的答复。
+- 优先用 1–5 句话或少量要点给出结论，避免长文、铺垫和重复
+- 非必要不使用工具；确需查证时只做最少次数的调用
+- 不要创建任务列表，不要调用子代理（`task`）
+- 不要输出「下面我将…」等冗长元话语；开门见山
+</response_style>
+"""
+    return """
+<response_style>
+**问答模式**：以直接解答用户问题为主。
+- 先给出清晰结论，再视需要补充简要依据或步骤
+- 避免为简单问题做大规模研究或任务分解；仅在必要时使用工具
+- 不要创建任务列表，不要调用子代理（`task`）
+</response_style>
+"""
+
+
+def apply_prompt_template(
+    subagent_enabled: bool = False,
+    max_concurrent_subagents: int = 3,
+    *,
+    qa_mode: bool = False,
+    concise_answers: bool = False,
+) -> str:
     # Get memory context
     memory_context = _get_memory_context()
 
@@ -394,6 +423,8 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
     # Get skills section
     skills_section = get_skills_prompt_section()
 
+    qa_section = _build_qa_response_section(qa_mode=qa_mode, concise_answers=concise_answers)
+
     # Format the prompt with dynamic skills and memory
     prompt = SYSTEM_PROMPT_TEMPLATE.format(
         skills_section=skills_section,
@@ -403,4 +434,4 @@ def apply_prompt_template(subagent_enabled: bool = False, max_concurrent_subagen
         subagent_thinking=subagent_thinking,
     )
 
-    return prompt + f"\n<current_date>{datetime.now().strftime('%Y-%m-%d, %A')}</current_date>"
+    return qa_section + prompt + f"\n<current_date>{datetime.now().strftime('%Y-%m-%d, %A')}</current_date>"

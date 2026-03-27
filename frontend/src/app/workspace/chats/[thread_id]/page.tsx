@@ -380,6 +380,23 @@ function ChatPageContent({
     [resolvedModelName, settings.context],
   );
 
+  const threadContext = useMemo(
+    () => ({
+      model_name: resolvedContext.model_name,
+      thinking_enabled:
+        resolvedContext.scenario === "research" ||
+        (resolvedContext.scenario === "qa" && resolvedContext.tier === "pro"),
+      is_plan_mode: resolvedContext.scenario === "research",
+      subagent_enabled:
+        resolvedContext.scenario === "research" &&
+        resolvedContext.tier === "ultra",
+      qa_mode: resolvedContext.scenario === "qa",
+      concise_answers:
+        resolvedContext.scenario === "qa" && resolvedContext.tier === "ultra",
+    }),
+    [resolvedContext],
+  );
+
   useEffect(() => {
     if (
       resolvedModelName &&
@@ -395,13 +412,7 @@ function ChatPageContent({
     isNewThread,
     threadId,
     thread,
-    threadContext: {
-      ...resolvedContext,
-      thinking_enabled: resolvedContext.mode !== "flash",
-      is_plan_mode:
-        resolvedContext.mode === "pro" || resolvedContext.mode === "ultra",
-      subagent_enabled: resolvedContext.mode === "ultra",
-    },
+    threadContext,
     async afterSubmit() {
       rememberThreadRouteHandoff(threadId!);
       await waitForThreadStreamRegistration(threadId!);
@@ -499,7 +510,12 @@ function ChatPageContent({
                     status={thread.isLoading ? "streaming" : "ready"}
                     context={resolvedContext}
                     extraHeader={
-                      isNewThread && <Welcome mode={resolvedContext.mode} />
+                      isNewThread && (
+                        <Welcome
+                          scenario={resolvedContext.scenario}
+                          tier={resolvedContext.tier}
+                        />
+                      )
                     }
                     disabled={env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"}
                     onContextChange={(context) =>

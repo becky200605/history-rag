@@ -82,6 +82,20 @@ export const enUS: Translations = {
     ultraMode: "Ultra",
     ultraModeDescription:
       "Pro mode with subagents to divide work; best for complex multi-step tasks",
+    researchProLabel: "Research · Pro",
+    researchProDescription:
+      "Think, plan, then execute—more accurate, may take longer (same as legacy Pro)",
+    researchUltraLabel: "Research · Ultra",
+    researchUltraDescription:
+      "Pro plus subagents for parallel work; best for complex tasks (same as legacy Ultra)",
+    qaProLabel: "Q&A · Pro",
+    qaProDescription:
+      "Answer directly—conclusion first, brief support; no todo lists or subagents",
+    qaUltraLabel: "Q&A · Ultra",
+    qaUltraDescription:
+      "Ultra-concise replies; skip tools unless essential",
+    researchScenario: "Research",
+    qaScenario: "Q&A",
     searchModels: "Search models...",
     surpriseMe: "Surprise",
     surpriseMePrompt: "Surprise me",

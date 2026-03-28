@@ -1,6 +1,14 @@
 # Backend Development Dockerfile
 FROM python:3.12-slim
 
+# Use domestic Debian mirrors to reduce build latency on CN servers.
+RUN set -eux; \
+    codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"; \
+    printf 'deb https://mirrors.tuna.tsinghua.edu.cn/debian/ %s main\n' "$codename" > /etc/apt/sources.list.d/debian.sources.list; \
+    printf 'deb https://mirrors.tuna.tsinghua.edu.cn/debian/ %s-updates main\n' "$codename" >> /etc/apt/sources.list.d/debian.sources.list; \
+    printf 'deb https://mirrors.tuna.tsinghua.edu.cn/debian-security %s-security main\n' "$codename" >> /etc/apt/sources.list.d/debian.sources.list; \
+    rm -f /etc/apt/sources.list.d/debian.sources
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \

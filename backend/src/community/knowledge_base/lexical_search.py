@@ -15,32 +15,14 @@ from src.community.knowledge_base.common import (
     tokenize_search_text,
 )
 from src.community.knowledge_base.ingestion import list_ingestion_records
-from src.community.knowledge_base.structured_document import (
-    build_structured_document,
-    load_structured_document,
-)
+from src.community.knowledge_base.structured_document import load_structured_document
 from src.community.knowledge_base.user_store import list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
-
-def _load_text_payload(path: Path, *, title: str, parser_name: str) -> dict[str, Any] | None:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except Exception:
-        return None
-    return build_structured_document(
-        source_filename=path.name,
-        title=title,
-        text=text,
-        parser_name=parser_name,
-    )
-
-
 def _iter_global_documents(doc_ids: set[str] | None = None) -> Iterator[dict[str, Any]]:
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
     ingestion_dir = docs_root / ".ingestion"
-    preview_filenames_to_skip: set[str] = set()
 
     if ingestion_dir.exists():
         for record_path in sorted(ingestion_dir.glob("*.json")):
@@ -51,10 +33,6 @@ def _iter_global_documents(doc_ids: set[str] | None = None) -> Iterator[dict[str
             if record.get("schema_version") == 1:
                 continue
 
-            preview_filename = record.get("preview_filename")
-            if preview_filename:
-                preview_filenames_to_skip.add(str(preview_filename))
-
             source_filename = str(record.get("source_filename") or "")
             if not source_filename or not record.get("indexable"):
                 continue
@@ -64,12 +42,6 @@ def _iter_global_documents(doc_ids: set[str] | None = None) -> Iterator[dict[str
 
             structured_path = Path(str(record.get("structured_path"))) if record.get("structured_path") else None
             payload = load_structured_document(structured_path) if structured_path else None
-            if not payload and Path(source_filename).suffix.lower() in {".md", ".txt"}:
-                payload = _load_text_payload(
-                    docs_root / source_filename,
-                    title=str(record.get("display_title") or Path(source_filename).stem),
-                    parser_name=str(record.get("parse_method") or "plain_text"),
-                )
             if not payload:
                 continue
 
@@ -82,50 +54,22 @@ def _iter_global_documents(doc_ids: set[str] | None = None) -> Iterator[dict[str
                 "source": str(record.get("structured_path") or record.get("source_path") or source_filename),
             }
 
-    for path in sorted(docs_root.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
-            continue
-        if "/.ingestion/" in str(path) or path.name in preview_filenames_to_skip:
-            continue
-        doc_id = derive_global_doc_id(docs_root, path)
-        if doc_ids and doc_id not in doc_ids:
-            continue
-        payload = _load_text_payload(path, title=path.stem, parser_name="plain_text")
-        if not payload:
-            continue
-        yield {
-            "doc_id": doc_id,
-            "title": str(payload.get("title") or path.stem),
-            "filename": path.name,
-            "scope": "global",
-            "payload": payload,
-            "source": str(path),
-        }
-
 
 def _iter_thread_documents(thread_id: str, doc_ids: set[str] | None = None) -> Iterator[dict[str, Any]]:
     uploads_dir = get_paths().sandbox_uploads_dir(thread_id)
     if not uploads_dir.exists():
         return
 
-    seen_source_filenames: set[str] = set()
     for record in list_ingestion_records(thread_id):
         source_filename = str(record.get("source_filename") or record.get("index_target_filename") or "")
         if not source_filename or not record.get("indexable"):
             continue
-        seen_source_filenames.add(source_filename)
         doc_id = derive_thread_doc_id(Path(source_filename))
         if doc_ids and doc_id not in doc_ids:
             continue
 
         structured_path = Path(str(record.get("structured_path"))) if record.get("structured_path") else None
         payload = load_structured_document(structured_path) if structured_path else None
-        if not payload and Path(source_filename).suffix.lower() in {".md", ".txt"}:
-            payload = _load_text_payload(
-                uploads_dir / source_filename,
-                title=str(record.get("display_title") or Path(source_filename).stem),
-                parser_name=str(record.get("parse_method") or "plain_text"),
-            )
         if not payload:
             continue
 
@@ -139,34 +83,12 @@ def _iter_thread_documents(thread_id: str, doc_ids: set[str] | None = None) -> I
             "source": str(record.get("structured_path") or record.get("source_path") or source_filename),
         }
 
-    for path in sorted(uploads_dir.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
-            continue
-        if path.name in seen_source_filenames:
-            continue
-        doc_id = derive_thread_doc_id(path)
-        if doc_ids and doc_id not in doc_ids:
-            continue
-        payload = _load_text_payload(path, title=path.stem, parser_name="plain_text")
-        if not payload:
-            continue
-        yield {
-            "doc_id": doc_id,
-            "title": str(payload.get("title") or path.stem),
-            "filename": path.name,
-            "scope": "thread",
-            "thread_id": thread_id,
-            "payload": payload,
-            "source": str(path),
-        }
-
 
 def _iter_user_documents(user_id: str, doc_ids: set[str] | None = None) -> Iterator[dict[str, Any]]:
     docs_dir = get_paths().user_knowledge_docs_dir(user_id)
     if not docs_dir.exists():
         return
 
-    seen_source_filenames: set[str] = set()
     for record in list_user_records(user_id):
         if not record.get("retrieval_enabled") or not record.get("indexable"):
             continue
@@ -174,19 +96,12 @@ def _iter_user_documents(user_id: str, doc_ids: set[str] | None = None) -> Itera
         record_id = str(record.get("id") or "")
         if not source_filename or not record_id:
             continue
-        seen_source_filenames.add(source_filename)
         doc_id = derive_user_doc_id(record_id)
         if doc_ids and doc_id not in doc_ids:
             continue
 
         structured_path = Path(str(record.get("structured_path"))) if record.get("structured_path") else None
         payload = load_structured_document(structured_path) if structured_path else None
-        if not payload and Path(source_filename).suffix.lower() in {".md", ".txt"}:
-            payload = _load_text_payload(
-                docs_dir / source_filename,
-                title=str(record.get("display_title") or Path(source_filename).stem),
-                parser_name=str(record.get("parse_method") or "plain_text"),
-            )
         if not payload:
             continue
 
@@ -200,29 +115,6 @@ def _iter_user_documents(user_id: str, doc_ids: set[str] | None = None) -> Itera
             "origin_doc_id": record.get("origin_doc_id"),
             "payload": payload,
             "source": str(record.get("structured_path") or record.get("source_path") or source_filename),
-        }
-
-    for path in sorted(docs_dir.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
-            continue
-        if path.name in seen_source_filenames:
-            continue
-        doc_id = derive_user_doc_id(path.name)
-        if doc_ids and doc_id not in doc_ids:
-            continue
-        payload = _load_text_payload(path, title=path.stem, parser_name="plain_text")
-        if not payload:
-            continue
-        yield {
-            "doc_id": doc_id,
-            "title": str(payload.get("title") or path.stem),
-            "filename": path.name,
-            "scope": "user",
-            "user_id": user_id,
-            "source_kind": "upload",
-            "origin_doc_id": None,
-            "payload": payload,
-            "source": str(path),
         }
 
 

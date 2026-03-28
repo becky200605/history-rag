@@ -118,19 +118,6 @@ function paragraphFontSize(paragraph: KnowledgeStructuredParagraph) {
   return Math.max(14, Math.min(24, height * 0.34));
 }
 
-function paragraphLocationLabel(paragraph: ContextParagraph) {
-  const parts: string[] = [];
-  if (paragraph.pdfPageNo) {
-    parts.push(`PDF 第 ${paragraph.pdfPageNo} 页`);
-  } else if (paragraph.pageNo) {
-    parts.push(`第 ${paragraph.pageNo} 页`);
-  }
-  if (paragraph.paragraphNo) {
-    parts.push(`第 ${paragraph.paragraphNo} 段`);
-  }
-  return parts.join(" · ") || "当前段落";
-}
-
 export function KnowledgeSidePane({
   currentPdfPageNo,
   documentUrl,
@@ -139,6 +126,12 @@ export function KnowledgeSidePane({
   originTitle,
   referencePageHeight,
   referencePageWidth,
+  interactive = true,
+  highlightable,
+  excerptable,
+  onPageDataChange,
+  fluid = false,
+  bordered = true,
 }: {
   currentPdfPageNo: number | null;
   documentUrl: string;
@@ -147,6 +140,12 @@ export function KnowledgeSidePane({
   originTitle: string;
   referencePageHeight?: number | null;
   referencePageWidth?: number | null;
+  interactive?: boolean;
+  highlightable?: boolean;
+  excerptable?: boolean;
+  onPageDataChange?: (page: KnowledgeStructuredPage | null) => void;
+  fluid?: boolean;
+  bordered?: boolean;
 }) {
   const router = useRouter();
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -170,6 +169,8 @@ export function KnowledgeSidePane({
   const [translationBlockHeights, setTranslationBlockHeights] = useState<
     Record<string, number>
   >({});
+  const isHighlightable = highlightable ?? interactive;
+  const isExcerptable = excerptable ?? interactive;
 
   useEffect(() => {
     if (!currentPdfPageNo) {
@@ -317,6 +318,9 @@ export function KnowledgeSidePane({
 
   useEffect(() => {
     const closeMenu = (event: Event) => {
+      if (event instanceof PointerEvent && event.button === 2) {
+        return;
+      }
       if (
         contextMenuRef.current &&
         event.target instanceof Node &&
@@ -394,8 +398,8 @@ export function KnowledgeSidePane({
   ]);
 
   const activeKey = useMemo(
-    () => contextMenu?.paragraph.key ?? hoveredKey,
-    [contextMenu?.paragraph.key, hoveredKey],
+    () => contextMenu?.paragraph.key ?? (isHighlightable ? hoveredKey : null),
+    [contextMenu?.paragraph.key, hoveredKey, isHighlightable],
   );
 
   const openContextMenu = useCallback(
@@ -437,9 +441,9 @@ export function KnowledgeSidePane({
           },
         });
         setContextMenu(null);
-        toast.success("已创建摘录，正在跳转个人知识库");
+        toast.success("已创建摘录，正在跳转笔记");
         router.push(
-          `/workspace/personal-knowledge?record=${encodeURIComponent(result.record.id)}`,
+          `/workspace/notes?record=${encodeURIComponent(result.record.id)}`,
         );
       } catch (error) {
         console.error(error);
@@ -458,7 +462,7 @@ export function KnowledgeSidePane({
   );
 
   const renderContextMenu = () => {
-    if (!contextMenu) {
+    if (!isExcerptable || !contextMenu) {
       return null;
     }
 
@@ -532,10 +536,13 @@ export function KnowledgeSidePane({
                 <div
                   key={contextParagraph.key}
                   className={cn(
-                    "absolute cursor-context-menu overflow-hidden rounded-sm border text-left transition-colors select-none",
+                    "absolute overflow-hidden rounded-sm border text-left transition-colors select-none",
+                    isExcerptable && "cursor-context-menu",
                     isActive
                       ? "border-emerald-500/95 bg-emerald-50/70"
-                      : "border-transparent bg-transparent hover:border-emerald-400/90 hover:bg-emerald-50/45",
+                      : isHighlightable
+                        ? "border-transparent bg-transparent hover:border-emerald-400/90 hover:bg-emerald-50/45"
+                        : "border-transparent bg-transparent",
                   )}
                   style={{
                     left: `${bbox.x}px`,
@@ -548,31 +555,44 @@ export function KnowledgeSidePane({
                     letterSpacing: "0.01em",
                     color: "#1c1917",
                   }}
-                  onMouseEnter={() => setHoveredKey(contextParagraph.key)}
-                  onMouseLeave={() =>
-                    setHoveredKey((current) =>
-                      current === contextParagraph.key ? null : current,
-                    )
+                  onMouseEnter={
+                    isHighlightable ? () => setHoveredKey(contextParagraph.key) : undefined
                   }
-                  onPointerDownCapture={(event) => {
-                    if (event.button !== 2) {
-                      return;
-                    }
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openContextMenu(contextParagraph, {
-                      x: event.clientX,
-                      y: event.clientY,
-                    });
-                  }}
-                  onContextMenuCapture={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openContextMenu(contextParagraph, {
-                      x: event.clientX,
-                      y: event.clientY,
-                    });
-                  }}
+                  onMouseLeave={
+                    isHighlightable
+                      ? () =>
+                          setHoveredKey((current) =>
+                            current === contextParagraph.key ? null : current,
+                          )
+                      : undefined
+                  }
+                  onPointerDownCapture={
+                    isExcerptable
+                      ? (event) => {
+                          if (event.button !== 2) {
+                            return;
+                          }
+                          event.preventDefault();
+                          event.stopPropagation();
+                          openContextMenu(contextParagraph, {
+                            x: event.clientX,
+                            y: event.clientY,
+                          });
+                        }
+                      : undefined
+                  }
+                  onContextMenuCapture={
+                    isExcerptable
+                      ? (event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          openContextMenu(contextParagraph, {
+                            x: event.clientX,
+                            y: event.clientY,
+                          });
+                        }
+                      : undefined
+                  }
                 >
                   <div className="pointer-events-none whitespace-pre-wrap break-words">
                     {paragraph.text}
@@ -674,7 +694,9 @@ export function KnowledgeSidePane({
                       "absolute rounded-md border border-transparent text-left transition-colors",
                       isActive
                         ? "bg-emerald-50/55"
-                        : "hover:border-emerald-300/70 hover:bg-emerald-50/35",
+                        : isHighlightable
+                          ? "hover:border-emerald-300/70 hover:bg-emerald-50/35"
+                          : "",
                     )}
                     style={{
                       left: `${Math.max(item.textLeft - 4, 0)}px`,
@@ -682,31 +704,46 @@ export function KnowledgeSidePane({
                       width: `${item.textWidth + 8}px`,
                       padding: "4px",
                     }}
-                    onMouseEnter={() => setHoveredKey(item.contextParagraph.key)}
-                    onMouseLeave={() =>
-                      setHoveredKey((current) =>
-                        current === item.contextParagraph.key ? null : current,
-                      )
+                    onMouseEnter={
+                      isHighlightable
+                        ? () => setHoveredKey(item.contextParagraph.key)
+                        : undefined
                     }
-                    onPointerDownCapture={(event) => {
-                      if (event.button !== 2) {
-                        return;
-                      }
-                      event.preventDefault();
-                      event.stopPropagation();
-                      openContextMenu(item.contextParagraph, {
-                        x: event.clientX,
-                        y: event.clientY,
-                      });
-                    }}
-                    onContextMenuCapture={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      openContextMenu(item.contextParagraph, {
-                        x: event.clientX,
-                        y: event.clientY,
-                      });
-                    }}
+                    onMouseLeave={
+                      isHighlightable
+                        ? () =>
+                            setHoveredKey((current) =>
+                              current === item.contextParagraph.key ? null : current,
+                            )
+                        : undefined
+                    }
+                    onPointerDownCapture={
+                      isExcerptable
+                        ? (event) => {
+                            if (event.button !== 2) {
+                              return;
+                            }
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openContextMenu(item.contextParagraph, {
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }
+                        : undefined
+                    }
+                    onContextMenuCapture={
+                      isExcerptable
+                        ? (event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                            openContextMenu(item.contextParagraph, {
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }
+                        : undefined
+                    }
                   >
                     <div
                       className="whitespace-pre-wrap break-words text-stone-800"
@@ -767,10 +804,18 @@ export function KnowledgeSidePane({
     }
   }, [mode, translationBlockHeights, translationMap, canvasMetrics.scaleX]);
 
+  useEffect(() => {
+    onPageDataChange?.(pageData);
+  }, [onPageDataChange, pageData]);
+
   return (
     <div
-      className="relative min-h-0 shrink-0 border-l bg-[#f6f1e8]"
-      style={{ width: `${KNOWLEDGE_SIDE_PANE_WIDTH}px` }}
+      className={cn(
+        "relative min-h-0 bg-[#f6f1e8]",
+        fluid ? "w-full" : "shrink-0",
+        bordered && "border-l",
+      )}
+      style={fluid ? undefined : { width: `${KNOWLEDGE_SIDE_PANE_WIDTH}px` }}
     >
       <div className="flex h-full min-h-0 flex-col">
         {pageState.status === "loading" && (

@@ -8,11 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from src.community.knowledge_base.book_metadata_runtime import maybe_generate_book_metadata
-from src.community.knowledge_base.document_parsers import (
-    OFFICE_EXTENSIONS,
-    PDF_EXTENSIONS,
-    extract_office_text_with_markitdown,
-)
+from src.community.knowledge_base.document_parsers import OFFICE_EXTENSIONS, PDF_EXTENSIONS
 from src.community.knowledge_base.indexer import (
     delete_thread_upload_records,
     upsert_thread_upload_records,
@@ -30,7 +26,6 @@ from src.community.knowledge_base.ingestion import (
     save_ingestion_record,
 )
 from src.community.knowledge_base.mineru_grpc import build_structured_document_from_mineru_grpc
-from src.community.knowledge_base.structured_document import build_structured_document
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import VIRTUAL_PATH_PREFIX, get_paths
 from src.sandbox.sandbox_provider import get_sandbox_provider
@@ -161,7 +156,7 @@ async def upload_files(
 
             # Check if file should be parsed into structured text
             file_ext = file_path.suffix.lower()
-            if file_ext in PDF_EXTENSIONS:
+            if file_ext in PDF_EXTENSIONS or file_ext in OFFICE_EXTENSIONS or file_ext in {".md", ".txt"}:
                 record["parse_method"] = "ocr_pdf_mineru_grpc"
                 file_info["parse_method"] = record["parse_method"]
                 try:
@@ -198,6 +193,7 @@ async def upload_files(
                         thread_id,
                         record,
                         structured_filename=structured_filename,
+                        preview_filename=safe_filename if file_ext in {".md", ".txt"} else None,
                     )
                     file_info["structured_file"] = structured_filename
                     file_info["structured_artifact_url"] = record["structured_artifact_url"]
@@ -208,85 +204,6 @@ async def upload_files(
                     record = mark_record_failed(record, "MinerU gRPC returned no structured text")
                     file_info["parse_status"] = record["parse_status"]
                     file_info["error"] = record["error"]
-            elif file_ext in OFFICE_EXTENSIONS:
-                extracted_text = extract_office_text_with_markitdown(file_path)
-                if extracted_text:
-                    structured_payload = build_structured_document(
-                        source_filename=safe_filename,
-                        title=record["display_title"],
-                        text=extracted_text,
-                        parser_name=record["parse_method"],
-                        hints=hints,
-                    )
-                    structured_filename = persist_thread_structured_document(
-                        thread_id,
-                        safe_filename,
-                        structured_payload,
-                    )
-                    maybe_generate_book_metadata(
-                        structured_payload=structured_payload,
-                        source_filename=safe_filename,
-                        title=record["display_title"],
-                        output_dir=uploads_dir,
-                        config=metadata_config,
-                    )
-                    if not is_local_sandbox:
-                        ingestion_urls = build_ingestion_urls(thread_id, structured_filename)
-                        sandbox.update_file(
-                            ingestion_urls["virtual_path"],
-                            (get_paths().sandbox_uploads_dir(thread_id) / ".ingestion" / structured_filename).read_bytes(),
-                        )
-                    record = mark_record_parsed(
-                        thread_id,
-                        record,
-                        structured_filename=structured_filename,
-                    )
-                    file_info["structured_file"] = structured_filename
-                    file_info["structured_artifact_url"] = record["structured_artifact_url"]
-                    file_info["index_target_filename"] = structured_filename
-                    file_info["parse_status"] = record["parse_status"]
-                    indexed_source_filenames.append(str(record["source_filename"]))
-                else:
-                    record = mark_record_failed(record, "Office parser returned no text")
-                    file_info["parse_status"] = record["parse_status"]
-                    file_info["error"] = record["error"]
-            elif file_ext in {".md", ".txt"}:
-                structured_payload = build_structured_document(
-                    source_filename=safe_filename,
-                    title=record["display_title"],
-                    text=file_path.read_text(encoding="utf-8"),
-                    parser_name=record["parse_method"],
-                    hints=hints,
-                )
-                structured_filename = persist_thread_structured_document(
-                    thread_id,
-                    safe_filename,
-                    structured_payload,
-                )
-                maybe_generate_book_metadata(
-                    structured_payload=structured_payload,
-                    source_filename=safe_filename,
-                    title=record["display_title"],
-                    output_dir=uploads_dir,
-                    config=metadata_config,
-                )
-                if not is_local_sandbox:
-                    ingestion_urls = build_ingestion_urls(thread_id, structured_filename)
-                    sandbox.update_file(
-                        ingestion_urls["virtual_path"],
-                        (get_paths().sandbox_uploads_dir(thread_id) / ".ingestion" / structured_filename).read_bytes(),
-                    )
-                record = mark_record_parsed(
-                    thread_id,
-                    record,
-                    structured_filename=structured_filename,
-                    preview_filename=safe_filename,
-                )
-                file_info["structured_file"] = structured_filename
-                file_info["structured_artifact_url"] = record["structured_artifact_url"]
-                file_info["index_target_filename"] = structured_filename
-                file_info["parse_status"] = record["parse_status"]
-                indexed_source_filenames.append(str(record["source_filename"]))
             else:
                 record["parse_status"] = "uploaded"
 

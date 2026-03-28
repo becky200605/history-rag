@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader, TextLoader, UnstructuredMarkdownLoader
+from langchain_community.document_loaders import PyMuPDFLoader, TextLoader, UnstructuredMarkdownLoader
 from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -21,15 +21,6 @@ from src.config.paths import get_paths
 INDEXABLE_EXTENSIONS = {".md", ".txt", ".pdf"}
 STRUCTURED_INDEXABLE_EXTENSIONS = INDEXABLE_EXTENSIONS | {".json"}
 STRUCTURED_SOURCE_TYPE = "structured"
-
-
-def _load_safe_directory(loader_cls, docs_path: Path, glob_pattern: str) -> list[Document]:
-    try:
-        loader = DirectoryLoader(str(docs_path), glob=glob_pattern, loader_cls=loader_cls)
-        return loader.load()
-    except Exception as exc:
-        print(f"Warning: failed to load '{glob_pattern}': {exc}")
-        return []
 
 
 def _load_pdf_documents(path: Path) -> list[Document]:
@@ -356,8 +347,8 @@ def rebuild_global_knowledge_index() -> int:
         )
 
     documents: list[Document] = []
-    structured_paths: list[Path] = []
-    preview_filenames_to_skip: set[str] = set()
+    candidate_paths: list[Path] = []
+    seen_paths: set[Path] = set()
     records_by_source_filename: dict[str, dict[str, object]] = {}
 
     if ingestion_dir.exists():
@@ -366,40 +357,22 @@ def rebuild_global_knowledge_index() -> int:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if payload.get("schema_version") == 1 and str(path.name).endswith(".structured.json"):
-                structured_paths.append(path)
-                continue
             source_filename = payload.get("source_filename")
             if source_filename:
                 records_by_source_filename[str(source_filename)] = payload
-            preview_filename = payload.get("preview_filename")
-            if preview_filename:
-                preview_filenames_to_skip.add(str(preview_filename))
+            target_path = payload.get("index_target_path")
+            if not payload.get("indexable") or not target_path:
+                continue
+            candidate = Path(str(target_path))
+            if not candidate.exists() or candidate in seen_paths:
+                continue
+            candidate_paths.append(candidate)
+            seen_paths.add(candidate)
 
-    if structured_paths:
-        documents.extend(_load_documents_from_paths(structured_paths))
+    if not candidate_paths:
+        return 0
 
-    documents.extend(
-        document
-        for document in _load_safe_directory(UnstructuredMarkdownLoader, docs_path, "**/*.md")
-        if Path(str(document.metadata.get("source", ""))).name not in preview_filenames_to_skip
-        and "/.ingestion/" not in str(document.metadata.get("source", ""))
-    )
-    documents.extend(
-        document
-        for document in _load_safe_directory(TextLoader, docs_path, "**/*.txt")
-        if Path(str(document.metadata.get("source", ""))).name not in preview_filenames_to_skip
-        and "/.ingestion/" not in str(document.metadata.get("source", ""))
-    )
-
-    raw_pdf_paths = [
-        path
-        for path in sorted(docs_path.glob("**/*.pdf"))
-        if "/.ingestion/" not in str(path)
-        and path.name not in records_by_source_filename
-    ]
-    if raw_pdf_paths:
-        documents.extend(_load_documents_from_paths(raw_pdf_paths))
+    documents.extend(_load_documents_from_paths(candidate_paths))
 
     if not documents:
         return 0
@@ -527,35 +500,14 @@ def rebuild_thread_upload_index(thread_id: str) -> int:
     _, records_by_index_target = build_record_lookup(thread_id)
     candidate_paths: list[Path] = []
     seen_paths: set[Path] = set()
-    preview_filenames_to_skip: set[str] = set()
-    recorded_source_filenames: set[str] = set()
 
     for record in list_ingestion_records(thread_id):
         target_filename = record.get("index_target_filename")
         target_path = record.get("index_target_path")
-        preview_filename = record.get("preview_filename")
-        source_filename = record.get("source_filename")
-        if preview_filename:
-            preview_filenames_to_skip.add(str(preview_filename))
-            recorded_source_filenames.add(str(preview_filename))
-        if source_filename:
-            recorded_source_filenames.add(str(source_filename))
-        if target_filename:
-            recorded_source_filenames.add(str(target_filename))
         if not record.get("indexable") or not target_filename or not target_path:
             continue
         path = Path(str(target_path))
         if not path.exists() or path in seen_paths:
-            continue
-        candidate_paths.append(path)
-        seen_paths.add(path)
-
-    for path in uploads_dir.iterdir():
-        if not path.is_file() or path.suffix.lower() not in INDEXABLE_EXTENSIONS:
-            continue
-        if path.name in preview_filenames_to_skip or path.name in recorded_source_filenames:
-            continue
-        if path in seen_paths:
             continue
         candidate_paths.append(path)
         seen_paths.add(path)
@@ -713,7 +665,6 @@ def rebuild_user_knowledge_index(user_id: str) -> int:
 
     try:
         get_paths().ensure_user_knowledge_dirs(user_id)
-        docs_dir = get_paths().user_knowledge_docs_dir(user_id)
     except ValueError:
         _clear_collection_if_exists(get_qdrant_client(), collection_name)
         raise
@@ -722,21 +673,12 @@ def rebuild_user_knowledge_index(user_id: str) -> int:
     candidate_paths: list[Path] = []
     seen_paths: set[Path] = set()
     records_by_index_target: dict[str, dict[str, object]] = {}
-    preview_filenames_to_skip: set[str] = set()
-    recorded_source_filenames: set[str] = set()
 
     for record in records:
         target_filename = record.get("index_target_filename")
         target_path = record.get("index_target_path")
-        preview_filename = record.get("preview_filename")
-        source_filename = record.get("source_filename")
-        if preview_filename:
-            preview_filenames_to_skip.add(str(preview_filename))
-        if source_filename:
-            recorded_source_filenames.add(str(source_filename))
         if target_filename:
             records_by_index_target[str(target_filename)] = record
-            recorded_source_filenames.add(str(target_filename))
         if not record.get("retrieval_enabled") or not record.get("indexable"):
             continue
         if not target_filename or not target_path:
@@ -746,17 +688,6 @@ def rebuild_user_knowledge_index(user_id: str) -> int:
             continue
         candidate_paths.append(path)
         seen_paths.add(path)
-
-    if docs_dir.exists():
-        for path in docs_dir.iterdir():
-            if not path.is_file() or path.suffix.lower() not in INDEXABLE_EXTENSIONS:
-                continue
-            if path.name in preview_filenames_to_skip or path.name in recorded_source_filenames:
-                continue
-            if path in seen_paths:
-                continue
-            candidate_paths.append(path)
-            seen_paths.add(path)
 
     if not candidate_paths:
         _clear_collection_if_exists(get_qdrant_client(), collection_name)

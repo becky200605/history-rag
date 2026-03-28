@@ -12,6 +12,8 @@ from src.community.knowledge_base.structured_document import save_structured_doc
 from src.config.paths import VIRTUAL_PATH_PREFIX, get_paths
 
 TEXT_EXTENSIONS = {".md", ".txt"}
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -80,10 +82,10 @@ def build_ingestion_record(
         "source_path": urls["path"],
         "source_virtual_path": urls["virtual_path"],
         "source_artifact_url": urls["artifact_url"],
-        "preview_filename": source_filename if parse_method in {"markdown", "plain_text"} else None,
-        "preview_path": urls["path"] if parse_method in {"markdown", "plain_text"} else None,
-        "preview_virtual_path": urls["virtual_path"] if parse_method in {"markdown", "plain_text"} else None,
-        "preview_artifact_url": urls["artifact_url"] if parse_method in {"markdown", "plain_text"} else None,
+        "preview_filename": source_filename if Path(source_filename).suffix.lower() in TEXT_EXTENSIONS else None,
+        "preview_path": urls["path"] if Path(source_filename).suffix.lower() in TEXT_EXTENSIONS else None,
+        "preview_virtual_path": urls["virtual_path"] if Path(source_filename).suffix.lower() in TEXT_EXTENSIONS else None,
+        "preview_artifact_url": urls["artifact_url"] if Path(source_filename).suffix.lower() in TEXT_EXTENSIONS else None,
         "structured_filename": None,
         "structured_path": None,
         "structured_virtual_path": None,

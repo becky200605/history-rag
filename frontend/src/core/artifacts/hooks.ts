@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useContext, useMemo } from "react";
 
-import { useThread } from "@/components/workspace/messages/context";
+import { ThreadContext } from "@/components/workspace/messages/context";
 
 import { loadArtifactContent, loadArtifactContentFromToolCall } from "./loader";
 
@@ -17,13 +17,13 @@ export function useArtifactContent({
   const isWriteFile = useMemo(() => {
     return filepath.startsWith("write-file:");
   }, [filepath]);
-  const { thread } = useThread();
+  const threadContext = useContext(ThreadContext);
   const content = useMemo(() => {
-    if (isWriteFile) {
-      return loadArtifactContentFromToolCall({ url: filepath, thread });
+    if (isWriteFile && threadContext?.thread) {
+      return loadArtifactContentFromToolCall({ url: filepath, thread: threadContext.thread });
     }
     return null;
-  }, [filepath, isWriteFile, thread]);
+  }, [filepath, isWriteFile, threadContext]);
   const { data, isLoading, error } = useQuery({
     queryKey: ["artifact", filepath, threadId],
     queryFn: () => {

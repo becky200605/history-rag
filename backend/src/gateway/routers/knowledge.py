@@ -23,11 +23,7 @@ from src.community.knowledge_base.citations import (
     resolve_result_citation_context,
 )
 from src.community.knowledge_base.common import resolve_project_path
-from src.community.knowledge_base.document_parsers import (
-    OFFICE_EXTENSIONS,
-    PDF_EXTENSIONS,
-    extract_office_text_with_markitdown,
-)
+from src.community.knowledge_base.document_parsers import OFFICE_EXTENSIONS, PDF_EXTENSIONS
 from src.community.knowledge_base.indexer import (
     delete_global_knowledge_documents,
     rebuild_global_knowledge_index,
@@ -447,17 +443,8 @@ def _build_global_ingestion_record(
     suffix = Path(filename).suffix.lower()
     parse_method = "binary_only"
     indexable = False
-    if suffix == ".md":
-        parse_method = "markdown"
-        indexable = True
-    elif suffix == ".txt":
-        parse_method = "plain_text"
-        indexable = True
-    elif suffix in PDF_EXTENSIONS:
-        parse_method = "ocr_pdf"
-        indexable = True
-    elif suffix in OFFICE_EXTENSIONS:
-        parse_method = "markitdown_office"
+    if suffix in INDEXABLE_EXTENSIONS or suffix in PDF_EXTENSIONS or suffix in OFFICE_EXTENSIONS:
+        parse_method = "ocr_pdf_mineru_grpc"
         indexable = True
 
     urls = _build_global_urls(filename)
@@ -577,7 +564,7 @@ def _process_single_global_ocr(filename: str) -> None:
 
     try:
         file_ext = file_path.suffix.lower()
-        if file_ext in PDF_EXTENSIONS:
+        if file_ext in PDF_EXTENSIONS or file_ext in OFFICE_EXTENSIONS or file_ext in INDEXABLE_EXTENSIONS:
             hints = record.get("hints") or {}
             record["parse_method"] = "ocr_pdf_mineru_grpc"
             _save_global_record(filename, record)
@@ -604,60 +591,7 @@ def _process_single_global_ocr(filename: str) -> None:
                 record,
                 structured_filename=structured_path.name,
                 structured_path=str(structured_path),
-            )
-        elif file_ext in OFFICE_EXTENSIONS:
-            extracted_text = extract_office_text_with_markitdown(file_path)
-            if not extracted_text or not extracted_text.strip():
-                raise ValueError("Office parser returned no text")
-            structured_payload = build_structured_document(
-                source_filename=filename,
-                title=record["display_title"],
-                text=extracted_text,
-                parser_name=record["parse_method"],
-                hints=record.get("hints") or {},
-            )
-            structured_path = save_structured_document(
-                ingestion_dir,
-                filename,
-                structured_payload,
-            )
-            maybe_generate_book_metadata(
-                structured_payload=structured_payload,
-                source_filename=filename,
-                title=record["display_title"],
-                output_dir=docs_dir,
-                config=metadata_config,
-            )
-            record = _mark_global_record_parsed(
-                record,
-                structured_filename=structured_path.name,
-                structured_path=str(structured_path),
-            )
-        elif file_ext in INDEXABLE_EXTENSIONS:
-            structured_payload = build_structured_document(
-                source_filename=filename,
-                title=record["display_title"],
-                text=file_path.read_text(encoding="utf-8"),
-                parser_name=record["parse_method"],
-                hints=record.get("hints") or {},
-            )
-            structured_path = save_structured_document(
-                ingestion_dir,
-                filename,
-                structured_payload,
-            )
-            maybe_generate_book_metadata(
-                structured_payload=structured_payload,
-                source_filename=filename,
-                title=record["display_title"],
-                output_dir=docs_dir,
-                config=metadata_config,
-            )
-            record = _mark_global_record_parsed(
-                record,
-                structured_filename=structured_path.name,
-                structured_path=str(structured_path),
-                preview_filename=filename,
+                preview_filename=filename if file_ext in INDEXABLE_EXTENSIONS else None,
             )
         else:
             record["parse_status"] = "uploaded"
@@ -774,7 +708,7 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
 
             try:
                 file_ext = file_path.suffix.lower()
-                if file_ext in PDF_EXTENSIONS:
+                if file_ext in PDF_EXTENSIONS or file_ext in OFFICE_EXTENSIONS or file_ext in INDEXABLE_EXTENSIONS:
                     hints = record.get("hints") or {}
                     record["parse_method"] = "ocr_pdf_mineru_grpc"
                     _save_global_record(safe_filename, record)
@@ -801,65 +735,7 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
                         record,
                         structured_filename=structured_path.name,
                         structured_path=str(structured_path),
-                    )
-                    needs_reindex = True
-                    parsed_filenames.append(safe_filename)
-                elif file_ext in OFFICE_EXTENSIONS:
-                    extracted_text = extract_office_text_with_markitdown(file_path)
-                    if extracted_text and extracted_text.strip():
-                        structured_payload = build_structured_document(
-                            source_filename=safe_filename,
-                            title=record["display_title"],
-                            text=extracted_text,
-                            parser_name=record["parse_method"],
-                            hints=record.get("hints") or {},
-                        )
-                        structured_path = save_structured_document(
-                            ingestion_dir,
-                            safe_filename,
-                            structured_payload,
-                        )
-                        maybe_generate_book_metadata(
-                            structured_payload=structured_payload,
-                            source_filename=safe_filename,
-                            title=record["display_title"],
-                            output_dir=docs_dir,
-                            config=metadata_config,
-                        )
-                        record = _mark_global_record_parsed(
-                            record,
-                            structured_filename=structured_path.name,
-                            structured_path=str(structured_path),
-                        )
-                        needs_reindex = True
-                        parsed_filenames.append(safe_filename)
-                    else:
-                        record = _mark_global_record_failed(record, "Office parser returned no text")
-                elif file_ext in INDEXABLE_EXTENSIONS:
-                    structured_payload = build_structured_document(
-                        source_filename=safe_filename,
-                        title=record["display_title"],
-                        text=file_path.read_text(encoding="utf-8"),
-                        parser_name=record["parse_method"],
-                        hints=record.get("hints") or {},
-                    )
-                    structured_path = save_structured_document(
-                        ingestion_dir,
-                        safe_filename,
-                        structured_payload,
-                    )
-                    maybe_generate_book_metadata(
-                        structured_payload=structured_payload,
-                        source_filename=safe_filename,
-                        title=record["display_title"],
-                        output_dir=docs_dir,
-                        config=metadata_config,
-                    )
-                    record = _mark_global_record_parsed(
-                        record,
-                        structured_filename=structured_path.name,
-                        structured_path=str(structured_path),
-                        preview_filename=safe_filename,
+                        preview_filename=safe_filename if file_ext in INDEXABLE_EXTENSIONS else None,
                     )
                     needs_reindex = True
                     parsed_filenames.append(safe_filename)
@@ -1123,15 +999,15 @@ def list_global_knowledge_files() -> dict:
         else:
             entry.update(
                 {
-                    "parse_method": "static",
-                    "parse_status": "indexed" if file_path.suffix.lower() in INDEXABLE_EXTENSIONS else "uploaded",
-                    "indexable": file_path.suffix.lower() in INDEXABLE_EXTENSIONS,
-                    "preview_filename": file_path.name if file_path.suffix.lower() in INDEXABLE_EXTENSIONS else None,
-                    "preview_artifact_url": _build_global_urls(file_path.name)["source_url"] if file_path.suffix.lower() in INDEXABLE_EXTENSIONS else None,
+                    "parse_method": "untracked",
+                    "parse_status": "uploaded",
+                    "indexable": False,
+                    "preview_filename": None,
+                    "preview_artifact_url": None,
                     "structured_filename": None,
                     "structured_artifact_url": None,
-                    "index_target_filename": file_path.name if file_path.suffix.lower() in INDEXABLE_EXTENSIONS else None,
-                    "index_target_artifact_url": _build_global_urls(file_path.name)["source_url"] if file_path.suffix.lower() in INDEXABLE_EXTENSIONS else None,
+                    "index_target_filename": None,
+                    "index_target_artifact_url": None,
                     "hints": {},
                     "error": None,
                 }

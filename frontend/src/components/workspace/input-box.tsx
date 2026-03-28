@@ -45,10 +45,10 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { useI18n } from "@/core/i18n/hooks";
+import type { Translations } from "@/core/i18n/locales/types";
 import { useModels } from "@/core/models/hooks";
 import type { AgentScenario, AgentTier } from "@/core/settings/local";
 import type { AgentThreadContext } from "@/core/threads";
-import type { Translations } from "@/core/i18n/locales/types";
 import { cn } from "@/lib/utils";
 
 import {
@@ -114,7 +114,7 @@ function PresetIcon({
   tier: AgentTier;
 }) {
   if (scenario === "research" && tier === "ultra") {
-    return <RocketIcon className="size-3 text-[#dabb5e]" />;
+    return <RocketIcon className="size-3 text-[rgb(57,130,152)]" />;
   }
   if (scenario === "qa" && tier === "ultra") {
     return <ZapIcon className="size-3" />;
@@ -282,7 +282,7 @@ export function InputBox({
                     "truncate text-xs font-normal",
                     context.scenario === "research" &&
                       context.tier === "ultra" &&
-                      "golden-text",
+                      "font-medium text-[rgb(57,130,152)]",
                   )}
                 >
                   {triggerLabel}
@@ -341,12 +341,13 @@ export function InputBox({
                           className={cn(
                             "mr-2 size-4",
                             isPreset("research", "ultra") &&
-                              "text-[#dabb5e]",
+                              "text-[rgb(57,130,152)]",
                           )}
                         />
                         <span
                           className={cn(
-                            isPreset("research", "ultra") && "golden-text",
+                            isPreset("research", "ultra") &&
+                              "font-semibold text-[rgb(57,130,152)]",
                           )}
                         >
                           {t.inputBox.researchUltraLabel}

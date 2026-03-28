@@ -1,6 +1,6 @@
 "use client";
 
-import { BookMarkedIcon, BookOpenTextIcon, MessageSquarePlus } from "lucide-react";
+import { BookOpenTextIcon, MessageSquarePlus, NotebookPenIcon, Settings2Icon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -62,22 +62,38 @@ export function WorkspaceHeader({ className }: { className?: string }) {
           </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem>
-          <SidebarMenuButton isActive={pathname === "/workspace/knowledge"} asChild>
+          <SidebarMenuButton
+            isActive={
+              pathname === "/workspace/knowledge" ||
+              pathname.startsWith("/workspace/knowledge/view")
+            }
+            asChild
+          >
             <Link className="text-muted-foreground" href="/workspace/knowledge">
               <BookOpenTextIcon size={16} />
-              <span>知识库管理</span>
+              <span>知识库</span>
             </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>
         {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && (
-          <SidebarMenuItem>
-            <SidebarMenuButton isActive={pathname === "/workspace/personal-knowledge"} asChild>
-              <Link className="text-muted-foreground" href="/workspace/personal-knowledge">
-                <BookMarkedIcon size={16} />
-                <span>个人知识库</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
+          <>
+            <SidebarMenuItem>
+              <SidebarMenuButton isActive={pathname === "/workspace/notes"} asChild>
+                <Link className="text-muted-foreground" href="/workspace/notes">
+                  <NotebookPenIcon size={16} />
+                  <span>笔记</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton isActive={pathname === "/workspace/knowledge-manage"} asChild>
+                <Link className="text-muted-foreground" href="/workspace/knowledge-manage">
+                  <Settings2Icon size={16} />
+                  <span>知识库管理</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </>
         )}
       </SidebarMenu>
     </>

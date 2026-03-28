@@ -80,6 +80,15 @@ if "src.reflection" not in sys.modules:
     reflection.resolve_class = _resolve_class
     sys.modules["src.reflection"] = reflection
 
+if "src.community.knowledge_base.translation_grpc" not in sys.modules:
+    translation_grpc = ModuleType("src.community.knowledge_base.translation_grpc")
+
+    def _translate_blocks_to_chinese_via_grpc(blocks):  # pragma: no cover - test import shim
+        return [{"id": block["id"], "translation": block["text"]} for block in blocks]
+
+    translation_grpc.translate_blocks_to_chinese_via_grpc = _translate_blocks_to_chinese_via_grpc
+    sys.modules["src.community.knowledge_base.translation_grpc"] = translation_grpc
+
 import src.community.knowledge_base.indexer as indexer_module
 import src.community.knowledge_base.retriever as retriever_module
 import src.community.knowledge_base.user_store as user_store_module
@@ -400,3 +409,87 @@ def test_user_knowledge_router_updates_text_content_and_reindexes(tmp_path, monk
     assert "> 锁定原文" in saved_content
     assert "## 我的摘抄笔记" in saved_content
     assert "新笔记" in saved_content
+
+
+def test_user_knowledge_router_creates_plain_note_and_returns_text_editor(tmp_path, monkeypatch) -> None:
+    paths = Paths(tmp_path)
+    monkeypatch.setattr(paths_module, "_paths", paths)
+    paths.ensure_user_knowledge_dirs("user_1")
+
+    upsert_calls: list[tuple[str, list[str]]] = []
+    indexed_calls: list[str] = []
+
+    monkeypatch.setattr(
+        user_knowledge_router,
+        "upsert_user_knowledge_records",
+        lambda user_id, record_ids: upsert_calls.append((user_id, record_ids)) or 1,
+    )
+    monkeypatch.setattr(user_knowledge_router, "mark_user_records_indexed", lambda user_id: indexed_calls.append(user_id))
+
+    app = FastAPI()
+    app.include_router(user_knowledge_router.router)
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/api/users/user_1/knowledge/derived",
+        json={"title": "会议记录", "content": "", "source_kind": "note"},
+    )
+
+    assert create_response.status_code == 200
+    payload = create_response.json()
+    assert payload["record"]["source_kind"] == "note"
+    assert upsert_calls == [("user_1", [payload["record"]["id"]])]
+    assert indexed_calls == ["user_1"]
+
+    record_id = payload["record"]["id"]
+    content_response = client.get(f"/api/users/user_1/knowledge/{record_id}/content")
+
+    assert content_response.status_code == 200
+    content_payload = content_response.json()
+    assert content_payload["mode"] == "text"
+    assert content_payload["editable"] is True
+    assert content_payload["title"] == "会议记录"
+    assert content_payload["editable_content"] == ""
+
+    saved_content = (paths.user_knowledge_docs_dir("user_1") / f"{record_id}.md").read_text(encoding="utf-8")
+    assert saved_content == "# 会议记录\n"
+
+
+def test_user_knowledge_router_delete_tolerates_non_file_artifacts(tmp_path, monkeypatch) -> None:
+    paths = Paths(tmp_path)
+    monkeypatch.setattr(paths_module, "_paths", paths)
+    paths.ensure_user_knowledge_dirs("user_1")
+
+    record = user_store_module.build_user_derived_record(
+        user_id="user_1",
+        source_kind="note",
+        title="待删除笔记",
+        source_filename="uk_note.md",
+        size=0,
+        origin_scope=None,
+        origin_doc_id=None,
+        origin_filename=None,
+    )
+    record["source_path"] = str(paths.user_knowledge_docs_dir("user_1"))
+    record["structured_path"] = str(paths.user_knowledge_ingestion_dir("user_1"))
+    user_store_module.save_user_record("user_1", record)
+
+    deleted_calls: list[tuple[str, list[str]]] = []
+    indexed_calls: list[str] = []
+    monkeypatch.setattr(
+        user_knowledge_router,
+        "delete_user_knowledge_records",
+        lambda user_id, record_ids: deleted_calls.append((user_id, record_ids)),
+    )
+    monkeypatch.setattr(user_knowledge_router, "mark_user_records_indexed", lambda user_id: indexed_calls.append(user_id))
+
+    app = FastAPI()
+    app.include_router(user_knowledge_router.router)
+    client = TestClient(app)
+
+    response = client.delete(f"/api/users/user_1/knowledge/{record['id']}")
+
+    assert response.status_code == 200
+    assert user_store_module.load_user_record("user_1", str(record["id"])) is None
+    assert deleted_calls == [("user_1", [str(record["id"])])]
+    assert indexed_calls == ["user_1"]

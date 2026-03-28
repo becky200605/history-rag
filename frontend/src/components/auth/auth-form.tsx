@@ -45,13 +45,13 @@ const DEFAULT_REGISTER_FORM: RegisterFormState = {
 };
 
 const INPUT_CLASS_NAME =
-  "border-[#d7c6af] bg-[#fffaf1] text-[#3f2f1e] placeholder:text-[#a88f70]";
+  "border-[rgba(57,130,152,0.18)] bg-[rgb(249,252,252)] text-[rgb(23,89,108)] placeholder:text-slate-400";
 
 const PRIMARY_BUTTON_CLASS_NAME =
-  "bg-[#6f4e37] text-[#fffaf1] hover:bg-[#5b3f2d]";
+  "bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]";
 
 function resolveNextPath(nextPath: string | null) {
-  if (!nextPath || !nextPath.startsWith("/")) {
+  if (nextPath?.startsWith("/") !== true) {
     return "/workspace";
   }
   return nextPath;
@@ -137,11 +137,11 @@ export function AuthForm() {
   };
 
   return (
-    <Card className="w-full max-w-md border-[#dccab2] bg-[#fdf7ee]/96 shadow-[0_24px_60px_rgba(91,63,45,0.14)]">
+    <Card className="w-full max-w-md border-[rgba(57,130,152,0.16)] bg-white/96 shadow-[0_24px_60px_rgba(33,92,110,0.12)]">
       <CardHeader className="space-y-3">
         <div className="space-y-1">
-          <CardTitle className="text-2xl text-[#3f2f1e]">用户登录</CardTitle>
-          <CardDescription className="text-sm text-[#7a644d]">
+          <CardTitle className="text-2xl text-[rgb(23,89,108)]">用户登录</CardTitle>
+          <CardDescription className="text-sm text-slate-600">
             先接入最小用户体系，当前支持注册、登录和退出登录。
           </CardDescription>
         </div>
@@ -152,16 +152,16 @@ export function AuthForm() {
             setError("");
           }}
         >
-          <TabsList className="grid w-full grid-cols-2 bg-[#efe3d3]">
+          <TabsList className="grid w-full grid-cols-2 bg-[rgb(233,244,246)]">
             <TabsTrigger
               value="login"
-              className="data-[state=active]:border-[#d8c0a0] data-[state=active]:bg-[#fffaf1] data-[state=active]:text-[#3f2f1e]"
+              className="data-[state=active]:border-[rgba(57,130,152,0.2)] data-[state=active]:bg-white data-[state=active]:text-[rgb(23,89,108)]"
             >
               登录
             </TabsTrigger>
             <TabsTrigger
               value="register"
-              className="data-[state=active]:border-[#d8c0a0] data-[state=active]:bg-[#fffaf1] data-[state=active]:text-[#3f2f1e]"
+              className="data-[state=active]:border-[rgba(57,130,152,0.2)] data-[state=active]:bg-white data-[state=active]:text-[rgb(23,89,108)]"
             >
               注册
             </TabsTrigger>
@@ -185,7 +185,7 @@ export function AuthForm() {
         {mode === "login" ? (
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm text-[#6f5a43]">邮箱</label>
+              <label className="text-sm text-slate-600">邮箱</label>
               <Input
                 className={INPUT_CLASS_NAME}
                 type="email"
@@ -200,7 +200,7 @@ export function AuthForm() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm text-[#6f5a43]">密码</label>
+              <label className="text-sm text-slate-600">密码</label>
               <Input
                 className={INPUT_CLASS_NAME}
                 type="password"
@@ -230,7 +230,7 @@ export function AuthForm() {
         ) : (
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm text-[#6f5a43]">邀请码</label>
+              <label className="text-sm text-slate-600">邀请码</label>
               <Input
                 className={INPUT_CLASS_NAME}
                 value={registerForm.inviteCode}
@@ -244,7 +244,7 @@ export function AuthForm() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm text-[#6f5a43]">昵称</label>
+              <label className="text-sm text-slate-600">昵称</label>
               <Input
                 className={INPUT_CLASS_NAME}
                 value={registerForm.name}
@@ -258,7 +258,7 @@ export function AuthForm() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm text-[#6f5a43]">邮箱</label>
+              <label className="text-sm text-slate-600">邮箱</label>
               <Input
                 className={INPUT_CLASS_NAME}
                 type="email"
@@ -273,7 +273,7 @@ export function AuthForm() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm text-[#6f5a43]">密码</label>
+              <label className="text-sm text-slate-600">密码</label>
               <Input
                 className={INPUT_CLASS_NAME}
                 type="password"
@@ -302,9 +302,12 @@ export function AuthForm() {
           </div>
         )}
 
-        <p className="text-center text-sm text-[#8d775f]">
+        <p className="text-center text-sm text-slate-500">
           返回首页请访问{" "}
-          <Link href="/" className="text-[#6f4e37] underline underline-offset-4">
+          <Link
+            href="/"
+            className="text-[rgb(57,130,152)] underline underline-offset-4"
+          >
             财政历史大模型
           </Link>
         </p>

@@ -157,6 +157,16 @@ export type ResolvedKnowledgeDocument =
   | { scope: "global"; filename: string }
   | { scope: "user"; filename: string; basePath: string };
 
+export function buildKnowledgeDocumentUrl(
+  scope: "global" | "user",
+  filename: string,
+): string {
+  if (scope === "global") {
+    return `/api/knowledge/docs/${encodeURIComponent(filename)}`;
+  }
+  return `/api/secure-knowledge/users/me/knowledge/docs/${encodeURIComponent(filename)}`;
+}
+
 export function resolveKnowledgeDocumentUrl(documentUrl: string): ResolvedKnowledgeDocument | null {
   try {
     const base =

@@ -285,7 +285,7 @@ def knowledge_search_tool(
             user_id=runtime.context.get("user_id"),
         )
         source_url = citation_context["source_url"]
-        original_url = citation_context["original_url"]
+        citation_url = citation_context.get("citation_url")
         citation_label = _build_citation_label(
             str(citation_context["citation_title"] or title),
             citation_context["citation_page_no"],
@@ -293,11 +293,13 @@ def knowledge_search_tool(
             citation_context["citation_paragraph_no"],
             page=citation_context["citation_page"],
         )
-        citation = _build_citation(citation_label, original_url or source_url)
+        citation = _build_citation(citation_label, citation_url or source_url)
 
         formatted_output += f"### 来源 {i}: {title} - 相关度: {score:.2f}\n"
         if doc_id:
             formatted_output += f"doc_id: {doc_id}\n"
+        if citation_context.get("source_label") and citation_context.get("source_scope") in {"user", "thread"}:
+            formatted_output += f"来源类型: {citation_context['source_label']}\n"
         if (
             citation_context.get("source_scope") == "user"
             and citation_context.get("original_title")

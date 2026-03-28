@@ -58,7 +58,7 @@ export interface UserKnowledgeRecordContentResponse {
 export interface CreateUserDerivedKnowledgeInput {
   title: string;
   content: string;
-  sourceKind: "excerpt" | "annotation";
+  sourceKind: "excerpt" | "annotation" | "note";
   originScope?: string | null;
   originDocId?: string | null;
   originFilename?: string | null;

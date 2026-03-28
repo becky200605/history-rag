@@ -13,7 +13,7 @@ from src.community.knowledge_base.document_parsers import infer_parse_method as 
 from src.community.knowledge_base.structured_document import save_structured_document
 from src.config.paths import get_paths
 
-TEXT_PREVIEW_PARSE_METHODS = {"markdown", "plain_text"}
+TEXT_PREVIEW_EXTENSIONS = {".md", ".txt"}
 USER_RETRIEVAL_ENABLED_SOURCE_KINDS = {"upload", "excerpt", "annotation", "translation", "note"}
 USER_RETRIEVAL_DISABLED_SOURCE_KINDS = {"import_ref"}
 USER_SOURCE_KINDS = USER_RETRIEVAL_ENABLED_SOURCE_KINDS | USER_RETRIEVAL_DISABLED_SOURCE_KINDS
@@ -115,6 +115,7 @@ def build_user_upload_record(
 ) -> dict[str, Any]:
     parse_method, indexable = infer_parse_method(source_filename)
     urls = build_user_doc_urls(user_id, source_filename)
+    source_extension = Path(source_filename).suffix.lower()
     record = _base_user_record(
         user_id=user_id,
         source_kind="upload",
@@ -124,7 +125,7 @@ def build_user_upload_record(
     record.update(
         {
             "source_filename": source_filename,
-            "source_extension": Path(source_filename).suffix.lower(),
+            "source_extension": source_extension,
             "source_size": size,
             "content_type": content_type,
             "parse_method": parse_method,
@@ -132,9 +133,9 @@ def build_user_upload_record(
             "indexable": indexable,
             "source_path": urls["path"],
             "source_artifact_url": urls["artifact_url"],
-            "preview_filename": source_filename if parse_method in TEXT_PREVIEW_PARSE_METHODS else None,
-            "preview_path": urls["path"] if parse_method in TEXT_PREVIEW_PARSE_METHODS else None,
-            "preview_artifact_url": urls["artifact_url"] if parse_method in TEXT_PREVIEW_PARSE_METHODS else None,
+            "preview_filename": source_filename if source_extension in TEXT_PREVIEW_EXTENSIONS else None,
+            "preview_path": urls["path"] if source_extension in TEXT_PREVIEW_EXTENSIONS else None,
+            "preview_artifact_url": urls["artifact_url"] if source_extension in TEXT_PREVIEW_EXTENSIONS else None,
             "structured_filename": None,
             "structured_path": None,
             "structured_artifact_url": None,
@@ -384,22 +385,24 @@ def persist_user_text_document(
 
 
 def cleanup_user_record_artifacts(record: dict[str, Any]) -> None:
+    def _unlink_if_exists(path_value: Any) -> None:
+        if not path_value:
+            return
+        try:
+            candidate = Path(str(path_value))
+            if candidate.exists() and candidate.is_file():
+                candidate.unlink()
+        except OSError:
+            return
+
     source_path = record.get("source_path")
-    if source_path:
-        candidate = Path(str(source_path))
-        if candidate.exists():
-            candidate.unlink()
+    _unlink_if_exists(source_path)
 
     structured_path = record.get("structured_path")
-    if structured_path:
-        candidate = Path(str(structured_path))
-        if candidate.exists():
-            candidate.unlink()
+    _unlink_if_exists(structured_path)
 
     preview_filename = record.get("preview_filename")
     source_filename = record.get("source_filename")
     preview_path = record.get("preview_path")
     if preview_path and preview_filename and preview_filename != source_filename:
-        candidate = Path(str(preview_path))
-        if candidate.exists():
-            candidate.unlink()
+        _unlink_if_exists(preview_path)

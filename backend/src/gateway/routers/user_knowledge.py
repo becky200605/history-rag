@@ -7,11 +7,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from src.community.knowledge_base.common import derive_global_doc_id, get_user_collection_name, resolve_project_path
-from src.community.knowledge_base.document_parsers import (
-    OFFICE_EXTENSIONS,
-    PDF_EXTENSIONS,
-    extract_office_text_with_markitdown,
-)
+from src.community.knowledge_base.document_parsers import OFFICE_EXTENSIONS, PDF_EXTENSIONS
 from src.community.knowledge_base.indexer import (
     delete_user_knowledge_records,
     upsert_user_knowledge_records,
@@ -245,6 +241,30 @@ def _build_derived_markdown(
     return "\n".join(part for part in parts if part is not None).rstrip() + "\n"
 
 
+def _extract_note_sections(content: str) -> tuple[str | None, str]:
+    normalized = content.replace("\r\n", "\n")
+    lines = normalized.split("\n")
+    title: str | None = None
+    body_lines = lines
+
+    if lines and lines[0].startswith("# "):
+        title = lines[0][2:].strip() or None
+        body_lines = lines[1:]
+        while body_lines and not body_lines[0].strip():
+            body_lines = body_lines[1:]
+
+    editable_content = "\n".join(body_lines).rstrip("\n")
+    return title, editable_content
+
+
+def _build_note_markdown(*, title: str, content: str) -> str:
+    body = content.replace("\r\n", "\n").rstrip("\n")
+    parts = [f"# {title}"]
+    if body:
+        parts.extend(["", body])
+    return "\n".join(parts).rstrip() + "\n"
+
+
 def _record_is_text_editable(record: dict[str, Any]) -> bool:
     if record.get("source_kind") in {"excerpt", "annotation", "translation", "note"}:
         return True
@@ -265,12 +285,18 @@ def _build_record_editor_payload(user_id: str, record: dict[str, Any]) -> dict[s
     editable_content = ""
     locked_excerpt = ""
 
-    if source_kind in {"excerpt", "annotation", "translation", "note"}:
+    if source_kind in {"excerpt", "annotation", "translation"}:
         parsed_title, parsed_excerpt, parsed_editable_content = _extract_derived_sections(raw_content or "")
         title = parsed_title or title
         locked_excerpt = str(origin_anchor.get("text") or parsed_excerpt or "").strip("\n") if origin_anchor else parsed_excerpt
         editable_content = parsed_editable_content
         mode = "derived"
+        editable = True
+    elif source_kind == "note":
+        parsed_title, parsed_editable_content = _extract_note_sections(raw_content or "")
+        title = parsed_title or title
+        editable_content = parsed_editable_content
+        mode = "text"
         editable = True
     elif _record_is_text_editable(record):
         editable_content = raw_content or ""
@@ -403,7 +429,7 @@ async def upload_user_knowledge_files(
         )
 
         file_ext = file_path.suffix.lower()
-        if file_ext in PDF_EXTENSIONS:
+        if file_ext in PDF_EXTENSIONS or file_ext in OFFICE_EXTENSIONS or file_ext in {".md", ".txt"}:
             record["parse_method"] = "ocr_pdf_mineru_grpc"
             try:
                 structured_payload = build_structured_document_from_mineru_grpc(
@@ -426,51 +452,9 @@ async def upload_user_knowledge_files(
                     user_id,
                     record,
                     structured_filename=structured_filename,
+                    preview_filename=safe_filename if file_ext in {".md", ".txt"} else None,
                 )
                 indexed_record_ids.append(str(record["id"]))
-        elif file_ext in OFFICE_EXTENSIONS:
-            extracted_text = extract_office_text_with_markitdown(file_path)
-            if extracted_text:
-                structured_payload = build_structured_document(
-                    source_filename=safe_filename,
-                    title=str(record["display_title"]),
-                    text=extracted_text,
-                    parser_name=str(record["parse_method"]),
-                    hints=hints,
-                )
-                structured_filename = persist_user_structured_document(
-                    user_id,
-                    safe_filename,
-                    structured_payload,
-                )
-                record = mark_user_record_parsed(
-                    user_id,
-                    record,
-                    structured_filename=structured_filename,
-                )
-                indexed_record_ids.append(str(record["id"]))
-            else:
-                record = mark_user_record_failed(record, "Office parser returned no text")
-        elif file_ext in {".md", ".txt"}:
-            structured_payload = build_structured_document(
-                source_filename=safe_filename,
-                title=str(record["display_title"]),
-                text=file_path.read_text(encoding="utf-8"),
-                parser_name=str(record["parse_method"]),
-                hints=hints,
-            )
-            structured_filename = persist_user_structured_document(
-                user_id,
-                safe_filename,
-                structured_payload,
-            )
-            record = mark_user_record_parsed(
-                user_id,
-                record,
-                structured_filename=structured_filename,
-                preview_filename=safe_filename,
-            )
-            indexed_record_ids.append(str(record["id"]))
 
         save_user_record(user_id, record)
         uploaded.append(_serialize_record(record))
@@ -565,7 +549,7 @@ def update_user_knowledge_record_content(
     if not source_filename:
         raise HTTPException(status_code=400, detail="Missing source filename")
 
-    if record.get("source_kind") in {"excerpt", "annotation", "translation", "note"}:
+    if record.get("source_kind") in {"excerpt", "annotation", "translation"}:
         origin_anchor = record.get("origin_anchor") if isinstance(record.get("origin_anchor"), dict) else None
         existing_content = _read_record_text_content(user_id, record) or ""
         _, parsed_excerpt, _ = _extract_derived_sections(existing_content)
@@ -578,6 +562,8 @@ def update_user_knowledge_record_content(
             locked_excerpt=locked_excerpt,
             editable_content=editable_content,
         )
+    elif record.get("source_kind") == "note":
+        persisted_content = _build_note_markdown(title=title, content=editable_content)
     else:
         persisted_content = editable_content
 
@@ -618,15 +604,18 @@ def create_user_derived_knowledge_record(
     payload: CreateUserDerivedKnowledgeRequest,
 ) -> dict:
     source_kind = payload.source_kind.strip().lower()
-    if source_kind not in {"excerpt", "annotation"}:
-        raise HTTPException(status_code=400, detail="source_kind must be excerpt or annotation")
+    if source_kind not in {"excerpt", "annotation", "note"}:
+        raise HTTPException(status_code=400, detail="source_kind must be excerpt, annotation, or note")
 
     title = payload.title.strip()
-    content = payload.content.strip()
+    content = payload.content.replace("\r\n", "\n")
+    trimmed_content = content.strip()
     if not title:
         raise HTTPException(status_code=400, detail="title is required")
-    if not content:
+    if source_kind != "note" and not trimmed_content:
         raise HTTPException(status_code=400, detail="content is required")
+
+    persisted_content = _build_note_markdown(title=title, content=content) if source_kind == "note" else trimmed_content
 
     temp_record = build_user_derived_record(
         user_id=user_id,
@@ -642,7 +631,7 @@ def create_user_derived_knowledge_record(
         hints=payload.hints,
     )
     source_filename = f"{temp_record['id']}.md"
-    encoded_content = content.encode("utf-8")
+    encoded_content = persisted_content.encode("utf-8")
     record = build_user_derived_record(
         user_id=user_id,
         source_kind=source_kind,
@@ -660,11 +649,11 @@ def create_user_derived_knowledge_record(
     record["created_at"] = temp_record["created_at"]
     record["updated_at"] = temp_record["updated_at"]
 
-    persist_user_text_document(user_id, source_filename, content)
+    persist_user_text_document(user_id, source_filename, persisted_content)
     structured_payload = build_structured_document(
         source_filename=source_filename,
         title=title,
-        text=content,
+        text=persisted_content,
         parser_name=str(record["parse_method"]),
         hints=payload.hints or {},
     )

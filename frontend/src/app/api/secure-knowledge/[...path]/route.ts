@@ -48,7 +48,7 @@ async function getRequestBody(request: NextRequest) {
   if (request.method === "GET" || request.method === "HEAD") {
     return undefined;
   }
-  return await request.arrayBuffer();
+  return request.body;
 }
 
 async function handleRequest(request: NextRequest, context: RouteContext) {
@@ -88,10 +88,12 @@ async function handleRequest(request: NextRequest, context: RouteContext) {
 
   const upstreamUrl = new URL(`/api/${rewrittenPath.join("/")}`, getBackendBaseUrl());
   upstreamUrl.search = request.nextUrl.search;
+  const body = await getRequestBody(request);
   const upstreamResponse = await fetch(upstreamUrl, {
     method: request.method,
     headers: buildForwardHeaders(request),
-    body: await getRequestBody(request),
+    body,
+    ...(body ? ({ duplex: "half" } as const) : {}),
     cache: "no-store",
   });
 

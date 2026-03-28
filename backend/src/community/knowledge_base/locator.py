@@ -14,10 +14,7 @@ from src.community.knowledge_base.common import (
     resolve_project_path,
 )
 from src.community.knowledge_base.ingestion import list_ingestion_records
-from src.community.knowledge_base.structured_document import (
-    build_structured_document,
-    load_structured_document,
-)
+from src.community.knowledge_base.structured_document import load_structured_document
 from src.community.knowledge_base.user_store import build_user_doc_public_url, list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
@@ -48,19 +45,6 @@ def _matches_identifier(
     return False
 
 
-def _load_text_structured(path: Path, *, title: str, parser_name: str) -> dict[str, Any] | None:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except Exception:
-        return None
-    return build_structured_document(
-        source_filename=path.name,
-        title=title,
-        text=text,
-        parser_name=parser_name,
-    )
-
-
 def _locate_global_document(doc_id: str | None, filename: str | None) -> LocatedDocument | None:
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
     ingestion_dir = docs_root / ".ingestion"
@@ -88,12 +72,6 @@ def _locate_global_document(doc_id: str | None, filename: str | None) -> Located
 
             structured_path = record.get("structured_path")
             payload = load_structured_document(Path(str(structured_path))) if structured_path else None
-            if not payload and Path(source_filename).suffix.lower() in {".md", ".txt"}:
-                payload = _load_text_structured(
-                    docs_root / source_filename,
-                    title=str(record.get("display_title") or Path(source_filename).stem),
-                    parser_name=str(record.get("parse_method") or "plain_text"),
-                )
             if not payload:
                 return None
 
@@ -106,30 +84,6 @@ def _locate_global_document(doc_id: str | None, filename: str | None) -> Located
                 original_url=record.get("source_artifact_url"),
                 payload=payload,
             )
-
-    for path in sorted(docs_root.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
-            continue
-        candidate_doc_id = derive_global_doc_id(docs_root, path)
-        if not _matches_identifier(
-            requested_doc_id=doc_id,
-            requested_filename=filename,
-            candidate_doc_id=candidate_doc_id,
-            candidate_filename=path.name,
-        ):
-            continue
-        payload = _load_text_structured(path, title=path.stem, parser_name="plain_text")
-        if not payload:
-            return None
-        return LocatedDocument(
-            doc_id=candidate_doc_id,
-            title=str(payload.get("title") or path.stem),
-            filename=path.name,
-            scope="global",
-            source_url=f"/api/knowledge/docs/{path.name}",
-            original_url=None,
-            payload=payload,
-        )
     return None
 
 
@@ -150,12 +104,6 @@ def _locate_thread_document(thread_id: str, doc_id: str | None, filename: str | 
 
         structured_path = record.get("structured_path")
         payload = load_structured_document(Path(str(structured_path))) if structured_path else None
-        if not payload and Path(source_filename).suffix.lower() in {".md", ".txt"}:
-            payload = _load_text_structured(
-                uploads_dir / source_filename,
-                title=str(record.get("display_title") or Path(source_filename).stem),
-                parser_name=str(record.get("parse_method") or "plain_text"),
-            )
         if not payload:
             return None
 
@@ -189,12 +137,6 @@ def _locate_user_document(user_id: str, doc_id: str | None, filename: str | None
 
         structured_path = record.get("structured_path")
         payload = load_structured_document(Path(str(structured_path))) if structured_path else None
-        if not payload and Path(source_filename).suffix.lower() in {".md", ".txt"}:
-            payload = _load_text_structured(
-                docs_dir / source_filename,
-                title=str(record.get("display_title") or Path(source_filename).stem),
-                parser_name=str(record.get("parse_method") or "plain_text"),
-            )
         if not payload:
             return None
 

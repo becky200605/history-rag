@@ -43,6 +43,7 @@ import {
   getKnowledgeParagraphLocationForDocumentUrl,
   type KnowledgeParagraphLocation,
 } from "@/core/knowledge/api";
+import { getKnowledgeCitationMeta } from "@/core/knowledge/citation-meta";
 import { installSkill } from "@/core/skills/api";
 import { streamdownPlugins } from "@/core/streamdown";
 import { checkCodeFile, getFileExtension, getFileName } from "@/core/utils/files";
@@ -102,6 +103,13 @@ export function ArtifactFileDetail({
     if (!isKnowledgeDoc) return null;
     return filepathFromProps.slice("knowledge-doc:".length);
   }, [filepathFromProps, isKnowledgeDoc]);
+
+  const knowledgeCitationMeta = useMemo(() => {
+    if (!knowledgeUrl) {
+      return null;
+    }
+    return getKnowledgeCitationMeta(knowledgeUrl);
+  }, [knowledgeUrl]);
 
   const knowledgeSnippet = useMemo(() => {
     if (!isKnowledgeDoc || !knowledgeUrl) return null;
@@ -290,37 +298,6 @@ export function ArtifactFileDetail({
     };
   }, [isKnowledgeDoc, knowledgeUrl, isKnowledgePdf]);
 
-  const highlightedKnowledgeContent = useMemo(() => {
-    if (!isKnowledgeDoc || !knowledgeContent || !knowledgeSnippet) {
-      return knowledgeContent;
-    }
-    const index = knowledgeContent.indexOf(knowledgeSnippet);
-    if (index === -1) {
-      return knowledgeContent;
-    }
-    const marker = '\n<a id="kb-snippet"></a>';
-    return (
-      knowledgeContent.slice(0, index) +
-      marker +
-      knowledgeContent.slice(index)
-    );
-  }, [isKnowledgeDoc, knowledgeContent, knowledgeSnippet]);
-
-  useEffect(() => {
-    if (!isKnowledgeDoc || !highlightedKnowledgeContent) {
-      return;
-    }
-    const timeout = window.setTimeout(() => {
-      const el = document.getElementById("kb-snippet");
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-    }, 200);
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [isKnowledgeDoc, highlightedKnowledgeContent]);
-
   const displayContent = useMemo(() => {
     if (isKnowledgeDoc) {
       if (knowledgeError) {
@@ -329,14 +306,14 @@ export function ArtifactFileDetail({
       if (isKnowledgeLoading) {
         return "Loading knowledge document...";
       }
-      return highlightedKnowledgeContent ?? "";
+      return knowledgeContent ?? "";
     }
     return content ?? "";
   }, [
     content,
-    highlightedKnowledgeContent,
     isKnowledgeDoc,
     isKnowledgeLoading,
+    knowledgeContent,
     knowledgeError,
   ]);
 
@@ -498,6 +475,13 @@ export function ArtifactFileDetail({
             "overflow-hidden",
         )}
       >
+        {isKnowledgeDoc && knowledgeCitationMeta && (
+          <KnowledgeCitationSummary
+            originTitle={knowledgeCitationMeta.originTitle}
+            sourceLabel={knowledgeCitationMeta.sourceLabel}
+            sourceTitle={knowledgeCitationMeta.sourceTitle}
+          />
+        )}
         {isKnowledgePdf && knowledgePdfUrl && (
           knowledgePdfLocator?.filename &&
           (knowledgePdfLocator.pageNo ||
@@ -526,6 +510,7 @@ export function ArtifactFileDetail({
             filepath={filepath}
             threadId={threadId}
             content={displayContent}
+            highlightSnippet={knowledgeSnippet}
             mode={markdownPreviewVariant}
             onModeChange={setMarkdownPreviewVariant}
             rawUrl={isKnowledgeDoc ? knowledgeUrl ?? undefined : undefined}
@@ -1011,6 +996,7 @@ function MarkdownDualPreview({
   filepath,
   threadId,
   content,
+  highlightSnippet,
   mode,
   onModeChange,
   rawUrl,
@@ -1018,6 +1004,7 @@ function MarkdownDualPreview({
   filepath: string;
   threadId: string;
   content: string;
+  highlightSnippet?: string | null;
   mode: PreviewVariant;
   onModeChange: (mode: PreviewVariant) => void;
   rawUrl?: string;
@@ -1057,13 +1044,10 @@ function MarkdownDualPreview({
       <div className={containerClass}>
         {showRendered && (
           <div className="rounded-2xl border border-border/40 bg-muted p-4">
-            <Streamdown
-              className="size-full"
-              {...streamdownPlugins}
-              components={{ a: CitationLink }}
-            >
-              {content ?? ""}
-            </Streamdown>
+            <HighlightedMarkdownPreview
+              content={content ?? ""}
+              highlightSnippet={highlightSnippet}
+            />
           </div>
         )}
         {showOriginal && (
@@ -1073,6 +1057,148 @@ function MarkdownDualPreview({
           />
         )}
       </div>
+    </div>
+  );
+}
+
+function KnowledgeCitationSummary({
+  sourceLabel,
+  sourceTitle,
+  originTitle,
+}: {
+  sourceLabel: string | null;
+  sourceTitle: string | null;
+  originTitle: string | null;
+}) {
+  if ((!sourceLabel || sourceLabel === "知识库文档") && !originTitle) {
+    return null;
+  }
+
+  return (
+    <div className="border-b border-border/40 bg-amber-50/55 px-4 py-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-900/70">
+        引用来源
+      </p>
+      {sourceLabel && (
+        <p className="mt-1 text-sm text-stone-900">
+          这条 citation 来自{sourceLabel}
+          {sourceTitle ? `《${sourceTitle}》` : ""}
+        </p>
+      )}
+      {originTitle && originTitle !== sourceTitle && (
+        <p className="mt-1 text-xs text-stone-600">
+          原始出处：{originTitle}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function normalizeHighlightSnippet(snippet: string | null | undefined): string | null {
+  if (!snippet) {
+    return null;
+  }
+  const firstMeaningfulLine = snippet
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstMeaningfulLine) {
+    return null;
+  }
+  return firstMeaningfulLine.slice(0, 120);
+}
+
+function clearHighlight(root: HTMLElement) {
+  root.querySelectorAll("span[data-kb-highlight='true']").forEach((node) => {
+    const parent = node.parentNode;
+    if (!parent) {
+      return;
+    }
+    while (node.firstChild) {
+      parent.insertBefore(node.firstChild, node);
+    }
+    parent.removeChild(node);
+    parent.normalize();
+  });
+}
+
+function applyHighlight(root: HTMLElement, snippet: string): HTMLElement | null {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || !node.textContent?.trim()) {
+        return NodeFilter.FILTER_SKIP;
+      }
+      if (["SCRIPT", "STYLE"].includes(parent.tagName)) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const content = node.textContent ?? "";
+    const index = content.indexOf(snippet);
+    if (index === -1) {
+      continue;
+    }
+
+    const startNode = node.splitText(index);
+    const trailingNode = startNode.splitText(snippet.length);
+    const highlight = document.createElement("span");
+    highlight.dataset.kbHighlight = "true";
+    highlight.className =
+      "rounded-[3px] underline decoration-amber-500 decoration-2 underline-offset-4 bg-amber-100/70";
+    startNode.parentNode?.insertBefore(highlight, trailingNode);
+    highlight.appendChild(startNode);
+    return highlight;
+  }
+
+  return null;
+}
+
+function HighlightedMarkdownPreview({
+  content,
+  highlightSnippet,
+}: {
+  content: string;
+  highlightSnippet?: string | null;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const root = containerRef.current;
+    if (!root) {
+      return;
+    }
+
+    clearHighlight(root);
+    const snippet = normalizeHighlightSnippet(highlightSnippet);
+    if (!snippet) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      const target = applyHighlight(root, snippet);
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+
+    return () => {
+      window.clearTimeout(timeout);
+      clearHighlight(root);
+    };
+  }, [content, highlightSnippet]);
+
+  return (
+    <div ref={containerRef}>
+      <Streamdown
+        className="size-full"
+        {...streamdownPlugins}
+        components={{ a: CitationLink }}
+      >
+        {content}
+      </Streamdown>
     </div>
   );
 }

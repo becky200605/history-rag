@@ -10,12 +10,16 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
 import { useArtifacts } from "@/components/workspace/artifacts";
+import { getKnowledgeCitationMeta } from "@/core/knowledge/citation-meta";
 import { cn } from "@/lib/utils";
 
 interface KnowledgeDocInfo {
   filename: string;
   isPdf: boolean;
   page: number | null;
+  sourceLabel: string | null;
+  sourceTitle: string | null;
+  originTitle: string | null;
 }
 
 function parseKnowledgeDocUrl(url: string): KnowledgeDocInfo | null {
@@ -50,6 +54,7 @@ function parseKnowledgeDocUrl(url: string): KnowledgeDocInfo | null {
       filename,
       isPdf,
       page,
+      ...getKnowledgeCitationMeta(urlObj.toString()),
     };
   } catch {
     return null;
@@ -75,7 +80,10 @@ export function CitationLink({
       ? children.replace(/^citation:\s*/i, "")
       : null;
   const isGenericText = childrenText === "Source" || childrenText === "来源";
-  const displayText = (!isGenericText && childrenText) ?? domain;
+  const displayText =
+    (!isGenericText && childrenText) ??
+    knowledgeDocInfo?.sourceTitle ??
+    domain;
 
   const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
     if (!href) {
@@ -130,10 +138,20 @@ export function CitationLink({
             )}
             {knowledgeDocInfo && (
               <div className="text-muted-foreground text-xs">
+                {knowledgeDocInfo.sourceLabel && (
+                  <p>{knowledgeDocInfo.sourceLabel}</p>
+                )}
+                {knowledgeDocInfo.sourceTitle && (
+                  <p className="truncate">{knowledgeDocInfo.sourceTitle}</p>
+                )}
                 <p className="truncate">{knowledgeDocInfo.filename}</p>
                 {knowledgeDocInfo.isPdf && knowledgeDocInfo.page !== null && (
                   <p>第 {knowledgeDocInfo.page + 1} 页</p>
                 )}
+                {knowledgeDocInfo.originTitle &&
+                  knowledgeDocInfo.originTitle !== knowledgeDocInfo.sourceTitle && (
+                    <p className="truncate">原始出处：{knowledgeDocInfo.originTitle}</p>
+                  )}
               </div>
             )}
             {!isKnowledgeDoc && href && (
@@ -156,6 +174,7 @@ export function CitationLink({
           {isKnowledgeDoc && (
             <p className="text-muted-foreground mt-2 text-xs">
               点击在侧边栏中查看
+              {knowledgeDocInfo?.sourceLabel ? ` ${knowledgeDocInfo.sourceLabel}` : ""}
             </p>
           )}
         </div>

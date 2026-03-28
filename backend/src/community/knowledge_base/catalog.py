@@ -18,7 +18,7 @@ from src.community.knowledge_base.common import (
     resolve_project_path,
     tokenize_search_text,
 )
-from src.community.knowledge_base.ingestion import build_record_lookup, list_ingestion_records
+from src.community.knowledge_base.ingestion import list_ingestion_records
 from src.community.knowledge_base.structured_document import load_structured_document
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
@@ -431,7 +431,6 @@ def _build_global_entries(
 
     entries: list[BookCatalogEntry] = []
     ingestion_dir = docs_root / ".ingestion"
-    preview_filenames_to_skip: set[str] = set()
 
     if ingestion_dir.exists():
         for path in sorted(ingestion_dir.glob("*.json")):
@@ -441,10 +440,6 @@ def _build_global_entries(
                 continue
             if payload.get("schema_version") == 1:
                 continue
-
-            preview_filename = payload.get("preview_filename")
-            if preview_filename:
-                preview_filenames_to_skip.add(str(preview_filename))
 
             source_filename = payload.get("source_filename")
             if not payload.get("indexable") or not source_filename:
@@ -473,34 +468,6 @@ def _build_global_entries(
             )
             entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
 
-    for path in sorted(docs_root.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
-            continue
-        if "/.ingestion/" in str(path):
-            continue
-        if path.name in preview_filenames_to_skip:
-            continue
-
-        preview = _read_preview(path)
-        search_excerpt = _read_preview(path, max_chars=3600)
-        extracted_title = extract_title_from_text(preview, path.stem)
-        title = path.stem
-        doc_id = derive_global_doc_id(docs_root, path)
-        search_text = normalize_search_text(f"{title} {extracted_title} {search_excerpt}")
-        entry = BookCatalogEntry(
-            doc_id=doc_id,
-            title=title,
-            filename=path.name,
-            scope="global",
-            source_path=str(path),
-            source_url=f"/api/knowledge/docs/{path.name}",
-            original_url=None,
-            preview=preview[:240],
-            search_text=search_text,
-            search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
-        )
-        entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
-
     return entries
 
 
@@ -513,14 +480,9 @@ def _build_thread_entries(
         return []
 
     entries: list[BookCatalogEntry] = []
-    _, records_by_index_target = build_record_lookup(thread_id)
-    seen_index_targets: set[str] = set()
-
     for record in list_ingestion_records(thread_id):
         target_filename = record.get("index_target_filename")
         preview_filename = record.get("preview_filename")
-        if preview_filename:
-            seen_index_targets.add(str(preview_filename))
         if not record.get("indexable") or not target_filename:
             continue
         preview_path = uploads_dir / str(preview_filename or record.get("source_filename") or target_filename)
@@ -550,31 +512,6 @@ def _build_thread_entries(
             source_url=record.get("preview_artifact_url")
             or f"/api/threads/{thread_id}/artifacts/mnt/user-data/uploads/{preview_path.name}",
             original_url=original_url,
-            preview=preview[:240],
-            search_text=normalize_search_text(f"{title} {extracted_title} {search_excerpt}"),
-            search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
-        )
-        entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
-
-    for path in sorted(uploads_dir.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in {".md", ".txt"}:
-            continue
-        if path.name in seen_index_targets or records_by_index_target.get(path.name):
-            continue
-
-        preview = _read_preview(path)
-        search_excerpt = _read_preview(path, max_chars=3600)
-        extracted_title = extract_title_from_text(preview, path.stem)
-        title = path.stem
-
-        entry = BookCatalogEntry(
-            doc_id=derive_thread_doc_id(path),
-            title=title,
-            filename=path.name,
-            scope="thread",
-            source_path=str(path),
-            source_url=f"/api/threads/{thread_id}/artifacts/mnt/user-data/uploads/{path.name}",
-            original_url=None,
             preview=preview[:240],
             search_text=normalize_search_text(f"{title} {extracted_title} {search_excerpt}"),
             search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),

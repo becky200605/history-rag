@@ -57,7 +57,7 @@ services:
       context: ../
       dockerfile: backend/Dockerfile
     container_name: history-rag-gateway
-    command: sh -c "cd backend && uv run uvicorn src.gateway.app:app --host 0.0.0.0 --port 8001"
+    command: sh -c "cd backend && python -m uvicorn src.gateway.app:app --host 0.0.0.0 --port 8001"
     env_file:
       - ../backend/.production.env
     volumes:
@@ -80,7 +80,7 @@ services:
       context: ../
       dockerfile: backend/Dockerfile
     container_name: history-rag-langgraph
-    command: sh -c "cd backend && uv run langgraph dev --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024"
+    command: sh -c "cd backend && langgraph dev --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024"
     env_file:
       - ../backend/.production.env
     volumes:

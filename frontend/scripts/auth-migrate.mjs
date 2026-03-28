@@ -6,6 +6,7 @@ import { createPool } from "mysql2/promise";
 
 const databaseUrl = process.env.DATABASE_URL;
 const secret = process.env.BETTER_AUTH_SECRET;
+const baseURL = process.env.BETTER_AUTH_BASE_URL;
 
 if (!databaseUrl) {
   throw new Error("DATABASE_URL is required to run auth migrations.");
@@ -22,6 +23,7 @@ const pool = createPool({
 
 const auth = betterAuth({
   database: pool,
+  baseURL,
   secret,
   emailAndPassword: {
     enabled: true,

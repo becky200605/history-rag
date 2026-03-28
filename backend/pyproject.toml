@@ -37,8 +37,6 @@ dependencies = [
     "langchain-community>=0.4.1",
     "langchain-text-splitters>=1.1.1",
     "unstructured[md]>=0.21.5",
-    "paddleocr>=2.10.0",
-    "paddlepaddle==3.2.0",
     "oss2>=2.19.1",
     "dashscope>=1.25.12",
     "volcengine-python-sdk[ark]>=1.0.0",

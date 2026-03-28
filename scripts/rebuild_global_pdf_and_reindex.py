@@ -11,8 +11,8 @@ BACKEND_ROOT = ROOT / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from src.community.knowledge_base.document_parsers import build_structured_document_from_paddleocr
 from src.community.knowledge_base.indexer import rebuild_global_knowledge_index
+from src.community.knowledge_base.mineru_grpc import build_structured_document_from_mineru_grpc
 from src.community.knowledge_base.retriever import get_qdrant_client
 from src.community.knowledge_base.structured_document import save_structured_document
 from src.config.app_config import get_app_config
@@ -54,15 +54,15 @@ def _rebuild_single_global_pdf(filename: str) -> tuple[dict, Path]:
         )
 
     hints = dict(record.get("hints") or {})
-    payload = build_structured_document_from_paddleocr(
+    payload = build_structured_document_from_mineru_grpc(
         source_path,
         title=str(record.get("display_title") or source_path.stem),
-        parser_name="paddleocr_pdf",
+        parser_name="ocr_pdf_mineru_grpc",
         hints=hints,
         language_hint=hints.get("language_hint"),
     )
     structured_path = save_structured_document(ingestion_dir, filename, payload)
-    record["parse_method"] = "paddleocr_pdf"
+    record["parse_method"] = "ocr_pdf_mineru_grpc"
     _mark_global_record_parsed(
         record,
         structured_filename=structured_path.name,

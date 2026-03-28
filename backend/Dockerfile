@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y \
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
+ENV UV_DEFAULT_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"
+ENV UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
 
 # Set working directory
 WORKDIR /app
@@ -27,7 +29,7 @@ COPY backend ./backend
 
 # Install dependencies with cache mount
 RUN --mount=type=cache,target=/root/.cache/uv \
-    sh -c "cd backend && uv sync"
+    sh -c "cd backend && uv sync --frozen --no-dev"
 
 # Expose ports (gateway: 8001, langgraph: 2024)
 EXPOSE 8001 2024

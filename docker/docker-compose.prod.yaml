@@ -1,27 +1,4 @@
 services:
-  mysql:
-    image: mysql:8.4
-    container_name: history-rag-mysql
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-history_rag}
-      MYSQL_USER: ${MYSQL_USER:-history_rag}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-    volumes:
-      - ../docker-data/mysql:/var/lib/mysql
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-    networks:
-      - history-rag-prod
-    restart: unless-stopped
-
   nginx:
     image: nginx:alpine
     container_name: history-rag-nginx
@@ -45,14 +22,13 @@ services:
         PNPM_STORE_PATH: ${PNPM_STORE_PATH:-/root/.local/share/pnpm/store}
     container_name: history-rag-frontend
     command: sh -c "cd frontend && pnpm run build && pnpm run start -- --hostname 0.0.0.0 --port 3000"
-    depends_on:
-      mysql:
-        condition: service_healthy
     env_file:
       - ../frontend/.production.env
     environment:
       - NODE_ENV=production
       - CI=true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - history-rag-prod
     restart: unless-stopped
@@ -65,14 +41,13 @@ services:
         PNPM_STORE_PATH: ${PNPM_STORE_PATH:-/root/.local/share/pnpm/store}
     container_name: history-rag-auth-migrate
     command: sh -c "cd frontend && pnpm auth:migrate"
-    depends_on:
-      mysql:
-        condition: service_healthy
     env_file:
       - ../frontend/.production.env
     environment:
       - NODE_ENV=production
       - CI=true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - history-rag-prod
     restart: "no"

@@ -32,9 +32,7 @@ require_file "$COMPOSE_FILE"
 
 mkdir -p "$PROJECT_ROOT/backend/.deer-flow" "$PROJECT_ROOT/knowledge" "$PROJECT_ROOT/logs"
 
-echo "Starting MySQL..."
 cd "$PROJECT_ROOT/docker"
-docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename "$COMPOSE_FILE")" up -d mysql
 
 echo "Running Better Auth migrations..."
 docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename "$COMPOSE_FILE")" run --rm auth-migrate

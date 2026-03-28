@@ -20,6 +20,8 @@ venv/
 
 # Environment variables
 #.env
+backend/.env
+frontend/.env
 
 # Configuration files
 #config.yaml

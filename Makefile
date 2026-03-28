@@ -21,7 +21,7 @@ help:
 
 config:
 	@test -f config.yaml || cp config.example.yaml config.yaml
-	@test -f .env || cp .env.example .env
+	@test -f backend/.env || cp backend/.env.example backend/.env
 	@test -f frontend/.env || cp frontend/.env.example frontend/.env
 
 # Check required tools
@@ -99,10 +99,10 @@ check:
 		exit 1; \
 	fi
 
-# Build/rebuild knowledge base index (loads .env from project root so OPENAI_API_KEY etc. are available in backend)
+# Build/rebuild knowledge base index (uses backend/.env)
 index-knowledge:
 	@echo "Building knowledge base index..."
-	@( set -a && [ -f .env ] && . ./.env; set +a ) && cd backend && PYTHONPATH=. uv run python -m src.community.knowledge_base.indexer
+	@( set -a && [ -f backend/.env ] && . ./backend/.env; set +a ) && cd backend && PYTHONPATH=. uv run python -m src.community.knowledge_base.indexer
 	@echo "✓ Knowledge base index built"
 
 # Install all dependencies

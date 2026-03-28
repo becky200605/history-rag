@@ -71,7 +71,7 @@ https://github.com/user-attachments/assets/a8bcadc4-e040-4cf2-8fda-dd768b999c18
 
    Choose one of the following methods:
 
-- Option A: Edit the `.env` file in the project root (Recommended)
+- Option A: Edit `backend/.env` (Recommended)
 
 
    ```bash

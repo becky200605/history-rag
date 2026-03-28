@@ -21,7 +21,7 @@ services:
       args:
         PNPM_STORE_PATH: ${PNPM_STORE_PATH:-/root/.local/share/pnpm/store}
     container_name: history-rag-frontend
-    command: sh -c "cd frontend && pnpm run build && pnpm run start -- --hostname 0.0.0.0 --port 3000"
+    command: sh -c "cd frontend && pnpm run build && pnpm exec next start --hostname 0.0.0.0 --port 3000"
     env_file:
       - ../frontend/.production.env
     environment:

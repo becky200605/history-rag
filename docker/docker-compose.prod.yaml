@@ -62,7 +62,6 @@ services:
       - ../backend/.production.env
     volumes:
       - ../config.yaml:/app/config.yaml:ro
-      - ../backend/.production.env:/app/backend/.env:ro
       - ../skills:/app/skills:ro
       - ../knowledge:/app/knowledge
       - ../backend/.deer-flow:/app/backend/.deer-flow
@@ -85,7 +84,6 @@ services:
       - ../backend/.production.env
     volumes:
       - ../config.yaml:/app/config.yaml:ro
-      - ../backend/.production.env:/app/backend/.env:ro
       - ../skills:/app/skills:ro
       - ../knowledge:/app/knowledge
       - ../backend/.deer-flow:/app/backend/.deer-flow

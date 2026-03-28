@@ -327,11 +327,17 @@ memory:
 #   enabled: true
 #   docs_path: knowledge/docs
 #   qdrant:
-#     mode: local                          # 'local' (embedded) or 'server'
-#     local_path: backend/.deer-flow/qdrant
-#     # url: http://localhost:6333         # For server mode
-#     # api_key: null                      # For server mode
-#     collection_name: knowledge_base
+#     # Supports env defaults, so you can switch by editing only .env:
+#     #   QDRANT_MODE=local
+#     #   QDRANT_LOCAL_PATH=.deer-flow/qdrant
+#     #   QDRANT_MODE=server
+#     #   QDRANT_URL=http://your-qdrant:6333
+#     #   QDRANT_API_KEY=...
+#     mode: ${QDRANT_MODE:-local}                         # 'local' (embedded) or 'server'
+#     local_path: ${QDRANT_LOCAL_PATH:-.deer-flow/qdrant}
+#     url: ${QDRANT_URL:-}                               # For server mode
+#     api_key: ${QDRANT_API_KEY:-}                       # For server mode
+#     collection_name: ${QDRANT_COLLECTION_NAME:-knowledge_base}
 #   embedding:
 #     use: langchain_openai:OpenAIEmbeddings
 #     model: text-embedding-3-small

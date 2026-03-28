@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Any, Self
 
@@ -22,6 +23,8 @@ _cwd = Path(os.getcwd())
 if _cwd.name == "backend" and (_cwd.parent / ".env").exists():
     load_dotenv(_cwd.parent / ".env")
 load_dotenv()
+
+_ENV_WITH_DEFAULT_PATTERN = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*))?\}$")
 
 
 class AppConfig(BaseModel):
@@ -122,6 +125,16 @@ class AppConfig(BaseModel):
             The config with environment variables resolved.
         """
         if isinstance(config, str):
+            if match := _ENV_WITH_DEFAULT_PATTERN.fullmatch(config):
+                env_name, default_value = match.groups()
+                env_value = os.getenv(env_name)
+                if env_value is not None:
+                    return env_value
+                if default_value is not None:
+                    if default_value in {"null", "None", "~"}:
+                        return None
+                    return default_value
+                raise ValueError(f"Environment variable {env_name} not found for config value {config}")
             if config.startswith("$"):
                 env_value = os.getenv(config[1:])
                 if env_value is None:

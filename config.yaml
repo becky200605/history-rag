@@ -326,14 +326,13 @@ knowledge_base:
   # Qdrant Vector Database Configuration
   qdrant:
     # mode: 'local' (embedded, data stored in file) or 'server' (runs as service)
-    mode: local
+    mode: ${QDRANT_MODE:-local}
     # Path for local storage (相对 backend 目录，索引与检索都从 backend 启动，需一致)
-    local_path: .deer-flow/qdrant
-    # Server URL (only used when mode='server')
-    # url: http://localhost:6333
-    # API key for server (only used when mode='server')
-    # api_key: null
-    collection_name: knowledge_base
+    local_path: ${QDRANT_LOCAL_PATH:-.deer-flow/qdrant}
+    # Server URL / API key (only used when mode='server')
+    url: ${QDRANT_URL:-}
+    api_key: ${QDRANT_API_KEY:-}
+    collection_name: ${QDRANT_COLLECTION_NAME:-knowledge_base}
 
   # Embedding Model Configuration
   # 使用 OpenAI 兼容的 embedding 模型
@@ -374,4 +373,3 @@ knowledge_base:
     use_tls: $TRANSLATION_GRPC_USE_TLS
     api_token: null
     request_timeout: 60
-

@@ -34,14 +34,34 @@ mkdir -p "$PROJECT_ROOT/backend/.deer-flow" "$PROJECT_ROOT/knowledge" "$PROJECT_
 
 cd "$PROJECT_ROOT/docker"
 
+compose() {
+  docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename "$COMPOSE_FILE")" "$@"
+}
+
+assert_env_present() {
+  local service="$1"
+  local env_name="$2"
+
+  if ! compose exec -T "$service" sh -lc "[ -n \"\${$env_name:-}\" ]"; then
+    echo "Required env $env_name is missing inside service $service" >&2
+    exit 1
+  fi
+}
+
 echo "Running Better Auth migrations..."
-docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename "$COMPOSE_FILE")" run --rm auth-migrate
+compose run --rm auth-migrate
 
 echo "Deploying history-rag with docker compose..."
-docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename "$COMPOSE_FILE")" up -d --build --remove-orphans nginx frontend gateway langgraph
+compose up -d --build --force-recreate --remove-orphans frontend gateway langgraph nginx
+
+echo "Verifying runtime environment inside containers..."
+assert_env_present gateway OPENAI_API_KEY
+assert_env_present gateway VOLCENGINE_API_KEY
+assert_env_present langgraph OPENAI_API_KEY
+assert_env_present langgraph VOLCENGINE_API_KEY
 
 echo "Reloading nginx to pick up mounted config changes..."
-docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename "$COMPOSE_FILE")" up -d --force-recreate nginx
+compose up -d --force-recreate nginx
 
 echo "Deployment completed."
-docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename "$COMPOSE_FILE")" ps
+compose ps

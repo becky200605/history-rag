@@ -40,5 +40,8 @@ docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename 
 echo "Deploying history-rag with docker compose..."
 docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename "$COMPOSE_FILE")" up -d --build --remove-orphans nginx frontend gateway langgraph
 
+echo "Reloading nginx to pick up mounted config changes..."
+docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename "$COMPOSE_FILE")" up -d --force-recreate nginx
+
 echo "Deployment completed."
 docker compose --env-file "$BACKEND_ENV_FILE" -p "$PROJECT_NAME" -f "$(basename "$COMPOSE_FILE")" ps

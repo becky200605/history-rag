@@ -90,6 +90,19 @@ function jsonResponse(body: unknown, status: number) {
   });
 }
 
+function upstreamUnavailableResponse(error: unknown) {
+  const message =
+    error instanceof Error ? error.message : "Unable to reach LangGraph upstream";
+  return jsonResponse(
+    {
+      message: "LangGraph upstream unavailable",
+      detail: message,
+      upstream: getUpstreamBaseUrl(),
+    },
+    502,
+  );
+}
+
 async function getAuthenticatedSession(request: NextRequest) {
   if (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true") {
     return null;
@@ -185,65 +198,69 @@ function isThreadScopedPath(path: string[]) {
 }
 
 async function proxyToLangGraph(request: NextRequest, path: string[]) {
-  const session = await getAuthenticatedSession(request);
-  if (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && !session) {
-    return jsonResponse({ message: "Unauthorized" }, 401);
-  }
-
-  const { rawBody, jsonBody } = await parseRequestBody(request);
-  let nextJsonBody = jsonBody as Record<string, unknown> | undefined;
-
-  if (session && path[0] === "threads" && request.method === "POST") {
-    if (path.length === 1) {
-      nextJsonBody = {
-        ...(nextJsonBody ?? {}),
-        metadata: {
-          ...getMetadataRecord(nextJsonBody),
-          user_id: session.user.id,
-        },
-      };
-    } else if (path[1] === "search" || path[1] === "count") {
-      nextJsonBody = {
-        ...(nextJsonBody ?? {}),
-        metadata: {
-          ...getMetadataRecord(nextJsonBody),
-          user_id: session.user.id,
-        },
-      };
-    }
-  }
-
-  if (session && isThreadScopedPath(path)) {
-    const ownershipResponse = await ensureThreadOwnership(path[1]!, session);
-    if (ownershipResponse) {
-      return ownershipResponse;
+  try {
+    const session = await getAuthenticatedSession(request);
+    if (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && !session) {
+      return jsonResponse({ message: "Unauthorized" }, 401);
     }
 
-    if (
-      request.method === "PATCH" &&
-      (path.length === 2 || (path.length === 3 && path[2] === "state"))
-    ) {
-      nextJsonBody = {
-        ...(nextJsonBody ?? {}),
-        metadata: {
-          ...getMetadataRecord(nextJsonBody),
-          user_id: session.user.id,
-        },
-      };
+    const { rawBody, jsonBody } = await parseRequestBody(request);
+    let nextJsonBody = jsonBody as Record<string, unknown> | undefined;
+
+    if (session && path[0] === "threads" && request.method === "POST") {
+      if (path.length === 1) {
+        nextJsonBody = {
+          ...(nextJsonBody ?? {}),
+          metadata: {
+            ...getMetadataRecord(nextJsonBody),
+            user_id: session.user.id,
+          },
+        };
+      } else if (path[1] === "search" || path[1] === "count") {
+        nextJsonBody = {
+          ...(nextJsonBody ?? {}),
+          metadata: {
+            ...getMetadataRecord(nextJsonBody),
+            user_id: session.user.id,
+          },
+        };
+      }
     }
+
+    if (session && isThreadScopedPath(path)) {
+      const ownershipResponse = await ensureThreadOwnership(path[1]!, session);
+      if (ownershipResponse) {
+        return ownershipResponse;
+      }
+
+      if (
+        request.method === "PATCH" &&
+        (path.length === 2 || (path.length === 3 && path[2] === "state"))
+      ) {
+        nextJsonBody = {
+          ...(nextJsonBody ?? {}),
+          metadata: {
+            ...getMetadataRecord(nextJsonBody),
+            user_id: session.user.id,
+          },
+        };
+      }
+    }
+
+    const upstreamResponse = await fetch(buildUpstreamUrl(path, request), {
+      method: request.method,
+      headers: buildForwardHeaders(request),
+      body: serializeBody(nextJsonBody, rawBody),
+      cache: "no-store",
+    });
+
+    return new Response(upstreamResponse.body, {
+      status: upstreamResponse.status,
+      headers: upstreamResponse.headers,
+    });
+  } catch (error) {
+    return upstreamUnavailableResponse(error);
   }
-
-  const upstreamResponse = await fetch(buildUpstreamUrl(path, request), {
-    method: request.method,
-    headers: buildForwardHeaders(request),
-    body: serializeBody(nextJsonBody, rawBody),
-    cache: "no-store",
-  });
-
-  return new Response(upstreamResponse.body, {
-    status: upstreamResponse.status,
-    headers: upstreamResponse.headers,
-  });
 }
 
 async function handleRequest(request: NextRequest, context: RouteContext) {

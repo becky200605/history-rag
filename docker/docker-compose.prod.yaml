@@ -27,6 +27,8 @@ services:
     environment:
       - NODE_ENV=production
       - CI=true
+      # Server-side Next route handlers must reach the langgraph container directly.
+      - LANGGRAPH_BASE_URL=http://langgraph:2024
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

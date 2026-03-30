@@ -22,12 +22,17 @@ echo "Cleaning up sandbox containers with prefix: ${PREFIX}"
 cleanup_docker() {
     if command -v docker &> /dev/null; then
         echo -n "Checking Docker containers... "
-        DOCKER_CONTAINERS=$(docker ps -q --filter "name=${PREFIX}" 2>/dev/null || echo "")
+        # Docker Desktop 25 on macOS can hang on `docker ps --filter name=...`.
+        # List running containers once, then filter locally by prefix.
+        DOCKER_ROWS=$(docker ps --format '{{.ID}}\t{{.Names}}\t{{.Status}}' 2>/dev/null | \
+            awk -F '\t' -v prefix="${PREFIX}" 'index($2, prefix) {print}')
+        DOCKER_CONTAINERS=$(printf '%s\n' "$DOCKER_ROWS" | awk -F '\t' 'NF {print $1}')
 
         if [ -n "$DOCKER_CONTAINERS" ]; then
             echo ""
             echo "Found Docker containers to clean up:"
-            docker ps --filter "name=${PREFIX}" --format "table {{.ID}}\t{{.Names}}\t{{.Status}}"
+            printf '%b\n' "ID\tNAMES\tSTATUS"
+            printf '%s\n' "$DOCKER_ROWS"
             echo "Stopping Docker containers..."
             echo "$DOCKER_CONTAINERS" | xargs docker stop 2>/dev/null || true
             echo -e "${GREEN}✓ Docker containers stopped${NC}"

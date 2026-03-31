@@ -272,6 +272,24 @@ export async function deleteKnowledgeFile(
   return (await response.json()) as { success: boolean; message: string };
 }
 
+export async function retryKnowledgeFileIndexing(
+  filename: string,
+): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/knowledge/uploads/${encodeURIComponent(filename)}/reindex`,
+    {
+      method: "POST",
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ detail: "Failed to retry indexing" }));
+    throw new Error(error.detail ?? "Failed to retry indexing");
+  }
+  return (await response.json()) as { success: boolean; message: string };
+}
+
 export async function updateKnowledgeFileMetadata(
   filename: string,
   payload: KnowledgeMetadataUpdateInput,

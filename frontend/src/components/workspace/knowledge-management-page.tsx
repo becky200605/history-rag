@@ -43,7 +43,12 @@ import {
   WorkspaceContainer,
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
-import { useDeleteKnowledgeFile, useKnowledgeFiles, useUploadKnowledgeFiles } from "@/core/knowledge/hooks";
+import {
+  useDeleteKnowledgeFile,
+  useKnowledgeFiles,
+  useRetryKnowledgeFileIndexing,
+  useUploadKnowledgeFiles,
+} from "@/core/knowledge/hooks";
 import { useImportGlobalKnowledgeToPersonal } from "@/core/knowledge/user-hooks";
 import { env } from "@/env";
 
@@ -282,10 +287,12 @@ export default function KnowledgeManagementPage() {
   const [statusFilter, setStatusFilter] = useState<FileStatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
+  const [retryingFilename, setRetryingFilename] = useState<string | null>(null);
 
   const { data, isLoading, error, refetch, isFetching } = useKnowledgeFiles();
   const uploadMutation = useUploadKnowledgeFiles();
   const deleteMutation = useDeleteKnowledgeFile();
+  const retryMutation = useRetryKnowledgeFileIndexing();
   const importMutation = useImportGlobalKnowledgeToPersonal();
 
   useEffect(() => {
@@ -443,6 +450,20 @@ export default function KnowledgeManagementPage() {
       toast.success(result.message);
     } catch (importError) {
       toast.error((importError as Error).message || "加入知识库失败");
+    }
+  };
+
+  const handleRetryIndexing = async (filename: string) => {
+    setRetryingFilename(filename);
+    try {
+      const result = await retryMutation.mutateAsync(filename);
+      toast.success(result.message);
+    } catch (retryError) {
+      const message =
+        retryError instanceof Error ? retryError.message : "重新入库失败";
+      toast.error(message);
+    } finally {
+      setRetryingFilename(null);
     }
   };
 
@@ -718,7 +739,7 @@ export default function KnowledgeManagementPage() {
                       <TableHead className="w-[90px] min-w-[90px]">大小</TableHead>
                       <TableHead className="w-[140px] min-w-[140px]">时间</TableHead>
                       <TableHead className="w-[250px] min-w-[250px]">产物</TableHead>
-                      <TableHead className="w-[100px] min-w-[100px] text-right">操作</TableHead>
+                      <TableHead className="w-[132px] min-w-[132px] text-right">操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -726,10 +747,16 @@ export default function KnowledgeManagementPage() {
                       const isDeleting =
                         deleteMutation.isPending &&
                         deletingFilename === file.filename;
+                      const isRetrying =
+                        retryMutation.isPending &&
+                        retryingFilename === file.filename;
                       const methodLabel = parseMethodLabel(file.parse_method);
                       const statusHint = fileStatusHint(file);
                       const tags = buildFileTags(file);
                       const typeLabel = knowledgeTypeLabel(file.type);
+                      const canRetry =
+                        file.indexable &&
+                        ["failed", "index_failed"].includes(file.parse_status ?? "");
 
                       return (
                         <TableRow key={file.filename} className="h-14">
@@ -837,8 +864,24 @@ export default function KnowledgeManagementPage() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="w-[100px] min-w-[100px] py-1.5 text-right">
+                          <TableCell className="w-[132px] min-w-[132px] py-1.5 text-right">
                             <div className="flex justify-end gap-1">
+                              {canRetry && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7"
+                                  disabled={retryMutation.isPending}
+                                  onClick={() => void handleRetryIndexing(file.filename)}
+                                  title="重新入库"
+                                >
+                                  {isRetrying ? (
+                                    <Loader2Icon className="size-3.5 animate-spin" />
+                                  ) : (
+                                    <RefreshCwIcon className="size-3.5" />
+                                  )}
+                                </Button>
+                              )}
                               {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && (
                                 <Button
                                   variant="ghost"

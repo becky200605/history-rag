@@ -7,6 +7,7 @@ import {
   listKnowledgeDocuments,
   listKnowledgeFiles,
   loadKnowledgeStatus,
+  retryKnowledgeFileIndexing,
   triggerReindex,
   updateKnowledgeFileMetadata,
   type KnowledgeBaseStatus,
@@ -70,6 +71,18 @@ export function useDeleteKnowledgeFile() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (filename: string) => deleteKnowledgeFile(filename),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
+    },
+  });
+}
+
+export function useRetryKnowledgeFileIndexing() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (filename: string) => retryKnowledgeFileIndexing(filename),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });

@@ -18,6 +18,10 @@ class TestMineruConfig:
         cfg = KnowledgeBaseConfig()
         assert cfg.mineru is None
 
+    def test_mineru_request_timeout_default_is_one_hour(self):
+        cfg = MineruConfig()
+        assert cfg.request_timeout == 3600
+
     def test_mineru_custom_config(self):
         """Custom Mineru configuration should be loaded correctly."""
         data = {

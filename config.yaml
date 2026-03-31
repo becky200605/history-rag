@@ -359,7 +359,7 @@ knowledge_base:
     use_tls: $MINERU_GRPC_USE_TLS
     api_token: null
     model_version: $MINERU_MODEL_VERSION
-    request_timeout: 600
+    request_timeout: 3600
 
   book_metadata:
     enabled: true

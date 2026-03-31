@@ -97,7 +97,7 @@ class MineruConfig(BaseModel):
         description="Model version passed to MinerU (e.g. 'vlm').",
     )
     request_timeout: int = Field(
-        default=600,
+        default=3600,
         description="Timeout in seconds for the MinerU gRPC request.",
     )
 

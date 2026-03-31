@@ -354,8 +354,12 @@ def mark_user_record_failed(record: dict[str, Any], error: str) -> dict[str, Any
     return record
 
 
-def mark_user_records_indexed(user_id: str) -> None:
+def mark_user_records_indexed(user_id: str, record_ids: list[str] | None = None) -> None:
+    allowed_record_ids = {str(record_id) for record_id in record_ids} if record_ids else None
     for record in list_user_records(user_id):
+        record_id = str(record.get("id") or "")
+        if allowed_record_ids is not None and record_id not in allowed_record_ids:
+            continue
         target_path = record.get("index_target_path")
         if not record.get("retrieval_enabled") or not target_path:
             continue

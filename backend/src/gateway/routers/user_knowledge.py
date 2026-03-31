@@ -316,6 +316,16 @@ def _build_record_editor_payload(user_id: str, record: dict[str, Any]) -> dict[s
     }
 
 
+def _mark_user_records_index_failed(user_id: str, record_ids: list[str], error: str) -> None:
+    for record_id in record_ids:
+        record = load_user_record(user_id, str(record_id))
+        if not record:
+            continue
+        record["parse_status"] = "index_failed"
+        record["error"] = error
+        save_user_record(user_id, record)
+
+
 def _cleanup_existing_upload(user_id: str, source_filename: str) -> None:
     existing = find_user_record_by_source_filename(user_id, source_filename)
     if existing:
@@ -460,8 +470,12 @@ async def upload_user_knowledge_files(
         uploaded.append(_serialize_record(record))
 
     if indexed_record_ids:
-        upsert_user_knowledge_records(user_id, indexed_record_ids)
-        mark_user_records_indexed(user_id)
+        indexed_chunks = upsert_user_knowledge_records(user_id, indexed_record_ids)
+        if indexed_chunks <= 0:
+            error = "reindex failed: No chunks were indexed into Qdrant"
+            _mark_user_records_index_failed(user_id, indexed_record_ids, error)
+            raise HTTPException(status_code=500, detail=error)
+        mark_user_records_indexed(user_id, indexed_record_ids)
 
     return {
         "success": True,
@@ -591,8 +605,13 @@ def update_user_knowledge_record_content(
         preview_filename=str(source_filename),
     )
     save_user_record(user_id, record)
-    upsert_user_knowledge_records(user_id, [str(record.get("id") or record_id)])
-    mark_user_records_indexed(user_id)
+    indexed_record_id = str(record.get("id") or record_id)
+    indexed_chunks = upsert_user_knowledge_records(user_id, [indexed_record_id])
+    if indexed_chunks <= 0:
+        error = "reindex failed: No chunks were indexed into Qdrant"
+        _mark_user_records_index_failed(user_id, [indexed_record_id], error)
+        raise HTTPException(status_code=500, detail=error)
+    mark_user_records_indexed(user_id, [indexed_record_id])
 
     latest = load_user_record(user_id, record_id) or record
     return _build_record_editor_payload(user_id, latest)
@@ -669,8 +688,13 @@ def create_user_derived_knowledge_record(
         preview_filename=source_filename,
     )
     save_user_record(user_id, record)
-    upsert_user_knowledge_records(user_id, [str(record["id"])])
-    mark_user_records_indexed(user_id)
+    indexed_record_id = str(record["id"])
+    indexed_chunks = upsert_user_knowledge_records(user_id, [indexed_record_id])
+    if indexed_chunks <= 0:
+        error = "reindex failed: No chunks were indexed into Qdrant"
+        _mark_user_records_index_failed(user_id, [indexed_record_id], error)
+        raise HTTPException(status_code=500, detail=error)
+    mark_user_records_indexed(user_id, [indexed_record_id])
     latest = load_user_record(user_id, str(record["id"])) or record
     return {
         "success": True,

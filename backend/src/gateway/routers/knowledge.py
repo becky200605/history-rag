@@ -533,8 +533,12 @@ def _mark_global_record_pending(record: dict[str, Any], error: str) -> dict[str,
     return record
 
 
-def _mark_global_records_indexed() -> None:
+def _mark_global_records_indexed(source_filenames: list[str] | None = None) -> None:
+    allowed_filenames = {str(filename) for filename in source_filenames} if source_filenames else None
     for record in _list_global_records():
+        source_filename = str(record.get("source_filename") or "")
+        if allowed_filenames is not None and source_filename not in allowed_filenames:
+            continue
         target_path = record.get("index_target_path")
         if not record.get("indexable") or not target_path:
             continue
@@ -643,8 +647,10 @@ def _process_global_embedding_batch(filenames: list[str]) -> None:
             _enqueue_global_embedding(filename)
         return
     try:
-        upsert_global_knowledge_records(candidates)
-        _mark_global_records_indexed()
+        indexed_chunks = upsert_global_knowledge_records(candidates)
+        if indexed_chunks <= 0:
+            raise ValueError("No chunks were indexed into Qdrant")
+        _mark_global_records_indexed(candidates)
         logger.info("Background global knowledge reindex completed for %s", candidates)
     except Exception as exc:
         logger.exception("Background global knowledge reindex failed: %s", exc)
@@ -759,8 +765,10 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
             _save_global_record(safe_filename, record)
 
         try:
-            upsert_global_knowledge_records(parsed_filenames)
-            _mark_global_records_indexed()
+            indexed_chunks = upsert_global_knowledge_records(parsed_filenames)
+            if indexed_chunks <= 0:
+                raise ValueError("No chunks were indexed into Qdrant")
+            _mark_global_records_indexed(parsed_filenames)
             logger.info("Background global knowledge reindex completed for %s", parsed_filenames)
         except Exception as exc:
             logger.exception("Background global knowledge reindex failed: %s", exc)

@@ -54,7 +54,7 @@ export function Hero({ className }: { className?: string }) {
               "Learn Anything",
             ]}
           />
-          <div>with 财政历史大模型</div>
+          <div>with 财政历史智能知识库</div>
         </h1>
         <p
           className="mt-8 scale-105 text-center text-2xl text-shadow-sm"

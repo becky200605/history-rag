@@ -38,7 +38,7 @@ export default async function AuthPage({
             History RAG
           </p>
           <h1 className="mt-3 text-4xl font-semibold tracking-tight text-[rgb(23,89,108)]">
-            财政历史大模型
+            财政历史智能知识库
           </h1>
           <p className="mt-3 text-sm leading-6 text-slate-600">
             接入 MySQL 用户体系后，工作区访问将基于真实登录态控制。

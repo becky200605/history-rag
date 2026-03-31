@@ -445,6 +445,7 @@ def _build_global_entries(
             if not payload.get("indexable") or not source_filename:
                 continue
 
+            preview_filename = payload.get("preview_filename")
             preview_path = docs_root / str(preview_filename or source_filename)
             preview = _read_preview(preview_path)
             search_excerpt = _read_preview(preview_path, max_chars=3600)

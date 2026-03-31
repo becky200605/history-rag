@@ -2,7 +2,7 @@
 
 ## Overview
 
-财政历史大模型 is built on a sophisticated agent-based architecture using the [LangGraph SDK](https://github.com/langchain-ai/langgraph) to enable intelligent, stateful AI interactions. This document outlines the agent system architecture, patterns, and best practices for working with agents in the frontend application.
+财政历史智能知识库 is built on a sophisticated agent-based architecture using the [LangGraph SDK](https://github.com/langchain-ai/langgraph) to enable intelligent, stateful AI interactions. This document outlines the agent system architecture, patterns, and best practices for working with agents in the frontend application.
 
 ## Architecture Overview
 
@@ -96,4 +96,4 @@ When adding new agent features:
 
 ## License
 
-This agent architecture is part of the 财政历史大模型 project.
+This agent architecture is part of the 财政历史智能知识库 project.

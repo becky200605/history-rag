@@ -166,13 +166,13 @@ export const enUS: Translations = {
 
   // Workspace
   workspace: {
-    officialWebsite: "财政历史大模型's official website",
-    githubTooltip: "财政历史大模型 on Github",
+    officialWebsite: "财政历史智能知识库's official website",
+    githubTooltip: "财政历史智能知识库 on Github",
     settingsAndMore: "Settings and more",
-    visitGithub: "财政历史大模型 on GitHub",
+    visitGithub: "财政历史智能知识库 on GitHub",
     reportIssue: "Report a issue",
     contactUs: "Contact us",
-    about: "About 财政历史大模型",
+    about: "About 财政历史智能知识库",
   },
 
   // Conversation
@@ -188,7 +188,7 @@ export const enUS: Translations = {
 
   // Page titles (document title)
   pages: {
-    appName: "财政历史大模型",
+    appName: "财政历史智能知识库",
     chats: "Chats",
     newChat: "New chat",
     untitled: "Untitled",
@@ -220,7 +220,7 @@ export const enUS: Translations = {
     clickToViewContent: "Click to view file content",
     writeTodos: "Updating to-do list",
     skillInstallTooltip:
-      "Install skill and make it available to 财政历史大模型",
+      "Install skill and make it available to 财政历史智能知识库",
   },
 
   // Subtasks
@@ -236,7 +236,7 @@ export const enUS: Translations = {
   // Settings
   settings: {
     title: "Settings",
-    description: "Adjust how 财政历史大模型 looks and behaves for you.",
+    description: "Adjust how 财政历史智能知识库 looks and behaves for you.",
     sections: {
       appearance: "Appearance",
       memory: "Memory",
@@ -349,18 +349,18 @@ export const enUS: Translations = {
       createSkill: "Create skill",
       emptyTitle: "No agent skill yet",
       emptyDescription:
-        "Put your agent skill folders under the `/skills/custom` folder under the root folder of 财政历史大模型.",
+        "Put your agent skill folders under the `/skills/custom` folder under the root folder of 财政历史智能知识库.",
       emptyButton: "Create Your First Skill",
     },
     notification: {
       title: "Notification",
       description:
-        "财政历史大模型 only sends a completion notification when the window is not active. This is especially useful for long-running tasks so you can switch to other work and get notified when done.",
+        "财政历史智能知识库 only sends a completion notification when the window is not active. This is especially useful for long-running tasks so you can switch to other work and get notified when done.",
       requestPermission: "Request notification permission",
       deniedHint:
         "Notification permission was denied. You can enable it in your browser's site settings to receive completion alerts.",
       testButton: "Send test notification",
-      testTitle: "财政历史大模型",
+      testTitle: "财政历史智能知识库",
       testBody: "This is a test notification.",
       notSupported: "Your browser does not support notifications.",
       disableNotification: "Disable notification",

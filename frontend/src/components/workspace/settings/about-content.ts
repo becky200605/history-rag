@@ -1,18 +1,18 @@
 /**
- * About 财政历史大模型 markdown content. Inlined to avoid raw-loader dependency
+ * About 财政历史智能知识库 markdown content. Inlined to avoid raw-loader dependency
  * (Turbopack cannot resolve raw-loader for .md imports).
  */
-export const aboutMarkdown = `# [关于财政历史大模型](https://github.com/bytedance/deer-flow)
+export const aboutMarkdown = `# [关于财政历史智能知识库](https://github.com/bytedance/deer-flow)
 
 > **源于开源，回馈开源**
 
-财政历史大模型是基于大语言模型的财政历史智能分析平台，集成了**子代理**、**记忆**和**沙箱**等能力，通过**可扩展技能**驱动，几乎可以完成任何任务。
+财政历史智能知识库是基于大语言模型的财政历史智能分析平台，集成了**子代理**、**记忆**和**沙箱**等能力，通过**可扩展技能**驱动，几乎可以完成任何任务。
 
 ---
 
 ## 🚀 核心功能
 
-* **技能与工具**: 通过内置和可扩展的技能与工具，财政历史大模型几乎可以完成任何任务。
+* **技能与工具**: 通过内置和可扩展的技能与工具，财政历史智能知识库几乎可以完成任何任务。
 * **子代理**: 子代理帮助主代理完成过于复杂的任务。
 * **沙箱与文件系统**: 在沙箱中安全地执行代码和操作文件。
 * **上下文工程**: 隔离的子代理上下文，通过摘要保持上下文窗口精简。
@@ -34,13 +34,13 @@ export const aboutMarkdown = `# [关于财政历史大模型](https://github.com
 
 ## 📜 许可证
 
-财政历史大模型基于 **MIT 许可证** 开源发布。
+财政历史智能知识库基于 **MIT 许可证** 开源发布。
 
 ---
 
 ## 🙌 致谢
 
-我们衷心感谢所有开源项目和贡献者，正是他们让财政历史大模型成为现实。我们真正站在巨人的肩膀上。
+我们衷心感谢所有开源项目和贡献者，正是他们让财政历史智能知识库成为现实。我们真正站在巨人的肩膀上。
 
 ### 核心框架
 - **[LangChain](https://github.com/langchain-ai/langchain)**: 驱动我们 LLM 交互和链的卓越框架。
@@ -51,7 +51,7 @@ export const aboutMarkdown = `# [关于财政历史大模型](https://github.com
 - **[Shadcn](https://ui.shadcn.com/)**: 驱动我们 UI 的极简组件。
 - **[SToneX](https://github.com/stonexer)**: 对逐 token 视觉效果的宝贵贡献。
 
-这些杰出的项目构成了财政历史大模型的基石，展示了开源协作的变革力量。
+这些杰出的项目构成了财政历史智能知识库的基石，展示了开源协作的变革力量。
 
 ### 特别感谢
 最后，我们要向核心作者表达衷心的感谢：
@@ -59,5 +59,5 @@ export const aboutMarkdown = `# [关于财政历史大模型](https://github.com
 - **[Daniel Walnut](https://github.com/hetaoBackend/)**
 - **[Henry Li](https://github.com/magiccube/)**
 
-没有他们的远见、热情和奉献，财政历史大模型不会有今天的成就。
+没有他们的远见、热情和奉献，财政历史智能知识库不会有今天的成就。
 `;

@@ -166,7 +166,7 @@ export default function NotesPage() {
   const requestedRecordId = searchParams.get("record");
 
   useEffect(() => {
-    document.title = "笔记 - 财政历史大模型";
+    document.title = "笔记 - 财政历史智能知识库";
   }, []);
 
   useEffect(() => {

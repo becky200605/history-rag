@@ -308,7 +308,7 @@ export function AuthForm() {
             href="/"
             className="text-[rgb(57,130,152)] underline underline-offset-4"
           >
-            财政历史大模型
+            财政历史智能知识库
           </Link>
         </p>
       </CardContent>

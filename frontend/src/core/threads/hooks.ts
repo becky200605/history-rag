@@ -22,10 +22,12 @@ import type {
 export function useThreadStream({
   threadId,
   isNewThread,
+  onCreated,
   onFinish,
 }: {
   isNewThread: boolean;
   threadId: string | null | undefined;
+  onCreated?: (run: { run_id: string; thread_id: string }) => void;
   onFinish?: (state: AgentThreadState) => void;
 }) {
   const queryClient = useQueryClient();
@@ -36,6 +38,9 @@ export function useThreadStream({
     threadId: isNewThread ? undefined : threadId,
     reconnectOnMount: true,
     fetchStateHistory: true,
+    onCreated(run) {
+      onCreated?.(run);
+    },
     onCustomEvent(event: unknown) {
       console.info(event);
       if (

@@ -94,20 +94,6 @@ function rememberThreadRouteHandoff(threadId: string) {
   );
 }
 
-async function waitForThreadStreamRegistration(threadId: string) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  const storageKey = `lg:stream:${threadId}`;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (window.sessionStorage.getItem(storageKey)) {
-      return;
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 100));
-  }
-}
-
 function clearThreadRouteHandoff(threadId?: string) {
   if (typeof window === "undefined") {
     return;
@@ -223,6 +209,7 @@ function ChatPageContent({
   } = useArtifacts();
   const searchParams = useSearchParams();
   const promptInputController = usePromptInputController();
+  const didNavigateForCreatedRunRef = useRef(false);
   const inputInitialValue = useMemo(() => {
     if (
       initialThreadIdFromPath !== "new" ||
@@ -267,6 +254,14 @@ function ChatPageContent({
   const thread = useThreadStream({
     isNewThread,
     threadId,
+    onCreated(run) {
+      if (!isNewThread || didNavigateForCreatedRunRef.current) {
+        return;
+      }
+      didNavigateForCreatedRunRef.current = true;
+      rememberThreadRouteHandoff(run.thread_id);
+      router.push(pathOfThread(run.thread_id));
+    },
     onFinish: (state) => {
       setFinalState(state);
       if (document.hidden || !document.hasFocus()) {
@@ -413,11 +408,6 @@ function ChatPageContent({
     threadId,
     thread,
     threadContext,
-    async afterSubmit() {
-      rememberThreadRouteHandoff(threadId!);
-      await waitForThreadStreamRegistration(threadId!);
-      router.push(pathOfThread(threadId!));
-    },
   });
   const handleStop = useCallback(async () => {
     await thread.stop();

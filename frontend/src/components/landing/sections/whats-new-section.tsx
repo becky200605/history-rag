@@ -52,8 +52,8 @@ export function WhatsNewSection({ className }: { className?: string }) {
   return (
     <Section
       className={cn("", className)}
-      title="财政历史大模型最新动态"
-      subtitle="财政历史大模型正在从深度研究智能体进化为全栈超级智能体"
+      title="财政历史智能知识库最新动态"
+      subtitle="财政历史智能知识库正在从深度研究智能体进化为全栈超级智能体"
     >
       <div className="flex w-full items-center justify-center">
         <MagicBento data={features} />

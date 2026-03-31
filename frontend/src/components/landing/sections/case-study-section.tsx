@@ -49,7 +49,7 @@ export function CaseStudySection({ className }: { className?: string }) {
     <Section
       className={className}
       title="Case Studies"
-      subtitle="See how 财政历史大模型 is used in the wild"
+      subtitle="See how 财政历史智能知识库 is used in the wild"
     >
       <div></div>
     </Section>

@@ -9,7 +9,7 @@ import { I18nProvider } from "@/core/i18n/context";
 import { detectLocaleServer } from "@/core/i18n/server";
 
 export const metadata: Metadata = {
-  title: "财政历史大模型",
+  title: "财政历史智能知识库",
   description: "基于大语言模型的财政历史智能分析平台。",
 };
 

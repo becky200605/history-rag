@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import src.community.knowledge_base.catalog as catalog_module
 import src.community.knowledge_base.tools as tools_module
 from src.community.knowledge_base.book_metadata import build_book_metadata_record, save_book_metadata
-from src.community.knowledge_base.catalog import BookCatalogEntry, search_book_catalog
+from src.community.knowledge_base.catalog import BookCatalogEntry, list_book_catalog, search_book_catalog
 
 
 def _write_metadata_sidecar(docs_root, records) -> None:
@@ -102,6 +102,39 @@ def test_search_book_catalog_reads_generated_sidecar_metadata(tmp_path, monkeypa
     assert results[0].type == "specialized"
     assert "财政史" in results[0].categories
     assert results[0].metadata_source is not None
+
+
+def test_list_book_catalog_reads_global_ingestion_preview_filename(tmp_path, monkeypatch) -> None:
+    docs_root = tmp_path / "knowledge" / "docs"
+    ingestion_dir = docs_root / ".ingestion"
+    docs_root.mkdir(parents=True)
+    ingestion_dir.mkdir(parents=True)
+    (docs_root / "finance_history.preview.md").write_text("# 财政史\n财政制度演变", encoding="utf-8")
+    (ingestion_dir / "finance_history.pdf.json").write_text(
+        """
+        {
+          "source_filename": "finance_history.pdf",
+          "preview_filename": "finance_history.preview.md",
+          "display_title": "finance_history",
+          "indexable": true,
+          "preview_artifact_url": "/api/knowledge/docs/finance_history.preview.md"
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        catalog_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(docs_path=str(docs_root)),
+    )
+
+    entries = list_book_catalog()
+
+    assert len(entries) == 1
+    assert entries[0].filename == "finance_history.pdf"
+    assert entries[0].source_path.endswith("finance_history.preview.md")
+    assert entries[0].preview.startswith("# 财政史")
 
 
 def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:

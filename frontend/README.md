@@ -1,4 +1,4 @@
-# 财政历史大模型 Frontend
+# 财政历史智能知识库 Frontend
 
 Like the original version 1.0, we would love to give the community a minimalistic and easy-to-use web interface with a more modern and flexible architecture.
 

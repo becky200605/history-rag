@@ -289,7 +289,7 @@ export default function KnowledgeManagementPage() {
   const importMutation = useImportGlobalKnowledgeToPersonal();
 
   useEffect(() => {
-    document.title = "知识库管理 - 财政历史大模型";
+    document.title = "知识库管理 - 财政历史智能知识库";
   }, []);
 
   const summary = useMemo(() => {

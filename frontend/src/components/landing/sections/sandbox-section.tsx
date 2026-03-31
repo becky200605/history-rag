@@ -15,7 +15,7 @@ export function SandboxSection({ className }: { className?: string }) {
       title="Agent Runtime Environment"
       subtitle={
         <p>
-          We give 财政历史大模型 a &quot;computer&quot;, which can execute
+          We give 财政历史智能知识库 a &quot;computer&quot;, which can execute
           commands, manage files, and run long tasks — all in a secure
           Docker-based sandbox
         </p>

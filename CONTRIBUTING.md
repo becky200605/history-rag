@@ -1,6 +1,6 @@
-# Contributing to 财政历史大模型
+# Contributing to 财政历史智能知识库
 
-Thank you for your interest in contributing to 财政历史大模型! This guide will help you set up your development environment and understand our development workflow.
+Thank you for your interest in contributing to 财政历史智能知识库! This guide will help you set up your development environment and understand our development workflow.
 
 ## Development Environment Setup
 
@@ -267,4 +267,4 @@ Every pull request runs the backend regression workflow at [.github/workflows/ba
 
 ## License
 
-By contributing to 财政历史大模型, you agree that your contributions will be licensed under the [MIT License](./LICENSE).
+By contributing to 财政历史智能知识库, you agree that your contributions will be licensed under the [MIT License](./LICENSE).

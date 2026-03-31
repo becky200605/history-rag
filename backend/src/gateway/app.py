@@ -60,11 +60,11 @@ def create_app() -> FastAPI:
     """
 
     app = FastAPI(
-        title="财政历史大模型 API Gateway",
+        title="财政历史智能知识库 API Gateway",
         description="""
-## 财政历史大模型 API Gateway
+## 财政历史智能知识库 API Gateway
 
-API Gateway for 财政历史大模型 - A LangGraph-based AI agent backend with sandbox execution capabilities.
+API Gateway for 财政历史智能知识库 - A LangGraph-based AI agent backend with sandbox execution capabilities.
 
 ### Features
 

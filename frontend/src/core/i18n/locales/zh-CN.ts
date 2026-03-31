@@ -49,11 +49,11 @@ export const zhCN: Translations = {
   welcome: {
     greeting: "你好，欢迎回来！",
     description:
-      "欢迎使用财政历史大模型，基于大语言模型的财政历史智能分析平台。通过内置和自定义的 Skills，\n财政历史大模型可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n图片、视频、播客及网页等，几乎可以做任何事情。",
+      "欢迎使用财政历史智能知识库，基于大语言模型的财政历史智能分析平台。通过内置和自定义的 Skills，\n财政历史智能知识库可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n图片、视频、播客及网页等，几乎可以做任何事情。",
 
     createYourOwnSkill: "创建你自己的 Agent Skill",
     createYourOwnSkillDescription:
-      "创建你的 Agent Skill 来释放财政历史大模型的潜力。通过自定义技能，财政历史大模型\n可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n网页等作品，几乎可以做任何事情。",
+      "创建你的 Agent Skill 来释放财政历史智能知识库的潜力。通过自定义技能，财政历史智能知识库\n可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n网页等作品，几乎可以做任何事情。",
   },
 
   // Clipboard
@@ -163,13 +163,13 @@ export const zhCN: Translations = {
 
   // Workspace
   workspace: {
-    officialWebsite: "访问财政历史大模型官方网站",
-    githubTooltip: "访问财政历史大模型的 Github 仓库",
+    officialWebsite: "访问财政历史智能知识库官方网站",
+    githubTooltip: "访问财政历史智能知识库的 Github 仓库",
     settingsAndMore: "设置和更多",
-    visitGithub: "在 Github 上查看财政历史大模型",
+    visitGithub: "在 Github 上查看财政历史智能知识库",
     reportIssue: "报告问题",
     contactUs: "联系我们",
-    about: "关于财政历史大模型",
+    about: "关于财政历史智能知识库",
   },
 
   // Conversation
@@ -185,7 +185,7 @@ export const zhCN: Translations = {
 
   // Page titles (document title)
   pages: {
-    appName: "财政历史大模型",
+    appName: "财政历史智能知识库",
     chats: "对话",
     newChat: "新对话",
     untitled: "未命名",
@@ -216,7 +216,7 @@ export const zhCN: Translations = {
     writeFile: "正在编辑文件",
     clickToViewContent: "点击查看文件内容",
     writeTodos: "正在更新任务清单",
-    skillInstallTooltip: "安装技能并使其可在财政历史大模型中使用",
+    skillInstallTooltip: "安装技能并使其可在财政历史智能知识库中使用",
   },
 
   subtasks: {
@@ -231,7 +231,7 @@ export const zhCN: Translations = {
   // Settings
   settings: {
     title: "设置",
-    description: "根据你的偏好调整财政历史大模型的界面和行为。",
+    description: "根据你的偏好调整财政历史智能知识库的界面和行为。",
     sections: {
       appearance: "外观",
       memory: "记忆",
@@ -244,7 +244,7 @@ export const zhCN: Translations = {
     memory: {
       title: "记忆",
       description:
-        "财政历史大模型会在后台不断从你的对话中自动学习。这些记忆能帮助财政历史大模型更好地理解你，并提供更个性化的体验。",
+        "财政历史智能知识库会在后台不断从你的对话中自动学习。这些记忆能帮助财政历史智能知识库更好地理解你，并提供更个性化的体验。",
       empty: "暂无可展示的记忆数据。",
       rawJson: "原始 JSON",
       markdown: {
@@ -340,18 +340,18 @@ export const zhCN: Translations = {
       createSkill: "新建技能",
       emptyTitle: "还没有技能",
       emptyDescription:
-        "将你的 Agent Skill 文件夹放在财政历史大模型根目录下的 `/skills/custom` 文件夹中。",
+        "将你的 Agent Skill 文件夹放在财政历史智能知识库根目录下的 `/skills/custom` 文件夹中。",
       emptyButton: "创建你的第一个技能",
     },
     notification: {
       title: "通知",
       description:
-        "财政历史大模型只会在窗口不活跃时发送完成通知，特别适合长时间任务：你可以先去做别的事，完成后会收到提醒。",
+        "财政历史智能知识库只会在窗口不活跃时发送完成通知，特别适合长时间任务：你可以先去做别的事，完成后会收到提醒。",
       requestPermission: "请求通知权限",
       deniedHint:
         "通知权限已被拒绝。可在浏览器的网站设置中重新开启，以接收完成提醒。",
       testButton: "发送测试通知",
-      testTitle: "财政历史大模型",
+      testTitle: "财政历史智能知识库",
       testBody: "这是一条测试通知。",
       notSupported: "当前浏览器不支持通知功能。",
       disableNotification: "关闭通知",

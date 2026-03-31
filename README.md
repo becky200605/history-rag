@@ -1,11 +1,11 @@
-# 财政历史大模型
+# 财政历史智能知识库
 
-财政历史大模型是基于大语言模型的财政历史智能分析平台，集成了**子代理**、**记忆**和**沙箱**等能力，通过**可扩展技能**驱动，几乎可以完成任何任务。
+财政历史智能知识库是基于大语言模型的财政历史智能分析平台，集成了**子代理**、**记忆**和**沙箱**等能力，通过**可扩展技能**驱动，几乎可以完成任何任务。
 
 https://github.com/user-attachments/assets/a8bcadc4-e040-4cf2-8fda-dd768b999c18
 
 > [!NOTE]
-> **财政历史大模型 2.0 是全新重写版本。** 与 v1 不共享代码。如果你在寻找原始的深度研究框架，它维护在 [`1.x` 分支](https://github.com/bytedance/deer-flow/tree/main-1.x) — 那里仍然欢迎贡献。活跃开发已转移到 2.0。
+> **财政历史智能知识库 2.0 是全新重写版本。** 与 v1 不共享代码。如果你在寻找原始的深度研究框架，它维护在 [`1.x` 分支](https://github.com/bytedance/deer-flow/tree/main-1.x) — 那里仍然欢迎贡献。活跃开发已转移到 2.0。
 
 ## 官方网站
 
@@ -137,7 +137,7 @@ If you prefer running services locally:
 ### Advanced
 #### Sandbox Mode
 
-财政历史大模型支持多种沙箱执行模式：
+财政历史智能知识库支持多种沙箱执行模式：
 - **Local Execution** (runs sandbox code directly on the host machine)
 - **Docker Execution** (runs sandbox code in isolated Docker containers)
 - **Docker Execution with Kubernetes** (runs sandbox code in Kubernetes pods via provisioner service)
@@ -148,18 +148,18 @@ See the [Sandbox Configuration Guide](backend/docs/CONFIGURATION.md#sandbox) to 
 
 #### MCP Server
 
-财政历史大模型支持可配置的 MCP 服务器和技能来扩展其能力。
+财政历史智能知识库支持可配置的 MCP 服务器和技能来扩展其能力。
 See the [MCP Server Guide](backend/docs/MCP_SERVER.md) for detailed instructions.
 
 ## From Deep Research to Super Agent Harness
 
-财政历史大模型最初是一个深度研究框架——社区将其发扬光大。自发布以来，开发者们将其推向了远超研究的领域：构建数据管道、生成幻灯片、搭建仪表板、自动化内容工作流。这些都是我们未曾预料到的。
+财政历史智能知识库最初是一个深度研究框架——社区将其发扬光大。自发布以来，开发者们将其推向了远超研究的领域：构建数据管道、生成幻灯片、搭建仪表板、自动化内容工作流。这些都是我们未曾预料到的。
 
-这告诉我们一个重要的事实：财政历史大模型不仅仅是一个研究工具。它是一个**运行时框架**——为代理提供实际完成工作所需基础设施的运行时。
+这告诉我们一个重要的事实：财政历史智能知识库不仅仅是一个研究工具。它是一个**运行时框架**——为代理提供实际完成工作所需基础设施的运行时。
 
 所以我们从头重建了它。
 
-财政历史大模型 2.0 不再是一个需要你自己组装的框架。它是一个超级代理运行时——开箱即用，完全可扩展。基于 LangGraph 和 LangChain 构建，它自带代理所需的一切：文件系统、记忆、技能、沙箱执行，以及为复杂多步骤任务规划和生成子代理的能力。
+财政历史智能知识库 2.0 不再是一个需要你自己组装的框架。它是一个超级代理运行时——开箱即用，完全可扩展。基于 LangGraph 和 LangChain 构建，它自带代理所需的一切：文件系统、记忆、技能、沙箱执行，以及为复杂多步骤任务规划和生成子代理的能力。
 
 Use it as-is. Or tear it apart and make it yours.
 
@@ -167,13 +167,13 @@ Use it as-is. Or tear it apart and make it yours.
 
 ### Skills & Tools
 
-技能是让财政历史大模型能做*几乎任何事*的关键。
+技能是让财政历史智能知识库能做*几乎任何事*的关键。
 
-标准的 Agent Skill 是一个结构化的能力模块——一个定义工作流、最佳实践和支持资源引用的 Markdown 文件。财政历史大模型内置了研究、报告生成、幻灯片创建、网页、图像和视频生成等技能。但真正的力量在于可扩展性：添加你自己的技能、替换内置技能，或将它们组合成复合工作流。
+标准的 Agent Skill 是一个结构化的能力模块——一个定义工作流、最佳实践和支持资源引用的 Markdown 文件。财政历史智能知识库内置了研究、报告生成、幻灯片创建、网页、图像和视频生成等技能。但真正的力量在于可扩展性：添加你自己的技能、替换内置技能，或将它们组合成复合工作流。
 
-技能是渐进式加载的——只在任务需要时加载，而不是一次性全部加载。这保持了上下文窗口的精简，使财政历史大模型即使在对 token 敏感的模型上也能良好运行。
+技能是渐进式加载的——只在任务需要时加载，而不是一次性全部加载。这保持了上下文窗口的精简，使财政历史智能知识库即使在对 token 敏感的模型上也能良好运行。
 
-工具遵循相同的理念。财政历史大模型自带核心工具集——网络搜索、网页获取、文件操作、bash 执行——并支持通过 MCP 服务器和 Python 函数自定义工具。替换任何东西。添加任何东西。
+工具遵循相同的理念。财政历史智能知识库自带核心工具集——网络搜索、网页获取、文件操作、bash 执行——并支持通过 MCP 服务器和 Python 函数自定义工具。替换任何东西。添加任何东西。
 
 ```
 # Paths inside the sandbox container
@@ -190,15 +190,15 @@ Use it as-is. Or tear it apart and make it yours.
 
 ### Sub-Agents
 
-复杂任务很少能一次完成。财政历史大模型会将其分解。
+复杂任务很少能一次完成。财政历史智能知识库会将其分解。
 
 主代理可以即时生成子代理——每个子代理都有自己的作用域上下文、工具和终止条件。子代理在可能时并行运行，返回结构化结果，主代理将所有内容综合成连贯的输出。
 
-这就是财政历史大模型处理需要几分钟到几小时任务的方式：一个研究任务可能会分散到十几个子代理，每个探索不同的角度，然后汇聚成一份报告——或一个网站——或一个带有生成视觉效果的幻灯片。一个框架，多个助手。
+这就是财政历史智能知识库处理需要几分钟到几小时任务的方式：一个研究任务可能会分散到十几个子代理，每个探索不同的角度，然后汇聚成一份报告——或一个网站——或一个带有生成视觉效果的幻灯片。一个框架，多个助手。
 
 ### Sandbox & File System
 
-财政历史大模型不仅仅是*谈论*做事。它有自己的计算机。
+财政历史智能知识库不仅仅是*谈论*做事。它有自己的计算机。
 
 Each task runs inside an isolated Docker container with a full filesystem — skills, workspace, uploads, outputs. The agent reads, writes, and edits files. It executes bash commands and codes. It views images. All sandboxed, all auditable, zero contamination between sessions.
 
@@ -216,17 +216,17 @@ This is the difference between a chatbot with tool access and an agent with an a
 
 **Isolated Sub-Agent Context**: Each sub-agent runs in its own isolated context. This means that the sub-agent will not be able to see the context of the main agent or other sub-agents. This is important to ensure that the sub-agent is able to focus on the task at hand and not be distracted by the context of the main agent or other sub-agents.
 
-**摘要**: 在会话中，财政历史大模型积极管理上下文——总结已完成的子任务，将中间结果卸载到文件系统，压缩不再直接相关的内容。这使其在长时间、多步骤任务中保持敏锐，而不会超出上下文窗口。
+**摘要**: 在会话中，财政历史智能知识库积极管理上下文——总结已完成的子任务，将中间结果卸载到文件系统，压缩不再直接相关的内容。这使其在长时间、多步骤任务中保持敏锐，而不会超出上下文窗口。
 
 ### Long-Term Memory
 
-大多数代理在对话结束的那一刻就忘记了一切。财政历史大模型会记住。
+大多数代理在对话结束的那一刻就忘记了一切。财政历史智能知识库会记住。
 
-跨会话，财政历史大模型构建你的个人资料、偏好和积累知识的持久记忆。你使用得越多，它就越了解你——你的写作风格、你的技术栈、你的常见工作流。记忆存储在本地，完全由你控制。
+跨会话，财政历史智能知识库构建你的个人资料、偏好和积累知识的持久记忆。你使用得越多，它就越了解你——你的写作风格、你的技术栈、你的常见工作流。记忆存储在本地，完全由你控制。
 
 ## Recommended Models
 
-财政历史大模型是模型无关的——它可以与任何实现 OpenAI 兼容 API 的 LLM 配合使用。也就是说，它在支持以下功能的模型上表现最佳：
+财政历史智能知识库是模型无关的——它可以与任何实现 OpenAI 兼容 API 的 LLM 配合使用。也就是说，它在支持以下功能的模型上表现最佳：
 
 - **Long context windows** (100k+ tokens) for deep research and multi-step tasks
 - **Reasoning capabilities** for adaptive planning and complex decomposition
@@ -252,23 +252,23 @@ This project is open source and available under the [MIT License](./LICENSE).
 
 ## Acknowledgments
 
-财政历史大模型建立在开源社区令人难以置信的工作之上。我们深深感谢所有项目和贡献者，正是他们的努力使财政历史大模型成为可能。我们真正站在巨人的肩膀上。
+财政历史智能知识库建立在开源社区令人难以置信的工作之上。我们深深感谢所有项目和贡献者，正是他们的努力使财政历史智能知识库成为可能。我们真正站在巨人的肩膀上。
 
 We would like to extend our sincere appreciation to the following projects for their invaluable contributions:
 
 - **[LangChain](https://github.com/langchain-ai/langchain)**: Their exceptional framework powers our LLM interactions and chains, enabling seamless integration and functionality.
-- **[LangGraph](https://github.com/langchain-ai/langgraph)**: Their innovative approach to multi-agent orchestration has been instrumental in enabling 财政历史大模型's sophisticated workflows.
+- **[LangGraph](https://github.com/langchain-ai/langgraph)**: Their innovative approach to multi-agent orchestration has been instrumental in enabling 财政历史智能知识库's sophisticated workflows.
 
 These projects exemplify the transformative power of open-source collaboration, and we are proud to build upon their foundations.
 
 ### Key Contributors
 
-A heartfelt thank you goes out to the core authors of `财政历史大模型`, whose vision, passion, and dedication have brought this project to life:
+A heartfelt thank you goes out to the core authors of `财政历史智能知识库`, whose vision, passion, and dedication have brought this project to life:
 
 - **[Daniel Walnut](https://github.com/hetaoBackend/)**
 - **[Henry Li](https://github.com/magiccube/)**
 
-Your unwavering commitment and expertise have been the driving force behind 财政历史大模型's success. We are honored to have you at the helm of this journey.
+Your unwavering commitment and expertise have been the driving force behind 财政历史智能知识库's success. We are honored to have you at the helm of this journey.
 
 ## Star History
 

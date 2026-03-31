@@ -276,6 +276,17 @@ function fileStatusHint(file: {
   }
 }
 
+function retryActionLabel(status?: string) {
+  switch (status) {
+    case "failed":
+      return "重新解析";
+    case "index_failed":
+      return "重新入库";
+    default:
+      return "重试";
+  }
+}
+
 export default function KnowledgeManagementPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
@@ -757,6 +768,7 @@ export default function KnowledgeManagementPage() {
                       const canRetry =
                         file.indexable &&
                         ["failed", "index_failed"].includes(file.parse_status ?? "");
+                      const retryLabel = retryActionLabel(file.parse_status);
 
                       return (
                         <TableRow key={file.filename} className="h-14">
@@ -873,7 +885,8 @@ export default function KnowledgeManagementPage() {
                                   className="size-7"
                                   disabled={retryMutation.isPending}
                                   onClick={() => void handleRetryIndexing(file.filename)}
-                                  title="重新入库"
+                                  title={retryLabel}
+                                  aria-label={retryLabel}
                                 >
                                   {isRetrying ? (
                                     <Loader2Icon className="size-3.5 animate-spin" />

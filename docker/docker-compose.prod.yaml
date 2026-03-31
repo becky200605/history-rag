@@ -27,6 +27,7 @@ services:
     environment:
       - NODE_ENV=production
       - CI=true
+      - BACKEND_BASE_URL=http://gateway:8001
       # Server-side Next route handlers must reach the langgraph container directly.
       - LANGGRAPH_BASE_URL=http://langgraph:2024
     extra_hosts:
@@ -92,6 +93,8 @@ services:
     working_dir: /app
     environment:
       - CI=true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - history-rag-prod
     restart: unless-stopped

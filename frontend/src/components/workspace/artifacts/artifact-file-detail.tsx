@@ -1013,7 +1013,10 @@ function MarkdownDualPreview({
   const showRendered = mode !== "original";
   const showOriginal = mode !== "rendered";
   const containerClass =
-    mode === "split" ? "grid md:grid-cols-2 gap-4 px-4 pb-4" : "px-4 pb-4";
+    mode === "split"
+      ? "grid items-stretch gap-4 px-4 pb-4 md:grid-cols-2"
+      : "px-4 pb-4";
+  const panelClassName = "rounded-2xl border border-border/40 bg-muted p-4";
 
   return (
     <div className="space-y-3 border-t border-border/30">
@@ -1043,7 +1046,7 @@ function MarkdownDualPreview({
       </div>
       <div className={containerClass}>
         {showRendered && (
-          <div className="rounded-2xl border border-border/40 bg-muted p-4">
+          <div className={cn(panelClassName, mode === "split" && "h-full")}>
             <HighlightedMarkdownPreview
               content={content ?? ""}
               highlightSnippet={highlightSnippet}
@@ -1051,10 +1054,12 @@ function MarkdownDualPreview({
           </div>
         )}
         {showOriginal && (
-          <iframe
-            className="w-full min-h-[360px] rounded-2xl border border-border/40"
-            src={iframeUrl}
-          />
+          <div className={cn("overflow-hidden rounded-2xl border border-border/40", mode === "split" && "h-full")}>
+            <iframe
+              className="h-full min-h-[360px] w-full bg-background"
+              src={iframeUrl}
+            />
+          </div>
         )}
       </div>
     </div>

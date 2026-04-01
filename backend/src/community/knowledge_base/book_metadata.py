@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -314,6 +313,10 @@ def build_book_metadata_system_prompt() -> str:
         "Use only the supplied excerpts and their page numbers.\n"
         "Do not invent facts, and do not use outside knowledge to fill gaps.\n"
         "The field `type` is only for retrieval routing and must be one of: core, specialized, reference, unknown.\n"
+        "`core` means a general/synthetic history work such as 通史, 全史, 概论, 总论, or a broad dynastic overview.\n"
+        "A domain-wide history such as《中国财政通史》is still `core`; do not mark it `specialized` merely because it focuses on one domain.\n"
+        "`specialized` is for topic-focused or case-focused studies such as 专题研究, 制度史, 个案研究, 区域研究, 档案/史料研究.\n"
+        "`reference` is for reference works such as 年表, 辞典, 索引, 汇编, 手册, 工具书.\n"
         "Do not use author-role words like 著, 编, 译 as `type`.\n"
         "Return valid JSON that matches the expected book-metadata schema.\n"
         "If a field is unknown, use null, an empty array, or 'unknown' as appropriate.\n"

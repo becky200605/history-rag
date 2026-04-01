@@ -41,7 +41,7 @@ def test_generate_book_metadata_record_persists_model_output(monkeypatch, tmp_pa
 ```json
 {
   "title": "Demo Book",
-  "role": {"value": "core", "confidence": 0.9, "evidence": "目录和前言"},
+  "type": {"value": "core", "confidence": 0.9, "evidence": "目录和前言"},
   "categories": [{"value": "财政史", "confidence": 0.8, "evidence": "目录"}],
   "summary": {"value": "财政通史著作", "confidence": 0.7, "evidence": "样本文本"}
 }
@@ -61,8 +61,8 @@ def test_generate_book_metadata_record_persists_model_output(monkeypatch, tmp_pa
 
     assert saved_path.exists()
     assert record.suggestion is not None
-    assert record.suggestion.role is not None
-    assert record.suggestion.role.value == "core"
+    assert record.suggestion.type is not None
+    assert record.suggestion.type.value == "core"
     loaded = load_book_metadata_for_source(tmp_path, "demo.pdf")
     assert loaded is not None
     assert loaded.model_name == "demo-model"

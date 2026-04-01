@@ -4,6 +4,7 @@ import {
   BookmarkPlusIcon,
   FileIcon,
   Loader2Icon,
+  PencilIcon,
   RefreshCwIcon,
   SearchIcon,
   Trash2Icon,
@@ -43,11 +44,14 @@ import {
   WorkspaceContainer,
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
+import { Textarea } from "@/components/ui/textarea";
+import type { KnowledgeFileInfo } from "@/core/knowledge/api";
 import {
   useDeleteKnowledgeFile,
   useKnowledgeFiles,
   useRetryKnowledgeFileIndexing,
   useUploadKnowledgeFiles,
+  useUpdateKnowledgeFileMetadata,
 } from "@/core/knowledge/hooks";
 import { useImportGlobalKnowledgeToPersonal } from "@/core/knowledge/user-hooks";
 import { env } from "@/env";
@@ -56,6 +60,7 @@ type LanguageHint = "unknown" | "zh-Hans" | "zh-Hant" | "en" | "mixed";
 type LayoutHint = "unknown" | "horizontal" | "vertical" | "mixed";
 type DocumentTypeHint = "unknown" | "book" | "archive" | "periodical" | "ancient_book";
 type FileStatusFilter = "all" | "active" | "indexed" | "failed" | "parsed" | "pending_parse" | "uploaded";
+type KnowledgeType = "core" | "specialized" | "reference" | "unknown";
 const KNOWLEDGE_TYPES = new Set(["core", "specialized", "reference", "unknown"]);
 
 function buildFileTags(file: {
@@ -95,6 +100,13 @@ function knowledgeTypeLabel(value?: string | null) {
       return "未分类";
   }
 }
+
+const knowledgeTypeOptions: Array<{ value: KnowledgeType; label: string }> = [
+  { value: "unknown", label: "未分类" },
+  { value: "core", label: "核心通用" },
+  { value: "specialized", label: "专题支撑" },
+  { value: "reference", label: "参考工具" },
+];
 
 const languageOptions: Array<{ value: LanguageHint; label: string }> = [
   { value: "unknown", label: "自动判断" },
@@ -181,6 +193,17 @@ function formatBytes(size: number) {
     return `${(size / 1024).toFixed(1)} KB`;
   }
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function splitTagInput(value: string) {
+  return value
+    .split(/[,\n，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function joinTagInput(values?: string[]) {
+  return (values ?? []).join(", ");
 }
 
 function formatCompactTime(value?: number) {
@@ -299,12 +322,20 @@ export default function KnowledgeManagementPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
   const [retryingFilename, setRetryingFilename] = useState<string | null>(null);
+  const [editingFile, setEditingFile] = useState<KnowledgeFileInfo | null>(null);
+  const [typeInput, setTypeInput] = useState<KnowledgeType>("unknown");
+  const [categoriesInput, setCategoriesInput] = useState("");
+  const [erasInput, setErasInput] = useState("");
+  const [regionsInput, setRegionsInput] = useState("");
+  const [keywordsInput, setKeywordsInput] = useState("");
+  const [summaryInput, setSummaryInput] = useState("");
 
   const { data, isLoading, error, refetch, isFetching } = useKnowledgeFiles();
   const uploadMutation = useUploadKnowledgeFiles();
   const deleteMutation = useDeleteKnowledgeFile();
   const retryMutation = useRetryKnowledgeFileIndexing();
   const importMutation = useImportGlobalKnowledgeToPersonal();
+  const updateMetadataMutation = useUpdateKnowledgeFileMetadata();
 
   useEffect(() => {
     document.title = "知识库管理 - 财政历史智能知识库";
@@ -475,6 +506,54 @@ export default function KnowledgeManagementPage() {
       toast.error(message);
     } finally {
       setRetryingFilename(null);
+    }
+  };
+
+  const openEditDialog = (file: KnowledgeFileInfo) => {
+    setEditingFile(file);
+    setTypeInput(
+      KNOWLEDGE_TYPES.has(String(file.type ?? "").toLowerCase())
+        ? (String(file.type).toLowerCase() as KnowledgeType)
+        : "unknown",
+    );
+    setCategoriesInput(joinTagInput(file.categories));
+    setErasInput(joinTagInput(file.eras));
+    setRegionsInput(joinTagInput(file.regions));
+    setKeywordsInput(joinTagInput(file.keywords));
+    setSummaryInput(file.summary ?? "");
+  };
+
+  const closeEditDialog = () => {
+    setEditingFile(null);
+    setTypeInput("unknown");
+    setCategoriesInput("");
+    setErasInput("");
+    setRegionsInput("");
+    setKeywordsInput("");
+    setSummaryInput("");
+  };
+
+  const handleSaveMetadata = async () => {
+    if (!editingFile) {
+      return;
+    }
+
+    try {
+      const result = await updateMetadataMutation.mutateAsync({
+        filename: editingFile.filename,
+        payload: {
+          type: typeInput === "unknown" ? null : typeInput,
+          categories: splitTagInput(categoriesInput),
+          eras: splitTagInput(erasInput),
+          regions: splitTagInput(regionsInput),
+          keywords: splitTagInput(keywordsInput),
+          summary: summaryInput.trim() || null,
+        },
+      });
+      toast.success(result.message || "标签已更新");
+      closeEditDialog();
+    } catch (updateError) {
+      toast.error((updateError as Error).message || "标签更新失败");
     }
   };
 
@@ -750,7 +829,7 @@ export default function KnowledgeManagementPage() {
                       <TableHead className="w-[90px] min-w-[90px]">大小</TableHead>
                       <TableHead className="w-[140px] min-w-[140px]">时间</TableHead>
                       <TableHead className="w-[250px] min-w-[250px]">产物</TableHead>
-                      <TableHead className="w-[132px] min-w-[132px] text-right">操作</TableHead>
+                      <TableHead className="w-[164px] min-w-[164px] text-right">操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -769,6 +848,14 @@ export default function KnowledgeManagementPage() {
                         file.indexable &&
                         ["failed", "index_failed"].includes(file.parse_status ?? "");
                       const retryLabel = retryActionLabel(file.parse_status);
+                      const hasEditableMetadataSource =
+                        Boolean(file.structured_filename) ||
+                        [".md", ".markdown", ".txt"].includes(
+                          (file.extension ?? "").toLowerCase(),
+                        );
+                      const editDisabled =
+                        !hasEditableMetadataSource ||
+                        ["queued", "queued_ocr", "parsing"].includes(file.parse_status ?? "");
 
                       return (
                         <TableRow key={file.filename} className="h-14">
@@ -876,8 +963,19 @@ export default function KnowledgeManagementPage() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="w-[132px] min-w-[132px] py-1.5 text-right">
+                          <TableCell className="w-[164px] min-w-[164px] py-1.5 text-right">
                             <div className="flex justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-7"
+                                disabled={editDisabled || updateMetadataMutation.isPending}
+                                onClick={() => openEditDialog(file)}
+                                title="修改标签"
+                                aria-label="修改标签"
+                              >
+                                <PencilIcon className="size-3.5" />
+                              </Button>
                               {canRetry && (
                                 <Button
                                   variant="ghost"
@@ -934,6 +1032,127 @@ export default function KnowledgeManagementPage() {
             )}
           </section>
         </div>
+
+        <Dialog
+          open={Boolean(editingFile)}
+          onOpenChange={(open) => {
+            if (!open && !updateMetadataMutation.isPending) {
+              closeEditDialog();
+            }
+          }}
+        >
+          <DialogContent className="max-w-2xl border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)]/95">
+            <DialogHeader>
+              <DialogTitle className="text-slate-900">修改书籍标签</DialogTitle>
+              <DialogDescription className="text-slate-600">
+                修改的是书级 metadata，会影响书目路由和候选排序，但不会重跑 OCR 或向量化。
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="grid gap-4">
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-800">检索类型</label>
+                <Select
+                  value={typeInput}
+                  onValueChange={(value) => setTypeInput(value as KnowledgeType)}
+                >
+                  <SelectTrigger className="bg-white text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {knowledgeTypeOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-slate-800">分类</label>
+                  <Input
+                    value={categoriesInput}
+                    onChange={(event) => setCategoriesInput(event.target.value)}
+                    placeholder="通史, 财政史, 制度史"
+                    className="bg-white"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-slate-800">时代</label>
+                  <Input
+                    value={erasInput}
+                    onChange={(event) => setErasInput(event.target.value)}
+                    placeholder="先秦, 唐宋, 明清"
+                    className="bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-slate-800">地域</label>
+                  <Input
+                    value={regionsInput}
+                    onChange={(event) => setRegionsInput(event.target.value)}
+                    placeholder="全国, 江南, 四川"
+                    className="bg-white"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-slate-800">关键词</label>
+                  <Input
+                    value={keywordsInput}
+                    onChange={(event) => setKeywordsInput(event.target.value)}
+                    placeholder="赋税, 盐政, 漕运"
+                    className="bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-800">摘要</label>
+                <Textarea
+                  value={summaryInput}
+                  onChange={(event) => setSummaryInput(event.target.value)}
+                  placeholder="补充这本书的覆盖范围或定位"
+                  rows={5}
+                  className="bg-white"
+                />
+              </div>
+
+              {updateMetadataMutation.error && (
+                <p className="text-sm text-destructive">
+                  保存失败: {updateMetadataMutation.error.message}
+                </p>
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="border-[rgba(57,130,152,0.18)] bg-white text-[rgb(23,89,108)]"
+                onClick={closeEditDialog}
+                disabled={updateMetadataMutation.isPending}
+              >
+                取消
+              </Button>
+              <Button
+                type="button"
+                className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
+                onClick={() => void handleSaveMetadata()}
+                disabled={updateMetadataMutation.isPending}
+              >
+                {updateMetadataMutation.isPending ? (
+                  <Loader2Icon className="size-4 animate-spin" />
+                ) : null}
+                保存
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </WorkspaceBody>
     </WorkspaceContainer>
   );

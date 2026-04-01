@@ -1059,6 +1059,7 @@ async def update_global_knowledge_metadata(
 
     existing = load_book_metadata_for_source(docs_dir, filename)
     existing_suggestion = existing.suggestion if existing else None
+    provided_fields = payload.model_fields_set
     prompt_input = (
         existing.prompt_input
         if existing is not None
@@ -1074,12 +1075,36 @@ async def update_global_knowledge_metadata(
     suggestion = {
         "title": str((existing_suggestion.title if existing_suggestion else None) or (record or {}).get("display_title") or Path(filename).stem),
         "author": existing_suggestion.author if existing_suggestion else None,
-        "type": _manual_metadata_field(payload.type) or (existing_suggestion.type if existing_suggestion else None),
-        "categories": _manual_metadata_fields(payload.categories) or (existing_suggestion.categories if existing_suggestion else []),
-        "eras": _manual_metadata_fields(payload.eras) or (existing_suggestion.eras if existing_suggestion else []),
-        "regions": _manual_metadata_fields(payload.regions) or (existing_suggestion.regions if existing_suggestion else []),
-        "keywords": _manual_metadata_fields(payload.keywords) or (existing_suggestion.keywords if existing_suggestion else []),
-        "summary": _manual_metadata_field(payload.summary) or (existing_suggestion.summary if existing_suggestion else None),
+        "type": (
+            _manual_metadata_field(payload.type)
+            if "type" in provided_fields
+            else (existing_suggestion.type if existing_suggestion else None)
+        ),
+        "categories": (
+            _manual_metadata_fields(payload.categories)
+            if "categories" in provided_fields
+            else (existing_suggestion.categories if existing_suggestion else [])
+        ),
+        "eras": (
+            _manual_metadata_fields(payload.eras)
+            if "eras" in provided_fields
+            else (existing_suggestion.eras if existing_suggestion else [])
+        ),
+        "regions": (
+            _manual_metadata_fields(payload.regions)
+            if "regions" in provided_fields
+            else (existing_suggestion.regions if existing_suggestion else [])
+        ),
+        "keywords": (
+            _manual_metadata_fields(payload.keywords)
+            if "keywords" in provided_fields
+            else (existing_suggestion.keywords if existing_suggestion else [])
+        ),
+        "summary": (
+            _manual_metadata_field(payload.summary)
+            if "summary" in provided_fields
+            else (existing_suggestion.summary if existing_suggestion else None)
+        ),
         "ocr_quality": existing_suggestion.ocr_quality if existing_suggestion else None,
         "notes": "manual_edit",
     }

@@ -70,6 +70,9 @@ def test_build_book_metadata_prompt_bundle_only_uses_front_pages() -> None:
     assert "Source filename:" not in bundle.user_prompt
     assert "Reasons:" not in bundle.user_prompt
     assert "Return JSON with these fields:" not in bundle.user_prompt
+    assert "Return raw JSON only." in bundle.system_prompt
+    assert '"ocr_quality": {"value": "high|medium|low"' in bundle.system_prompt
+    assert "`categories` are subject/domain labels" in bundle.system_prompt
 
 
 def test_parse_book_metadata_suggestion_accepts_json_string() -> None:

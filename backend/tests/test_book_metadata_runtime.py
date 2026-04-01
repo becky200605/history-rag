@@ -1,6 +1,8 @@
 import sys
 from types import ModuleType, SimpleNamespace
 
+import httpx
+
 from src.community.knowledge_base.book_metadata import load_book_metadata_for_source
 from src.community.knowledge_base.book_metadata_runtime import generate_book_metadata_record, maybe_generate_book_metadata
 from src.config.knowledge_base_config import BookMetadataConfig
@@ -12,6 +14,19 @@ class _FakeModel:
 
     def invoke(self, messages):
         return SimpleNamespace(content=self._response_text)
+
+
+class _FlakyModel:
+    def __init__(self, responses) -> None:
+        self._responses = list(responses)
+        self.calls = 0
+
+    def invoke(self, messages):
+        self.calls += 1
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return SimpleNamespace(content=response)
 
 
 def _structured_payload() -> dict[str, object]:
@@ -77,3 +92,41 @@ def test_maybe_generate_book_metadata_returns_none_when_disabled(tmp_path) -> No
         config=BookMetadataConfig(enabled=False),
     )
     assert result is None
+
+
+def test_generate_book_metadata_record_retries_transient_invoke_failure(monkeypatch, tmp_path) -> None:
+    response_text = """
+```json
+{
+  "title": "Demo Book",
+  "type": {"value": "core", "confidence": 0.9, "evidence": "目录和前言"}
+}
+```
+""".strip()
+    flaky_model = _FlakyModel(
+        [
+            httpx.RemoteProtocolError("Server disconnected without sending a response."),
+            response_text,
+        ]
+    )
+    fake_models = ModuleType("src.models")
+    fake_models.create_chat_model = lambda name=None, thinking_enabled=False: flaky_model
+    monkeypatch.setitem(sys.modules, "src.models", fake_models)
+    monkeypatch.setattr(
+        "src.community.knowledge_base.book_metadata_runtime.sleep",
+        lambda seconds: None,
+    )
+
+    record, saved_path = generate_book_metadata_record(
+        structured_payload=_structured_payload(),
+        source_filename="demo.pdf",
+        title="Demo Book",
+        output_dir=tmp_path,
+        config=BookMetadataConfig(enabled=True, model_name="demo-model"),
+    )
+
+    assert flaky_model.calls == 2
+    assert saved_path.exists()
+    assert record.suggestion is not None
+    assert record.suggestion.type is not None
+    assert record.suggestion.type.value == "core"

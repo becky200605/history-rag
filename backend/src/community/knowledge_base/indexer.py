@@ -1,13 +1,18 @@
 """Index documents into the knowledge base."""
 
 import json
+import logging
+from hashlib import sha1
 from pathlib import Path
+from time import sleep
 
+import httpx
 from langchain_community.document_loaders import PyMuPDFLoader, TextLoader, UnstructuredMarkdownLoader
 from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import models
+from qdrant_client.http.exceptions import ResponseHandlingException
 from qdrant_client.models import Distance, VectorParams
 
 from src.community.knowledge_base.common import derive_global_doc_id, derive_thread_doc_id, derive_user_doc_id, extract_title_from_text, get_thread_collection_name, get_user_collection_name, resolve_project_path
@@ -21,6 +26,10 @@ from src.config.paths import get_paths
 INDEXABLE_EXTENSIONS = {".md", ".txt", ".pdf"}
 STRUCTURED_INDEXABLE_EXTENSIONS = INDEXABLE_EXTENSIONS | {".json"}
 STRUCTURED_SOURCE_TYPE = "structured"
+UPSERT_RETRY_ATTEMPTS = 3
+UPSERT_RETRY_DELAY_SECONDS = 1.0
+
+logger = logging.getLogger(__name__)
 
 
 def _load_pdf_documents(path: Path) -> list[Document]:
@@ -272,6 +281,56 @@ def _build_chunks(documents: list[Document], scope: str, thread_id: str | None) 
     return _annotate_chunks(chunks, source_text_by_path, scope=scope, thread_id=thread_id)
 
 
+def _stable_chunk_ids(chunks: list[Document]) -> list[str]:
+    ids: list[str] = []
+    for chunk in chunks:
+        metadata = chunk.metadata
+        identity = {
+            "doc_id": metadata.get("doc_id"),
+            "source_path": metadata.get("source_path") or metadata.get("source"),
+            "scope": metadata.get("scope"),
+            "thread_id": metadata.get("thread_id"),
+            "chunk_index": metadata.get("chunk_index"),
+            "paragraph_no_in_doc": metadata.get("paragraph_no_in_doc"),
+            "paragraph_chunk_index": metadata.get("paragraph_chunk_index"),
+            "line_start": metadata.get("line_start"),
+            "line_end": metadata.get("line_end"),
+            "page_no": metadata.get("page_no"),
+            "pdf_page_no": metadata.get("pdf_page_no"),
+            "book_page_no": metadata.get("book_page_no"),
+            "content": chunk.page_content,
+        }
+        payload = json.dumps(identity, ensure_ascii=False, sort_keys=True)
+        ids.append(sha1(payload.encode("utf-8")).hexdigest())
+    return ids
+
+
+def _add_documents_with_retry(
+    vector_store: QdrantVectorStore,
+    chunks: list[Document],
+    *,
+    collection_name: str,
+    retries: int = UPSERT_RETRY_ATTEMPTS,
+    delay_seconds: float = UPSERT_RETRY_DELAY_SECONDS,
+) -> None:
+    chunk_ids = _stable_chunk_ids(chunks)
+    for attempt in range(1, retries + 1):
+        try:
+            vector_store.add_documents(chunks, ids=chunk_ids)
+            return
+        except (ResponseHandlingException, httpx.RemoteProtocolError) as exc:
+            if attempt >= retries:
+                raise
+            logger.warning(
+                "Qdrant upsert disconnected for %s on attempt %s/%s; retrying in %.1fs",
+                collection_name,
+                attempt,
+                retries,
+                delay_seconds,
+            )
+            sleep(delay_seconds)
+
+
 def index_documents(
     documents: list[Document],
     collection_name: str,
@@ -322,7 +381,11 @@ def upsert_documents(
         collection_name=collection_name,
         embedding=embeddings,
     )
-    vector_store.add_documents(chunks)
+    _add_documents_with_retry(
+        vector_store,
+        chunks,
+        collection_name=collection_name,
+    )
     return len(chunks)
 
 

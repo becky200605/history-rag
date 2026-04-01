@@ -49,6 +49,7 @@ import type { KnowledgeFileInfo } from "@/core/knowledge/api";
 import {
   useDeleteKnowledgeFile,
   useKnowledgeFiles,
+  useRegenerateKnowledgeFileMetadata,
   useRetryKnowledgeFileIndexing,
   useUploadKnowledgeFiles,
   useUpdateKnowledgeFileMetadata,
@@ -336,6 +337,7 @@ export default function KnowledgeManagementPage() {
   const retryMutation = useRetryKnowledgeFileIndexing();
   const importMutation = useImportGlobalKnowledgeToPersonal();
   const updateMetadataMutation = useUpdateKnowledgeFileMetadata();
+  const regenerateMetadataMutation = useRegenerateKnowledgeFileMetadata();
 
   useEffect(() => {
     document.title = "知识库管理 - 财政历史智能知识库";
@@ -533,6 +535,26 @@ export default function KnowledgeManagementPage() {
     setSummaryInput("");
   };
 
+  const applyMetadataToForm = (metadata: {
+    type?: string | null;
+    categories?: string[];
+    eras?: string[];
+    regions?: string[];
+    keywords?: string[];
+    summary?: string | null;
+  }) => {
+    setTypeInput(
+      KNOWLEDGE_TYPES.has(String(metadata.type ?? "").toLowerCase())
+        ? (String(metadata.type).toLowerCase() as KnowledgeType)
+        : "unknown",
+    );
+    setCategoriesInput(joinTagInput(metadata.categories));
+    setErasInput(joinTagInput(metadata.eras));
+    setRegionsInput(joinTagInput(metadata.regions));
+    setKeywordsInput(joinTagInput(metadata.keywords));
+    setSummaryInput(metadata.summary ?? "");
+  };
+
   const handleSaveMetadata = async () => {
     if (!editingFile) {
       return;
@@ -554,6 +576,20 @@ export default function KnowledgeManagementPage() {
       closeEditDialog();
     } catch (updateError) {
       toast.error((updateError as Error).message || "标签更新失败");
+    }
+  };
+
+  const handleRegenerateMetadata = async () => {
+    if (!editingFile) {
+      return;
+    }
+
+    try {
+      const result = await regenerateMetadataMutation.mutateAsync(editingFile.filename);
+      applyMetadataToForm(result.metadata);
+      toast.success(result.message || "已重新生成标签");
+    } catch (regenerateError) {
+      toast.error((regenerateError as Error).message || "AI 生成失败");
     }
   };
 
@@ -1122,9 +1158,9 @@ export default function KnowledgeManagementPage() {
                 />
               </div>
 
-              {updateMetadataMutation.error && (
+              {(updateMetadataMutation.error || regenerateMetadataMutation.error) && (
                 <p className="text-sm text-destructive">
-                  保存失败: {updateMetadataMutation.error.message}
+                  {(updateMetadataMutation.error || regenerateMetadataMutation.error)?.message}
                 </p>
               )}
             </div>
@@ -1134,8 +1170,20 @@ export default function KnowledgeManagementPage() {
                 type="button"
                 variant="outline"
                 className="border-[rgba(57,130,152,0.18)] bg-white text-[rgb(23,89,108)]"
+                onClick={() => void handleRegenerateMetadata()}
+                disabled={updateMetadataMutation.isPending || regenerateMetadataMutation.isPending}
+              >
+                {regenerateMetadataMutation.isPending ? (
+                  <Loader2Icon className="size-4 animate-spin" />
+                ) : null}
+                AI 生成
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="border-[rgba(57,130,152,0.18)] bg-white text-[rgb(23,89,108)]"
                 onClick={closeEditDialog}
-                disabled={updateMetadataMutation.isPending}
+                disabled={updateMetadataMutation.isPending || regenerateMetadataMutation.isPending}
               >
                 取消
               </Button>
@@ -1143,7 +1191,7 @@ export default function KnowledgeManagementPage() {
                 type="button"
                 className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
                 onClick={() => void handleSaveMetadata()}
-                disabled={updateMetadataMutation.isPending}
+                disabled={updateMetadataMutation.isPending || regenerateMetadataMutation.isPending}
               >
                 {updateMetadataMutation.isPending ? (
                   <Loader2Icon className="size-4 animate-spin" />

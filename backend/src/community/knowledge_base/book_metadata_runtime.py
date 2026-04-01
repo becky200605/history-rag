@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from time import sleep
 from typing import Any, Mapping
 
+import httpx
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.community.knowledge_base.book_metadata import (
@@ -19,6 +21,8 @@ from src.community.knowledge_base.book_metadata import (
 from src.config.knowledge_base_config import BookMetadataConfig
 
 logger = logging.getLogger(__name__)
+BOOK_METADATA_RETRY_ATTEMPTS = 3
+BOOK_METADATA_RETRY_DELAY_SECONDS = 1.0
 
 
 def _strip_markdown_fences(text: str) -> str:
@@ -34,6 +38,14 @@ def _strip_markdown_fences(text: str) -> str:
     else:
         lines = lines[1:]
     return "\n".join(lines).strip()
+
+
+def _is_retryable_metadata_error(exc: Exception) -> bool:
+    if isinstance(exc, (httpx.HTTPError, json.JSONDecodeError)):
+        return True
+    if isinstance(exc, ValueError) and "empty content" in str(exc).lower():
+        return True
+    return exc.__class__.__name__ in {"APIConnectionError", "APITimeoutError", "RateLimitError"}
 
 
 def generate_book_metadata_record(
@@ -57,17 +69,36 @@ def generate_book_metadata_record(
     )
 
     model = create_chat_model(name=config.model_name, thinking_enabled=False)
-    response = model.invoke(
-        [
-            SystemMessage(content=prompt_bundle.system_prompt),
-            HumanMessage(content=prompt_bundle.user_prompt),
-        ]
-    )
-    response_text = _strip_markdown_fences(str(response.content or ""))
-    if not response_text:
-        raise ValueError("Book metadata model returned empty content")
+    messages = [
+        SystemMessage(content=prompt_bundle.system_prompt),
+        HumanMessage(content=prompt_bundle.user_prompt),
+    ]
+    suggestion = None
+    last_error: Exception | None = None
+    for attempt in range(1, BOOK_METADATA_RETRY_ATTEMPTS + 1):
+        try:
+            response = model.invoke(messages)
+            response_text = _strip_markdown_fences(str(response.content or ""))
+            if not response_text:
+                raise ValueError("Book metadata model returned empty content")
+            suggestion = parse_book_metadata_suggestion(response_text)
+            break
+        except Exception as exc:
+            last_error = exc
+            if not _is_retryable_metadata_error(exc) or attempt >= BOOK_METADATA_RETRY_ATTEMPTS:
+                raise
+            logger.warning(
+                "Book metadata generation transient failure for %s on attempt %s/%s: %s",
+                source_filename,
+                attempt,
+                BOOK_METADATA_RETRY_ATTEMPTS,
+                exc,
+            )
+            sleep(BOOK_METADATA_RETRY_DELAY_SECONDS)
 
-    suggestion = parse_book_metadata_suggestion(response_text)
+    if suggestion is None:
+        raise ValueError(f"Book metadata generation failed for {source_filename}: {last_error}")
+
     record = build_book_metadata_record(
         source_filename=source_filename,
         source_title=title,

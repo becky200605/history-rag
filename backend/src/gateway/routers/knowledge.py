@@ -18,6 +18,7 @@ from src.community.knowledge_base.book_metadata import (
     save_book_metadata,
 )
 from src.community.knowledge_base.book_metadata_runtime import maybe_generate_book_metadata
+from src.community.knowledge_base.book_metadata_runtime import generate_book_metadata_record
 from src.community.knowledge_base.citations import (
     encode_source_url,
     resolve_result_citation_context,
@@ -411,6 +412,29 @@ def _load_global_book_metadata(filename: str) -> dict[str, Any]:
         "summary": summary,
         "tags": tags,
     }
+
+
+def _load_structured_payload_for_metadata(filename: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Path]:
+    record = _find_global_record(filename)
+    docs_dir = get_global_docs_dir()
+    file_path = docs_dir / filename
+
+    if record is None and not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+
+    structured_payload = None
+    if record and record.get("structured_path"):
+        structured_payload = load_structured_document(Path(str(record["structured_path"])))
+    elif file_path.suffix.lower() in INDEXABLE_EXTENSIONS:
+        structured_payload = build_structured_document(
+            source_filename=filename,
+            title=Path(filename).stem,
+            text=file_path.read_text(encoding="utf-8"),
+            parser_name="manual_metadata_edit",
+            hints={},
+        )
+
+    return structured_payload, record, docs_dir
 
 
 def _cleanup_global_record_artifacts(record: dict[str, Any], *, remove_source_file: bool) -> None:
@@ -1036,23 +1060,7 @@ async def update_global_knowledge_metadata(
     if "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    record = _find_global_record(filename)
-    docs_dir = get_global_docs_dir()
-    file_path = docs_dir / filename
-    if record is None and not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
-
-    structured_payload = None
-    if record and record.get("structured_path"):
-        structured_payload = load_structured_document(Path(str(record["structured_path"])))
-    elif file_path.suffix.lower() in INDEXABLE_EXTENSIONS:
-        structured_payload = build_structured_document(
-            source_filename=filename,
-            title=Path(filename).stem,
-            text=file_path.read_text(encoding="utf-8"),
-            parser_name="manual_metadata_edit",
-            hints={},
-        )
+    structured_payload, record, docs_dir = _load_structured_payload_for_metadata(filename)
 
     if structured_payload is None:
         raise HTTPException(status_code=400, detail="This file does not have editable structured metadata yet")
@@ -1121,6 +1129,40 @@ async def update_global_knowledge_metadata(
     return {
         "success": True,
         "message": f"Updated metadata for {filename}",
+        "metadata": _load_global_book_metadata(filename),
+    }
+
+
+@router.post("/uploads/{filename}/metadata/regenerate", response_model=dict, summary="Regenerate Global Knowledge Metadata")
+async def regenerate_global_knowledge_metadata(filename: str) -> dict:
+    config = get_knowledge_base_config()
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if config.book_metadata is None or not config.book_metadata.enabled:
+        raise HTTPException(status_code=400, detail="Book metadata generation is not enabled")
+
+    structured_payload, record, docs_dir = _load_structured_payload_for_metadata(filename)
+    if structured_payload is None:
+        raise HTTPException(status_code=400, detail="This file does not have editable structured metadata yet")
+
+    source_title = str((record or {}).get("display_title") or Path(filename).stem)
+    try:
+        generate_book_metadata_record(
+            structured_payload=structured_payload,
+            source_filename=filename,
+            title=source_title,
+            output_dir=docs_dir,
+            config=config.book_metadata,
+        )
+    except Exception as exc:
+        logger.exception("Failed to regenerate metadata for %s: %s", filename, exc)
+        raise HTTPException(status_code=500, detail=f"Failed to regenerate metadata: {exc}")
+
+    return {
+        "success": True,
+        "message": f"Regenerated metadata for {filename}",
         "metadata": _load_global_book_metadata(filename),
     }
 

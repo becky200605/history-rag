@@ -7,6 +7,7 @@ import {
   listKnowledgeDocuments,
   listKnowledgeFiles,
   loadKnowledgeStatus,
+  regenerateKnowledgeFileMetadata,
   retryKnowledgeFileIndexing,
   triggerReindex,
   updateKnowledgeFileMetadata,
@@ -100,6 +101,21 @@ export function useUpdateKnowledgeFileMetadata() {
   >({
     mutationFn: ({ filename, payload }) =>
       updateKnowledgeFileMetadata(filename, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
+    },
+  });
+}
+
+export function useRegenerateKnowledgeFileMetadata() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    { success: boolean; message: string; metadata: KnowledgeMetadataUpdateInput & { tags?: string[] } },
+    Error,
+    string
+  >({
+    mutationFn: (filename: string) => regenerateKnowledgeFileMetadata(filename),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });

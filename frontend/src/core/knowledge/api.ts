@@ -313,6 +313,24 @@ export async function updateKnowledgeFileMetadata(
   return (await response.json()) as { success: boolean; message: string; metadata: KnowledgeMetadataUpdateInput & { tags?: string[] } };
 }
 
+export async function regenerateKnowledgeFileMetadata(
+  filename: string,
+): Promise<{ success: boolean; message: string; metadata: KnowledgeMetadataUpdateInput & { tags?: string[] } }> {
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/knowledge/uploads/${encodeURIComponent(filename)}/metadata/regenerate`,
+    {
+      method: "POST",
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ detail: "Failed to regenerate metadata" }));
+    throw new Error(error.detail ?? "Failed to regenerate metadata");
+  }
+  return (await response.json()) as { success: boolean; message: string; metadata: KnowledgeMetadataUpdateInput & { tags?: string[] } };
+}
+
 export async function getKnowledgeParagraphLocation(
   filename: string,
   options: {

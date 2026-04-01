@@ -317,11 +317,30 @@ def build_book_metadata_system_prompt() -> str:
         "A domain-wide history such as《中国财政通史》is still `core`; do not mark it `specialized` merely because it focuses on one domain.\n"
         "`specialized` is for topic-focused or case-focused studies such as 专题研究, 制度史, 个案研究, 区域研究, 档案/史料研究.\n"
         "`reference` is for reference works such as 年表, 辞典, 索引, 汇编, 手册, 工具书.\n"
+        "`categories` are subject/domain labels such as 财政史, 制度史, 经济史, 清史, not retrieval types.\n"
+        "`eras` are time ranges or dynastic periods only. `regions` are places only. `keywords` are concrete research topics only.\n"
+        "Prefer precision over recall: if uncertain, leave arrays empty instead of guessing.\n"
+        "Keep lists short: categories/eras/regions <= 5 items each, keywords <= 8 items.\n"
+        "Prefer the supplied title unless the excerpts clearly show a better normalized title.\n"
+        "Each populated field should include short evidence copied or paraphrased from the excerpts.\n"
         "Do not use author-role words like 著, 编, 译 as `type`.\n"
         "Return valid JSON that matches the expected book-metadata schema.\n"
+        "Return raw JSON only. Do not wrap it in markdown fences. Do not add any explanation before or after the JSON.\n"
         "If a field is unknown, use null, an empty array, or 'unknown' as appropriate.\n"
         "Keep confidence scores between 0 and 1.\n"
-        "Return JSON with these fields: title, author, type, categories, eras, regions, keywords, summary, ocr_quality, notes.\n"
+        "Use exactly this top-level shape:\n"
+        "{\n"
+        '  "title": "string or null",\n'
+        '  "author": {"value": "string", "confidence": 0.0, "evidence": "string"} or null,\n'
+        '  "type": {"value": "core|specialized|reference|unknown", "confidence": 0.0, "evidence": "string"} or null,\n'
+        '  "categories": [{"value": "string", "confidence": 0.0, "evidence": "string"}],\n'
+        '  "eras": [{"value": "string", "confidence": 0.0, "evidence": "string"}],\n'
+        '  "regions": [{"value": "string", "confidence": 0.0, "evidence": "string"}],\n'
+        '  "keywords": [{"value": "string", "confidence": 0.0, "evidence": "string"}],\n'
+        '  "summary": {"value": "string", "confidence": 0.0, "evidence": "string"} or null,\n'
+        '  "ocr_quality": {"value": "high|medium|low", "confidence": 0.0, "evidence": "string"} or null,\n'
+        '  "notes": "string or null"\n'
+        "}\n"
     )
 
 

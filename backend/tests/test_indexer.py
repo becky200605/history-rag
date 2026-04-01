@@ -1,10 +1,13 @@
 import sys
 from types import ModuleType, SimpleNamespace
 
+import httpx
 from langchain_core.documents import Document
 
 if "qdrant_client" not in sys.modules:
     qdrant_client = ModuleType("qdrant_client")
+    qdrant_http = ModuleType("qdrant_client.http")
+    qdrant_http_exceptions = ModuleType("qdrant_client.http.exceptions")
     qdrant_models = ModuleType("qdrant_client.models")
 
     class _DummyQdrantClient:  # pragma: no cover - test import shim
@@ -34,14 +37,24 @@ if "qdrant_client" not in sys.modules:
             self.args = args
             self.kwargs = kwargs
 
+    class _DummyResponseHandlingException(Exception):  # pragma: no cover - test import shim
+        def __init__(self, source: Exception) -> None:
+            super().__init__(str(source))
+            self.source = source
+
     qdrant_client.QdrantClient = _DummyQdrantClient
     qdrant_client.models = qdrant_models
+    qdrant_client.http = qdrant_http
     qdrant_models.Distance = _DummyDistance
     qdrant_models.VectorParams = _DummyVectorParams
     qdrant_models.Filter = _DummyFilter
     qdrant_models.FieldCondition = _DummyFieldCondition
     qdrant_models.MatchAny = _DummyMatchAny
+    qdrant_http.exceptions = qdrant_http_exceptions
+    qdrant_http_exceptions.ResponseHandlingException = _DummyResponseHandlingException
     sys.modules["qdrant_client"] = qdrant_client
+    sys.modules["qdrant_client.http"] = qdrant_http
+    sys.modules["qdrant_client.http.exceptions"] = qdrant_http_exceptions
     sys.modules["qdrant_client.models"] = qdrant_models
 
 if "langchain_qdrant" not in sys.modules:
@@ -195,6 +208,58 @@ def test_upsert_documents_replaces_doc_ids_without_replacing_collection(monkeypa
     assert ensured_collections == ["knowledge_base__user__u1"]
     assert deleted_doc_ids == [["uk_1"]]
     assert added_documents == [original_document]
+
+
+def test_upsert_documents_retries_transient_qdrant_disconnect(monkeypatch) -> None:
+    _set_chunking_config(monkeypatch, chunk_size=80, chunk_overlap=0)
+
+    original_document = Document(
+        page_content="新的个人知识内容",
+        metadata={"source": "/tmp/demo.md", "source_type": "text", "doc_id": "uk_1"},
+    )
+
+    monkeypatch.setattr(indexer, "_build_chunks", lambda documents, scope, thread_id: documents)
+    monkeypatch.setattr(indexer, "get_embedding_model", lambda: SimpleNamespace(embed_query=lambda text: [0.1, 0.2]))
+    monkeypatch.setattr(indexer, "sleep", lambda seconds: None)
+
+    deleted_doc_ids: list[list[str]] = []
+    ensured_collections: list[str] = []
+    attempts: list[list[str]] = []
+
+    class _Client:
+        def delete_collection(self, *args, **kwargs):
+            raise AssertionError("upsert should not replace the full collection")
+
+    class _VectorStore:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def add_documents(self, documents, **kwargs):
+            attempts.append(list(kwargs.get("ids") or []))
+            if len(attempts) == 1:
+                raise indexer.ResponseHandlingException(
+                    httpx.RemoteProtocolError("Server disconnected without sending a response.")
+                )
+            return ["p1"]
+
+    monkeypatch.setattr(indexer, "get_qdrant_client", lambda: _Client())
+    monkeypatch.setattr(indexer, "_ensure_collection", lambda client, collection_name, embeddings: ensured_collections.append(collection_name))
+    monkeypatch.setattr(indexer, "_delete_points_by_doc_ids", lambda client, collection_name, doc_ids: deleted_doc_ids.append(doc_ids))
+    monkeypatch.setattr(indexer, "QdrantVectorStore", _VectorStore)
+
+    result = indexer.upsert_documents(
+        [original_document],
+        collection_name="knowledge_base__user__u1",
+        scope="user",
+        replace_doc_ids=["uk_1"],
+    )
+
+    assert result == 1
+    assert ensured_collections == ["knowledge_base__user__u1"]
+    assert deleted_doc_ids == [["uk_1"]]
+    assert len(attempts) == 2
+    assert attempts[0] == attempts[1]
+    assert len(attempts[0]) == 1
 
 
 def test_delete_documents_by_doc_ids_uses_filtered_delete(monkeypatch) -> None:

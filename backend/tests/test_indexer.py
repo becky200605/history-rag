@@ -222,7 +222,8 @@ def test_upsert_documents_retries_transient_qdrant_disconnect(monkeypatch) -> No
 
     monkeypatch.setattr(indexer, "_build_chunks", lambda documents, scope, thread_id: documents)
     monkeypatch.setattr(indexer, "get_embedding_model", lambda: SimpleNamespace(embed_query=lambda text: [0.1, 0.2]))
-    monkeypatch.setattr(indexer, "sleep", lambda seconds: None)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(indexer, "sleep", lambda seconds: sleep_calls.append(seconds))
 
     deleted_doc_ids: list[list[str]] = []
     ensured_collections: list[str] = []
@@ -263,6 +264,98 @@ def test_upsert_documents_retries_transient_qdrant_disconnect(monkeypatch) -> No
     assert len(attempts) == 2
     assert attempts[0] == attempts[1]
     assert len(attempts[0]) == 1
+    assert sleep_calls == [5.0]
+
+
+def test_upsert_documents_retries_no_embedding_data(monkeypatch) -> None:
+    _set_chunking_config(monkeypatch, chunk_size=80, chunk_overlap=0)
+
+    original_document = Document(
+        page_content="新的个人知识内容",
+        metadata={"source": "/tmp/demo.md", "source_type": "text", "doc_id": "uk_1"},
+    )
+
+    monkeypatch.setattr(indexer, "_build_chunks", lambda documents, scope, thread_id: documents)
+    monkeypatch.setattr(indexer, "get_embedding_model", lambda: SimpleNamespace(embed_query=lambda text: [0.1, 0.2]))
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(indexer, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    attempts: list[list[str]] = []
+
+    class _Client:
+        def delete_collection(self, *args, **kwargs):
+            raise AssertionError("upsert should not replace the full collection")
+
+    class _VectorStore:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def add_documents(self, documents, **kwargs):
+            attempts.append(list(kwargs.get("ids") or []))
+            if len(attempts) < 3:
+                raise ValueError("No embedding data received")
+            return ["p1"]
+
+    monkeypatch.setattr(indexer, "get_qdrant_client", lambda: _Client())
+    monkeypatch.setattr(indexer, "_ensure_collection", lambda client, collection_name, embeddings: None)
+    monkeypatch.setattr(indexer, "_delete_points_by_doc_ids", lambda client, collection_name, doc_ids: None)
+    monkeypatch.setattr(indexer, "QdrantVectorStore", _VectorStore)
+
+    result = indexer.upsert_documents(
+        [original_document],
+        collection_name="knowledge_base__user__u1",
+        scope="user",
+        replace_doc_ids=["uk_1"],
+    )
+
+    assert result == 1
+    assert len(attempts) == 3
+    assert attempts[0] == attempts[1] == attempts[2]
+    assert sleep_calls == [5.0, 10.0]
+
+
+def test_upsert_documents_does_not_retry_non_retryable_error(monkeypatch) -> None:
+    _set_chunking_config(monkeypatch, chunk_size=80, chunk_overlap=0)
+
+    original_document = Document(
+        page_content="新的个人知识内容",
+        metadata={"source": "/tmp/demo.md", "source_type": "text", "doc_id": "uk_1"},
+    )
+
+    monkeypatch.setattr(indexer, "_build_chunks", lambda documents, scope, thread_id: documents)
+    monkeypatch.setattr(indexer, "get_embedding_model", lambda: SimpleNamespace(embed_query=lambda text: [0.1, 0.2]))
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(indexer, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    class _Client:
+        def delete_collection(self, *args, **kwargs):
+            raise AssertionError("upsert should not replace the full collection")
+
+    class _VectorStore:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def add_documents(self, documents, **kwargs):
+            raise ValueError("invalid payload")
+
+    monkeypatch.setattr(indexer, "get_qdrant_client", lambda: _Client())
+    monkeypatch.setattr(indexer, "_ensure_collection", lambda client, collection_name, embeddings: None)
+    monkeypatch.setattr(indexer, "_delete_points_by_doc_ids", lambda client, collection_name, doc_ids: None)
+    monkeypatch.setattr(indexer, "QdrantVectorStore", _VectorStore)
+
+    try:
+        indexer.upsert_documents(
+            [original_document],
+            collection_name="knowledge_base__user__u1",
+            scope="user",
+            replace_doc_ids=["uk_1"],
+        )
+    except ValueError as exc:
+        assert str(exc) == "invalid payload"
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("Expected invalid payload error to bubble up")
+
+    assert sleep_calls == []
 
 
 def test_delete_documents_by_doc_ids_uses_filtered_delete(monkeypatch) -> None:
@@ -288,7 +381,11 @@ def test_upsert_global_knowledge_record_resumes_from_checkpoint(monkeypatch) -> 
         "get_knowledge_base_config",
         lambda: SimpleNamespace(
             docs_path="/tmp/knowledge/docs",
-            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            qdrant=SimpleNamespace(
+                collection_name="knowledge_base",
+                upsert_batch_size=64,
+                upsert_parallelism=2,
+            ),
             chunking=SimpleNamespace(chunk_size=80, chunk_overlap=0),
         ),
     )
@@ -348,3 +445,64 @@ def test_upsert_global_knowledge_record_resumes_from_checkpoint(monkeypatch) -> 
     assert deleted_doc_ids == []
     assert added_payloads == [["chunk-2", "chunk-3", "chunk-4"]]
     assert progress == [(5, 5, fingerprint)]
+
+
+def test_upsert_global_knowledge_record_parallelizes_fresh_upload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        indexer,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            docs_path="/tmp/knowledge/docs",
+            qdrant=SimpleNamespace(
+                collection_name="knowledge_base",
+                upsert_batch_size=64,
+                upsert_parallelism=2,
+            ),
+            chunking=SimpleNamespace(chunk_size=80, chunk_overlap=0),
+        ),
+    )
+
+    original_document = Document(
+        page_content="全局知识内容",
+        metadata={"source": "/tmp/demo.structured.json", "source_type": "structured", "doc_id": "gk_1"},
+    )
+    chunks = [
+        Document(page_content=f"chunk-{index}", metadata={"source": "/tmp/demo.structured.json", "doc_id": "gk_1"})
+        for index in range(6)
+    ]
+
+    monkeypatch.setattr(indexer, "resolve_project_path", lambda path: Path("/tmp/knowledge/docs"))
+    monkeypatch.setattr(
+        indexer,
+        "_load_global_documents_for_sources",
+        lambda source_filenames, docs_root, records_by_source_filename: ([original_document], ["doc-1"]),
+    )
+    monkeypatch.setattr(indexer, "_load_global_records_by_source_filename", lambda docs_root: {"a.pdf": {}})
+    monkeypatch.setattr(indexer, "_build_chunks", lambda documents, scope, thread_id: chunks)
+    monkeypatch.setattr(indexer, "get_embedding_model", lambda: SimpleNamespace(embed_query=lambda text: [0.1, 0.2]))
+
+    deleted_doc_ids: list[list[str]] = []
+    added_payloads: list[list[str]] = []
+
+    class _Client:
+        pass
+
+    class _VectorStore:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def add_documents(self, documents, **kwargs):
+            added_payloads.append([document.page_content for document in documents])
+            return ["p1"]
+
+    monkeypatch.setattr(indexer, "get_qdrant_client", lambda: _Client())
+    monkeypatch.setattr(indexer, "_ensure_collection", lambda client, collection_name, embeddings: None)
+    monkeypatch.setattr(indexer, "_delete_points_by_doc_ids", lambda client, collection_name, doc_ids: deleted_doc_ids.append(doc_ids))
+    monkeypatch.setattr(indexer, "QdrantVectorStore", _VectorStore)
+
+    total_chunks, fingerprint = indexer.upsert_global_knowledge_record("a.pdf")
+
+    assert total_chunks == 6
+    assert fingerprint == indexer._chunk_fingerprint(chunks)
+    assert deleted_doc_ids == [["doc-1"]]
+    assert sorted(added_payloads) == [["chunk-0", "chunk-1", "chunk-2"], ["chunk-3", "chunk-4", "chunk-5"]]

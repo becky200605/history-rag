@@ -339,6 +339,8 @@ memory:
 #     api_key: ${QDRANT_API_KEY:-}                       # For server mode
 #     collection_name: ${QDRANT_COLLECTION_NAME:-knowledge_base}
 #     request_timeout: ${QDRANT_REQUEST_TIMEOUT:-3600}   # For server mode HTTP requests
+#     upsert_batch_size: ${QDRANT_UPSERT_BATCH_SIZE:-64}
+#     upsert_parallelism: ${QDRANT_UPSERT_PARALLELISM:-2}
 #   embedding:
 #     use: langchain_openai:OpenAIEmbeddings
 #     model: text-embedding-3-small

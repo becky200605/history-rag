@@ -21,6 +21,8 @@ class TestMineruConfig:
     def test_qdrant_request_timeout_default_is_one_hour(self):
         cfg = KnowledgeBaseConfig()
         assert cfg.qdrant.request_timeout == 3600
+        assert cfg.qdrant.upsert_batch_size == 64
+        assert cfg.qdrant.upsert_parallelism == 2
 
     def test_mineru_request_timeout_default_is_one_hour(self):
         cfg = MineruConfig()

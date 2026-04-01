@@ -30,6 +30,18 @@ class QdrantConfig(BaseModel):
         default=3600,
         description="Timeout in seconds for Qdrant HTTP requests when using server mode.",
     )
+    upsert_batch_size: int = Field(
+        default=64,
+        ge=1,
+        le=1024,
+        description="Number of chunks written to Qdrant per batch.",
+    )
+    upsert_parallelism: int = Field(
+        default=2,
+        ge=1,
+        le=8,
+        description="Maximum parallel shard uploads for a single document during fresh global reindex.",
+    )
 
 
 class EmbeddingConfig(BaseModel):

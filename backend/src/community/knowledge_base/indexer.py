@@ -1,11 +1,12 @@
 """Index documents into the knowledge base."""
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 from collections.abc import Callable
 from hashlib import sha1
 from pathlib import Path
-from time import sleep
+from time import perf_counter, sleep
 from uuid import NAMESPACE_URL, uuid5
 
 import httpx
@@ -28,11 +29,62 @@ from src.config.paths import get_paths
 INDEXABLE_EXTENSIONS = {".md", ".txt", ".pdf"}
 STRUCTURED_INDEXABLE_EXTENSIONS = INDEXABLE_EXTENSIONS | {".json"}
 STRUCTURED_SOURCE_TYPE = "structured"
-UPSERT_RETRY_ATTEMPTS = 3
-UPSERT_RETRY_DELAY_SECONDS = 1.0
-UPSERT_BATCH_SIZE = 16
+UPSERT_RETRY_ATTEMPTS = 4
+UPSERT_RETRY_BASE_DELAY_SECONDS = 5.0
+UPSERT_BATCH_SIZE = 64
+UPSERT_PARALLELISM = 2
 
 logger = logging.getLogger(__name__)
+
+
+def _get_upsert_batch_size() -> int:
+    kb_config = get_knowledge_base_config()
+    qdrant_config = getattr(kb_config, "qdrant", None)
+    value = getattr(qdrant_config, "upsert_batch_size", None)
+    if isinstance(value, int) and value > 0:
+        return value
+    return UPSERT_BATCH_SIZE
+
+
+def _get_upsert_parallelism() -> int:
+    kb_config = get_knowledge_base_config()
+    qdrant_config = getattr(kb_config, "qdrant", None)
+    value = getattr(qdrant_config, "upsert_parallelism", None)
+    if isinstance(value, int) and value > 0:
+        return value
+    return UPSERT_PARALLELISM
+
+
+def _build_vector_store(
+    *,
+    client,
+    collection_name: str,
+    embeddings,
+) -> QdrantVectorStore:
+    return QdrantVectorStore(
+        client=client,
+        collection_name=collection_name,
+        embedding=embeddings,
+    )
+
+
+def _split_chunks_into_shards(
+    chunks: list[Document],
+    parallelism: int,
+) -> list[tuple[int, list[Document]]]:
+    if parallelism <= 1 or len(chunks) <= 1:
+        return [(0, chunks)]
+
+    shard_count = min(parallelism, len(chunks))
+    shard_size = (len(chunks) + shard_count - 1) // shard_count
+    shards: list[tuple[int, list[Document]]] = []
+    for shard_index in range(shard_count):
+        start_index = shard_index * shard_size
+        if start_index >= len(chunks):
+            break
+        end_index = min(start_index + shard_size, len(chunks))
+        shards.append((start_index, chunks[start_index:end_index]))
+    return shards
 
 
 def _load_pdf_documents(path: Path) -> list[Document]:
@@ -316,31 +368,71 @@ def _chunk_fingerprint(chunks: list[Document]) -> str:
     return digest.hexdigest()
 
 
+def _retryable_upsert_exception(exc: Exception) -> bool:
+    if isinstance(exc, (ResponseHandlingException, httpx.TransportError, httpx.TimeoutException)):
+        return True
+
+    error_name = exc.__class__.__name__
+    if error_name in {"APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError"}:
+        return True
+
+    message = str(exc).lower()
+    if "no embedding data received" in message:
+        return True
+    if "rate limit" in message or "temporarily unavailable" in message:
+        return True
+
+    source = getattr(exc, "source", None)
+    if isinstance(source, Exception) and source is not exc and _retryable_upsert_exception(source):
+        return True
+
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, Exception) and cause is not exc and _retryable_upsert_exception(cause):
+        return True
+
+    return False
+
+
+def _linear_retry_delay_seconds(attempt: int) -> float:
+    return UPSERT_RETRY_BASE_DELAY_SECONDS * max(attempt, 1)
+
+
 def _add_documents_with_retry(
     vector_store: QdrantVectorStore,
     chunks: list[Document],
     *,
     collection_name: str,
     retries: int = UPSERT_RETRY_ATTEMPTS,
-    delay_seconds: float = UPSERT_RETRY_DELAY_SECONDS,
 ) -> None:
     chunk_ids = _stable_chunk_ids(chunks)
+    batch_size = _get_upsert_batch_size()
     for attempt in range(1, retries + 1):
         try:
+            started_at = perf_counter()
             vector_store.add_documents(
                 chunks,
                 ids=chunk_ids,
-                batch_size=UPSERT_BATCH_SIZE,
+                batch_size=batch_size,
             )
+            elapsed = perf_counter() - started_at
+            if elapsed >= 5:
+                logger.info(
+                    "Qdrant ingest batch for %s processed %s chunks in %.2fs",
+                    collection_name,
+                    len(chunks),
+                    elapsed,
+                )
             return
-        except (ResponseHandlingException, httpx.RemoteProtocolError) as exc:
-            if attempt >= retries:
+        except Exception as exc:
+            if not _retryable_upsert_exception(exc) or attempt >= retries:
                 raise
+            delay_seconds = _linear_retry_delay_seconds(attempt)
             logger.warning(
-                "Qdrant upsert disconnected for %s on attempt %s/%s; retrying in %.1fs",
+                "Knowledge ingest transient failure for %s on attempt %s/%s (%s); retrying in %.1fs",
                 collection_name,
                 attempt,
                 retries,
+                exc,
                 delay_seconds,
             )
             sleep(delay_seconds)
@@ -356,8 +448,9 @@ def _upsert_chunk_batches(
 ) -> int:
     total_chunks = len(chunks)
     next_chunk_index = max(0, min(start_chunk_index, total_chunks))
+    batch_size = _get_upsert_batch_size()
     while next_chunk_index < total_chunks:
-        batch_end = min(next_chunk_index + UPSERT_BATCH_SIZE, total_chunks)
+        batch_end = min(next_chunk_index + batch_size, total_chunks)
         _add_documents_with_retry(
             vector_store,
             chunks[next_chunk_index:batch_end],
@@ -367,6 +460,54 @@ def _upsert_chunk_batches(
         if on_batch_complete is not None:
             on_batch_complete(next_chunk_index, total_chunks)
     return total_chunks
+
+
+def _upsert_chunk_shards_parallel(
+    *,
+    client,
+    embeddings,
+    chunks: list[Document],
+    collection_name: str,
+    parallelism: int,
+) -> int:
+    shards = _split_chunks_into_shards(chunks, parallelism)
+    if len(shards) <= 1:
+        vector_store = _build_vector_store(
+            client=client,
+            collection_name=collection_name,
+            embeddings=embeddings,
+        )
+        return _upsert_chunk_batches(
+            vector_store,
+            chunks,
+            collection_name=collection_name,
+        )
+
+    logger.info(
+        "Uploading %s chunks to %s using %s parallel shard workers",
+        len(chunks),
+        collection_name,
+        len(shards),
+    )
+
+    def _worker(shard: tuple[int, list[Document]]) -> int:
+        start_index, shard_chunks = shard
+        vector_store = _build_vector_store(
+            client=client,
+            collection_name=collection_name,
+            embeddings=embeddings,
+        )
+        _upsert_chunk_batches(
+            vector_store,
+            shard_chunks,
+            collection_name=collection_name,
+        )
+        return start_index + len(shard_chunks)
+
+    with ThreadPoolExecutor(max_workers=len(shards), thread_name_prefix="qdrant-upsert") as executor:
+        results = list(executor.map(_worker, shards))
+
+    return max(results, default=0)
 
 
 def index_documents(
@@ -385,10 +526,10 @@ def index_documents(
 
     _replace_collection(client, collection_name, embeddings)
 
-    vector_store = QdrantVectorStore(
+    vector_store = _build_vector_store(
         client=client,
         collection_name=collection_name,
-        embedding=embeddings,
+        embeddings=embeddings,
     )
     _upsert_chunk_batches(
         vector_store,
@@ -418,10 +559,10 @@ def upsert_documents(
     _ensure_collection(client, collection_name, embeddings)
     _delete_points_by_doc_ids(client, collection_name, doc_ids)
 
-    vector_store = QdrantVectorStore(
+    vector_store = _build_vector_store(
         client=client,
         collection_name=collection_name,
-        embedding=embeddings,
+        embeddings=embeddings,
     )
     _upsert_chunk_batches(
         vector_store,
@@ -609,26 +750,40 @@ def upsert_global_knowledge_record(
     if not chunks:
         return 0, fingerprint
 
-    vector_store = QdrantVectorStore(
-        client=client,
-        collection_name=kb_config.qdrant.collection_name,
-        embedding=embeddings,
-    )
-    _upsert_chunk_batches(
-        vector_store,
-        chunks,
-        collection_name=kb_config.qdrant.collection_name,
-        start_chunk_index=effective_resume_chunk_index,
-        on_batch_complete=(
-            None
-            if on_batch_complete is None
-            else lambda next_chunk_index, total_chunks: on_batch_complete(
-                next_chunk_index,
-                total_chunks,
-                fingerprint,
-            )
-        ),
-    )
+    parallelism = _get_upsert_parallelism()
+    use_parallel_upload = effective_resume_chunk_index == 0 and parallelism > 1
+
+    if use_parallel_upload:
+        _upsert_chunk_shards_parallel(
+            client=client,
+            embeddings=embeddings,
+            chunks=chunks,
+            collection_name=kb_config.qdrant.collection_name,
+            parallelism=parallelism,
+        )
+        if on_batch_complete is not None:
+            on_batch_complete(len(chunks), len(chunks), fingerprint)
+    else:
+        vector_store = _build_vector_store(
+            client=client,
+            collection_name=kb_config.qdrant.collection_name,
+            embeddings=embeddings,
+        )
+        _upsert_chunk_batches(
+            vector_store,
+            chunks,
+            collection_name=kb_config.qdrant.collection_name,
+            start_chunk_index=effective_resume_chunk_index,
+            on_batch_complete=(
+                None
+                if on_batch_complete is None
+                else lambda next_chunk_index, total_chunks: on_batch_complete(
+                    next_chunk_index,
+                    total_chunks,
+                    fingerprint,
+                )
+            ),
+        )
     return len(chunks), fingerprint
 
 

@@ -26,7 +26,7 @@ from src.community.knowledge_base.citations import (
 from src.community.knowledge_base.common import resolve_project_path
 from src.community.knowledge_base.document_parsers import OFFICE_EXTENSIONS, PDF_EXTENSIONS
 from src.community.knowledge_base.indexer import (
-    UPSERT_BATCH_SIZE,
+    _get_upsert_batch_size,
     delete_global_knowledge_documents,
     rebuild_global_knowledge_index,
     rebuild_thread_upload_index,
@@ -577,7 +577,7 @@ def _save_global_embedding_checkpoint(
         "next_chunk_index": next_chunk_index,
         "total_chunks": total_chunks,
         "content_fingerprint": content_fingerprint,
-        "batch_size": UPSERT_BATCH_SIZE,
+        "batch_size": _get_upsert_batch_size(),
     }
     record["parse_status"] = "indexing"
     record["error"] = None

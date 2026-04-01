@@ -18,6 +18,10 @@ class TestMineruConfig:
         cfg = KnowledgeBaseConfig()
         assert cfg.mineru is None
 
+    def test_qdrant_request_timeout_default_is_one_hour(self):
+        cfg = KnowledgeBaseConfig()
+        assert cfg.qdrant.request_timeout == 3600
+
     def test_mineru_request_timeout_default_is_one_hour(self):
         cfg = MineruConfig()
         assert cfg.request_timeout == 3600

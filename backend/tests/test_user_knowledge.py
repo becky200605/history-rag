@@ -245,6 +245,36 @@ def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) 
     assert [result["content"] for result in results[:3]] == ["用户知识", "会话知识", "公共知识"]
 
 
+def test_get_qdrant_client_uses_configured_server_timeout(monkeypatch) -> None:
+    captured = {}
+
+    class _Client:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(
+                mode="server",
+                url="http://qdrant.internal:6333",
+                api_key="secret",
+                request_timeout=3600,
+            )
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "QdrantClient", _Client)
+
+    retriever_module.get_qdrant_client()
+
+    assert captured == {
+        "url": "http://qdrant.internal:6333",
+        "api_key": "secret",
+        "timeout": 3600,
+    }
+
+
 def test_user_knowledge_router_upload_and_import(tmp_path, monkeypatch) -> None:
     paths = Paths(tmp_path)
     monkeypatch.setattr(paths_module, "_paths", paths)
@@ -381,7 +411,11 @@ def test_user_knowledge_router_updates_text_content_and_reindexes(tmp_path, monk
         "upsert_user_knowledge_records",
         lambda user_id, record_ids: upsert_calls.append((user_id, record_ids)) or 1,
     )
-    monkeypatch.setattr(user_knowledge_router, "mark_user_records_indexed", lambda user_id: indexed_calls.append(user_id))
+    monkeypatch.setattr(
+        user_knowledge_router,
+        "mark_user_records_indexed",
+        lambda user_id, record_ids=None: indexed_calls.append(user_id),
+    )
 
     app = FastAPI()
     app.include_router(user_knowledge_router.router)
@@ -424,7 +458,11 @@ def test_user_knowledge_router_creates_plain_note_and_returns_text_editor(tmp_pa
         "upsert_user_knowledge_records",
         lambda user_id, record_ids: upsert_calls.append((user_id, record_ids)) or 1,
     )
-    monkeypatch.setattr(user_knowledge_router, "mark_user_records_indexed", lambda user_id: indexed_calls.append(user_id))
+    monkeypatch.setattr(
+        user_knowledge_router,
+        "mark_user_records_indexed",
+        lambda user_id, record_ids=None: indexed_calls.append(user_id),
+    )
 
     app = FastAPI()
     app.include_router(user_knowledge_router.router)

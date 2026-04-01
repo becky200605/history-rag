@@ -30,7 +30,20 @@ require_file "$FRONTEND_ENV_FILE"
 require_file "$PROJECT_ROOT/config.yaml"
 require_file "$COMPOSE_FILE"
 
-mkdir -p "$PROJECT_ROOT/backend/.deer-flow" "$PROJECT_ROOT/knowledge" "$PROJECT_ROOT/logs"
+load_env_file() {
+  local path="$1"
+  set -a
+  # shellcheck disable=SC1090
+  source "$path"
+  set +a
+}
+
+load_env_file "$BACKEND_ENV_FILE"
+
+PROD_STATE_DIR="${PROD_STATE_DIR:-/var/lib/history-rag/backend/.deer-flow}"
+PROD_KNOWLEDGE_DIR="${PROD_KNOWLEDGE_DIR:-/var/lib/history-rag/knowledge}"
+
+mkdir -p "$PROD_STATE_DIR" "$PROD_KNOWLEDGE_DIR" "$PROJECT_ROOT/logs"
 
 cd "$PROJECT_ROOT/docker"
 

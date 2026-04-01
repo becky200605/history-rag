@@ -26,6 +26,10 @@ class QdrantConfig(BaseModel):
         default="knowledge_base",
         description="Name of the Qdrant collection.",
     )
+    request_timeout: int = Field(
+        default=3600,
+        description="Timeout in seconds for Qdrant HTTP requests when using server mode.",
+    )
 
 
 class EmbeddingConfig(BaseModel):

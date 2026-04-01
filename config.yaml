@@ -333,6 +333,7 @@ knowledge_base:
     url: ${QDRANT_URL:-}
     api_key: ${QDRANT_API_KEY:-}
     collection_name: ${QDRANT_COLLECTION_NAME:-knowledge_base}
+    request_timeout: ${QDRANT_REQUEST_TIMEOUT:-3600}
 
   # Embedding Model Configuration
   # 使用 OpenAI 兼容的 embedding 模型

@@ -66,8 +66,8 @@ services:
     volumes:
       - ../config.yaml:/app/config.yaml:ro
       - ../skills:/app/skills:ro
-      - ../knowledge:/app/knowledge
-      - ../backend/.deer-flow:/app/backend/.deer-flow
+      - ${PROD_KNOWLEDGE_DIR:-/var/lib/history-rag/knowledge}:/app/knowledge
+      - ${PROD_STATE_DIR:-/var/lib/history-rag/backend/.deer-flow}:/app/backend/.deer-flow
     working_dir: /app
     environment:
       - CI=true
@@ -88,8 +88,8 @@ services:
     volumes:
       - ../config.yaml:/app/config.yaml:ro
       - ../skills:/app/skills:ro
-      - ../knowledge:/app/knowledge
-      - ../backend/.deer-flow:/app/backend/.deer-flow
+      - ${PROD_KNOWLEDGE_DIR:-/var/lib/history-rag/knowledge}:/app/knowledge
+      - ${PROD_STATE_DIR:-/var/lib/history-rag/backend/.deer-flow}:/app/backend/.deer-flow
     working_dir: /app
     environment:
       - CI=true

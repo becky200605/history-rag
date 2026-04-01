@@ -59,7 +59,11 @@ def get_qdrant_client() -> QdrantClient:
     if config.qdrant.mode == "server":
         if not config.qdrant.url:
             raise ValueError("Qdrant URL is required for server mode")
-        return QdrantClient(url=config.qdrant.url, api_key=config.qdrant.api_key)
+        return QdrantClient(
+            url=config.qdrant.url,
+            api_key=config.qdrant.api_key,
+            timeout=config.qdrant.request_timeout,
+        )
     return QdrantClient(path=config.qdrant.local_path)
 
 

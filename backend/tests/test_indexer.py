@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import httpx
@@ -189,6 +190,7 @@ def test_upsert_documents_replaces_doc_ids_without_replacing_collection(monkeypa
             pass
 
         def add_documents(self, documents, **kwargs):
+            assert kwargs["batch_size"] == indexer.UPSERT_BATCH_SIZE
             added_documents.extend(documents)
             return ["p1"]
 
@@ -235,6 +237,7 @@ def test_upsert_documents_retries_transient_qdrant_disconnect(monkeypatch) -> No
             pass
 
         def add_documents(self, documents, **kwargs):
+            assert kwargs["batch_size"] == indexer.UPSERT_BATCH_SIZE
             attempts.append(list(kwargs.get("ids") or []))
             if len(attempts) == 1:
                 raise indexer.ResponseHandlingException(
@@ -277,3 +280,71 @@ def test_delete_documents_by_doc_ids_uses_filtered_delete(monkeypatch) -> None:
 
     assert captured["collection_name"] == "knowledge_base__user__u1"
     assert captured["wait"] is True
+
+
+def test_upsert_global_knowledge_record_resumes_from_checkpoint(monkeypatch) -> None:
+    monkeypatch.setattr(
+        indexer,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            docs_path="/tmp/knowledge/docs",
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            chunking=SimpleNamespace(chunk_size=80, chunk_overlap=0),
+        ),
+    )
+
+    original_document = Document(
+        page_content="全局知识内容",
+        metadata={"source": "/tmp/demo.structured.json", "source_type": "structured", "doc_id": "gk_1"},
+    )
+    chunks = [
+        Document(page_content=f"chunk-{index}", metadata={"source": "/tmp/demo.structured.json", "doc_id": "gk_1"})
+        for index in range(5)
+    ]
+
+    monkeypatch.setattr(indexer, "resolve_project_path", lambda path: Path("/tmp/knowledge/docs"))
+    monkeypatch.setattr(
+        indexer,
+        "_load_global_documents_for_sources",
+        lambda source_filenames, docs_root, records_by_source_filename: ([original_document], ["doc-1"]),
+    )
+    monkeypatch.setattr(indexer, "_load_global_records_by_source_filename", lambda docs_root: {"a.pdf": {}})
+    monkeypatch.setattr(indexer, "_build_chunks", lambda documents, scope, thread_id: chunks)
+    monkeypatch.setattr(indexer, "get_embedding_model", lambda: SimpleNamespace(embed_query=lambda text: [0.1, 0.2]))
+
+    deleted_doc_ids: list[list[str]] = []
+    progress: list[tuple[int, int, str]] = []
+    added_payloads: list[list[str]] = []
+
+    class _Client:
+        pass
+
+    class _VectorStore:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def add_documents(self, documents, **kwargs):
+            added_payloads.append([document.page_content for document in documents])
+            return ["p1"]
+
+    fingerprint = indexer._chunk_fingerprint(chunks)
+
+    monkeypatch.setattr(indexer, "get_qdrant_client", lambda: _Client())
+    monkeypatch.setattr(indexer, "_ensure_collection", lambda client, collection_name, embeddings: None)
+    monkeypatch.setattr(indexer, "_delete_points_by_doc_ids", lambda client, collection_name, doc_ids: deleted_doc_ids.append(doc_ids))
+    monkeypatch.setattr(indexer, "QdrantVectorStore", _VectorStore)
+
+    total_chunks, returned_fingerprint = indexer.upsert_global_knowledge_record(
+        "a.pdf",
+        resume_chunk_index=2,
+        expected_fingerprint=fingerprint,
+        on_batch_complete=lambda next_chunk_index, total, content_fingerprint: progress.append(
+            (next_chunk_index, total, content_fingerprint)
+        ),
+    )
+
+    assert total_chunks == 5
+    assert returned_fingerprint == fingerprint
+    assert deleted_doc_ids == []
+    assert added_payloads == [["chunk-2", "chunk-3", "chunk-4"]]
+    assert progress == [(5, 5, fingerprint)]

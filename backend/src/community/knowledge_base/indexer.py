@@ -2,6 +2,8 @@
 
 import json
 import logging
+from collections.abc import Callable
+from hashlib import sha1
 from pathlib import Path
 from time import sleep
 from uuid import NAMESPACE_URL, uuid5
@@ -28,6 +30,7 @@ STRUCTURED_INDEXABLE_EXTENSIONS = INDEXABLE_EXTENSIONS | {".json"}
 STRUCTURED_SOURCE_TYPE = "structured"
 UPSERT_RETRY_ATTEMPTS = 3
 UPSERT_RETRY_DELAY_SECONDS = 1.0
+UPSERT_BATCH_SIZE = 16
 
 logger = logging.getLogger(__name__)
 
@@ -305,6 +308,14 @@ def _stable_chunk_ids(chunks: list[Document]) -> list[str]:
     return ids
 
 
+def _chunk_fingerprint(chunks: list[Document]) -> str:
+    digest = sha1()
+    for chunk_id in _stable_chunk_ids(chunks):
+        digest.update(chunk_id.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def _add_documents_with_retry(
     vector_store: QdrantVectorStore,
     chunks: list[Document],
@@ -316,7 +327,11 @@ def _add_documents_with_retry(
     chunk_ids = _stable_chunk_ids(chunks)
     for attempt in range(1, retries + 1):
         try:
-            vector_store.add_documents(chunks, ids=chunk_ids)
+            vector_store.add_documents(
+                chunks,
+                ids=chunk_ids,
+                batch_size=UPSERT_BATCH_SIZE,
+            )
             return
         except (ResponseHandlingException, httpx.RemoteProtocolError) as exc:
             if attempt >= retries:
@@ -329,6 +344,29 @@ def _add_documents_with_retry(
                 delay_seconds,
             )
             sleep(delay_seconds)
+
+
+def _upsert_chunk_batches(
+    vector_store: QdrantVectorStore,
+    chunks: list[Document],
+    *,
+    collection_name: str,
+    start_chunk_index: int = 0,
+    on_batch_complete: Callable[[int, int], None] | None = None,
+) -> int:
+    total_chunks = len(chunks)
+    next_chunk_index = max(0, min(start_chunk_index, total_chunks))
+    while next_chunk_index < total_chunks:
+        batch_end = min(next_chunk_index + UPSERT_BATCH_SIZE, total_chunks)
+        _add_documents_with_retry(
+            vector_store,
+            chunks[next_chunk_index:batch_end],
+            collection_name=collection_name,
+        )
+        next_chunk_index = batch_end
+        if on_batch_complete is not None:
+            on_batch_complete(next_chunk_index, total_chunks)
+    return total_chunks
 
 
 def index_documents(
@@ -352,7 +390,11 @@ def index_documents(
         collection_name=collection_name,
         embedding=embeddings,
     )
-    vector_store.add_documents(chunks)
+    _upsert_chunk_batches(
+        vector_store,
+        chunks,
+        collection_name=collection_name,
+    )
     return len(chunks)
 
 
@@ -381,7 +423,7 @@ def upsert_documents(
         collection_name=collection_name,
         embedding=embeddings,
     )
-    _add_documents_with_retry(
+    _upsert_chunk_batches(
         vector_store,
         chunks,
         collection_name=collection_name,
@@ -489,10 +531,12 @@ def _load_global_records_by_source_filename(docs_root: Path) -> dict[str, dict[s
     return records_by_source_filename
 
 
-def upsert_global_knowledge_records(source_filenames: list[str]) -> int:
-    kb_config = get_knowledge_base_config()
-    docs_root = resolve_project_path(kb_config.docs_path)
-    records_by_source_filename = _load_global_records_by_source_filename(docs_root)
+def _load_global_documents_for_sources(
+    source_filenames: list[str],
+    *,
+    docs_root: Path,
+    records_by_source_filename: dict[str, dict[str, object]],
+) -> tuple[list[Document], list[str]]:
     documents: list[Document] = []
     replace_doc_ids: list[str] = []
 
@@ -529,6 +573,74 @@ def upsert_global_knowledge_records(source_filenames: list[str]) -> int:
             ):
                 document.metadata["origin_filename"] = record.get("source_filename")
             documents.append(document)
+
+    return documents, replace_doc_ids
+
+
+def upsert_global_knowledge_record(
+    source_filename: str,
+    *,
+    resume_chunk_index: int = 0,
+    expected_fingerprint: str | None = None,
+    on_batch_complete: Callable[[int, int, str], None] | None = None,
+) -> tuple[int, str]:
+    kb_config = get_knowledge_base_config()
+    docs_root = resolve_project_path(kb_config.docs_path)
+    records_by_source_filename = _load_global_records_by_source_filename(docs_root)
+    documents, replace_doc_ids = _load_global_documents_for_sources(
+        [source_filename],
+        docs_root=docs_root,
+        records_by_source_filename=records_by_source_filename,
+    )
+
+    chunks = _build_chunks(documents, scope="global", thread_id=None)
+    fingerprint = _chunk_fingerprint(chunks)
+    effective_resume_chunk_index = (
+        max(0, resume_chunk_index) if expected_fingerprint and expected_fingerprint == fingerprint else 0
+    )
+
+    client = get_qdrant_client()
+    embeddings = get_embedding_model()
+    _ensure_collection(client, kb_config.qdrant.collection_name, embeddings)
+
+    if effective_resume_chunk_index == 0 and replace_doc_ids:
+        _delete_points_by_doc_ids(client, kb_config.qdrant.collection_name, replace_doc_ids)
+
+    if not chunks:
+        return 0, fingerprint
+
+    vector_store = QdrantVectorStore(
+        client=client,
+        collection_name=kb_config.qdrant.collection_name,
+        embedding=embeddings,
+    )
+    _upsert_chunk_batches(
+        vector_store,
+        chunks,
+        collection_name=kb_config.qdrant.collection_name,
+        start_chunk_index=effective_resume_chunk_index,
+        on_batch_complete=(
+            None
+            if on_batch_complete is None
+            else lambda next_chunk_index, total_chunks: on_batch_complete(
+                next_chunk_index,
+                total_chunks,
+                fingerprint,
+            )
+        ),
+    )
+    return len(chunks), fingerprint
+
+
+def upsert_global_knowledge_records(source_filenames: list[str]) -> int:
+    kb_config = get_knowledge_base_config()
+    docs_root = resolve_project_path(kb_config.docs_path)
+    records_by_source_filename = _load_global_records_by_source_filename(docs_root)
+    documents, replace_doc_ids = _load_global_documents_for_sources(
+        source_filenames,
+        docs_root=docs_root,
+        records_by_source_filename=records_by_source_filename,
+    )
 
     return upsert_documents(
         documents,

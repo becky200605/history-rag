@@ -26,9 +26,11 @@ from src.community.knowledge_base.citations import (
 from src.community.knowledge_base.common import resolve_project_path
 from src.community.knowledge_base.document_parsers import OFFICE_EXTENSIONS, PDF_EXTENSIONS
 from src.community.knowledge_base.indexer import (
+    UPSERT_BATCH_SIZE,
     delete_global_knowledge_documents,
     rebuild_global_knowledge_index,
     rebuild_thread_upload_index,
+    upsert_global_knowledge_record,
     upsert_global_knowledge_records,
 )
 from src.community.knowledge_base.locator import extract_document_context, locate_document
@@ -494,6 +496,7 @@ def _build_global_ingestion_record(
         "hints": hints,
         "error": None,
         "replace_existing_index": False,
+        "embedding_checkpoint": None,
     }
 
 
@@ -515,6 +518,7 @@ def _mark_global_record_parsed(
             "index_target_artifact_url": None,
             "index_target_format": "structured_json",
             "error": None,
+            "embedding_checkpoint": None,
         }
     )
     if preview_filename:
@@ -535,6 +539,7 @@ def _mark_global_record_failed(record: dict[str, Any], error: str) -> dict[str, 
             "index_target_artifact_url": None,
             "index_target_format": None,
             "error": error,
+            "embedding_checkpoint": None,
         }
     )
     return record
@@ -552,8 +557,35 @@ def _mark_global_record_pending(record: dict[str, Any], error: str) -> dict[str,
             "index_target_artifact_url": None,
             "index_target_format": None,
             "error": error,
+            "embedding_checkpoint": None,
         }
     )
+    return record
+
+
+def _save_global_embedding_checkpoint(
+    filename: str,
+    *,
+    next_chunk_index: int,
+    total_chunks: int,
+    content_fingerprint: str,
+) -> None:
+    record = _load_global_record(filename)
+    if not record:
+        return
+    record["embedding_checkpoint"] = {
+        "next_chunk_index": next_chunk_index,
+        "total_chunks": total_chunks,
+        "content_fingerprint": content_fingerprint,
+        "batch_size": UPSERT_BATCH_SIZE,
+    }
+    record["parse_status"] = "indexing"
+    record["error"] = None
+    _save_global_record(filename, record)
+
+
+def _clear_global_embedding_checkpoint(record: dict[str, Any]) -> dict[str, Any]:
+    record["embedding_checkpoint"] = None
     return record
 
 
@@ -569,6 +601,8 @@ def _mark_global_records_indexed(source_filenames: list[str] | None = None) -> N
         if not Path(str(target_path)).exists():
             continue
         record["parse_status"] = "indexed"
+        record["error"] = None
+        _clear_global_embedding_checkpoint(record)
         _save_global_record(record["source_filename"], record)
 
 
@@ -633,58 +667,62 @@ def _process_single_global_ocr(filename: str) -> None:
         _save_global_record(filename, record)
 
 
-def _drain_embedding_batch(first_filename: str) -> list[str]:
-    batch = [first_filename]
-    with _global_queue_condition:
-        while _global_embedding_queue:
-            next_filename = _global_embedding_queue.popleft()
-            _global_queued_embedding.discard(next_filename)
-            if next_filename not in batch:
-                batch.append(next_filename)
-    return batch
-
-
-def _process_global_embedding_batch(filenames: list[str]) -> None:
-    candidates: list[str] = []
-    for filename in filenames:
-        record = _load_global_record(filename)
-        if not record or not record.get("index_target_path"):
-            continue
-        record["parse_status"] = "indexing"
-        record["error"] = None
-        _save_global_record(filename, record)
-        candidates.append(filename)
-
-    if not candidates:
+def _process_single_global_embedding(filename: str) -> None:
+    record = _load_global_record(filename)
+    if not record or not record.get("index_target_path"):
         return
+
+    record["parse_status"] = "indexing"
+    record["error"] = None
+    _save_global_record(filename, record)
 
     try:
         _acquire_knowledge_operation_lock()
     except HTTPException:
-        for filename in candidates:
-            record = _load_global_record(filename)
-            if not record:
-                continue
-            record["parse_status"] = "queued_embedding"
-            record["error"] = None
-            _save_global_record(filename, record)
-            _enqueue_global_embedding(filename)
+        record = _load_global_record(filename)
+        if not record:
+            return
+        record["parse_status"] = "queued_embedding"
+        record["error"] = None
+        _save_global_record(filename, record)
+        _enqueue_global_embedding(filename)
         return
+
     try:
-        indexed_chunks = upsert_global_knowledge_records(candidates)
+        checkpoint = record.get("embedding_checkpoint")
+        resume_chunk_index = 0
+        expected_fingerprint = None
+        if isinstance(checkpoint, dict):
+            try:
+                resume_chunk_index = int(checkpoint.get("next_chunk_index") or 0)
+            except (TypeError, ValueError):
+                resume_chunk_index = 0
+            candidate_fingerprint = str(checkpoint.get("content_fingerprint") or "").strip()
+            expected_fingerprint = candidate_fingerprint or None
+
+        indexed_chunks, _fingerprint = upsert_global_knowledge_record(
+            filename,
+            resume_chunk_index=resume_chunk_index,
+            expected_fingerprint=expected_fingerprint,
+            on_batch_complete=lambda next_chunk_index, total_chunks, content_fingerprint: _save_global_embedding_checkpoint(
+                filename,
+                next_chunk_index=next_chunk_index,
+                total_chunks=total_chunks,
+                content_fingerprint=content_fingerprint,
+            ),
+        )
         if indexed_chunks <= 0:
             raise ValueError("No chunks were indexed into Qdrant")
-        _mark_global_records_indexed(candidates)
-        logger.info("Background global knowledge reindex completed for %s", candidates)
+        _mark_global_records_indexed([filename])
+        logger.info("Background global knowledge reindex completed for %s", filename)
     except Exception as exc:
-        logger.exception("Background global knowledge reindex failed: %s", exc)
-        for filename in candidates:
-            record = _load_global_record(filename)
-            if not record:
-                continue
-            record["parse_status"] = "index_failed"
-            record["error"] = f"reindex failed: {exc}"
-            _save_global_record(filename, record)
+        logger.exception("Background global knowledge reindex failed for %s: %s", filename, exc)
+        record = _load_global_record(filename)
+        if not record:
+            return
+        record["parse_status"] = "index_failed"
+        record["error"] = f"reindex failed: {exc}"
+        _save_global_record(filename, record)
     finally:
         _release_knowledge_operation_lock()
 
@@ -706,7 +744,7 @@ def _global_embedding_worker_loop() -> None:
                 _global_queue_condition.wait()
             filename = _global_embedding_queue.popleft()
             _global_queued_embedding.discard(filename)
-        _process_global_embedding_batch(_drain_embedding_batch(filename))
+        _process_single_global_embedding(filename)
 
 
 def _process_global_knowledge_uploads(filenames: list[str]) -> None:

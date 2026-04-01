@@ -2,9 +2,9 @@
 
 import json
 import logging
-from hashlib import sha1
 from pathlib import Path
 from time import sleep
+from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 from langchain_community.document_loaders import PyMuPDFLoader, TextLoader, UnstructuredMarkdownLoader
@@ -301,7 +301,7 @@ def _stable_chunk_ids(chunks: list[Document]) -> list[str]:
             "content": chunk.page_content,
         }
         payload = json.dumps(identity, ensure_ascii=False, sort_keys=True)
-        ids.append(sha1(payload.encode("utf-8")).hexdigest())
+        ids.append(str(uuid5(NAMESPACE_URL, payload)))
     return ids
 
 

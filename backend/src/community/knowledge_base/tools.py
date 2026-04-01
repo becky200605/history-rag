@@ -326,7 +326,7 @@ def knowledge_search_tool(
     formatted_output += "---\n"
     formatted_output += "使用答案时，直接复制上面的 `citation:` 行，不要自己重写。\n"
     formatted_output += "如果需要更多上下文，调用 `knowledge_locate`；不要去读原始 PDF 或 `.structured.json`。\n"
-    formatted_output += "如果证据不足，直接拒答，并说明当前资料范围内没有足够依据。"
+    formatted_output += "如果证据不足，使用 `【无法回答】` 开头直接拒答，并简要说明当前资料范围内没有足够依据。"
 
     return formatted_output
 

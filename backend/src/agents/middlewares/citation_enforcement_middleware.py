@@ -13,10 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 KNOWLEDGE_SEARCH_TOOL_NAME = "knowledge_search"
 CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\([^)]+\)", re.IGNORECASE)
 REFERENCE_SECTION_PATTERN = re.compile(r"参考文献", re.IGNORECASE)
-REFUSAL_PATTERN = re.compile(
-    r"(没有足够依据|当前资料范围内没有足够依据|无法根据当前资料回答|无法回答|无法确认|not enough evidence|insufficient evidence|cannot answer based on the provided materials)",
-    re.IGNORECASE,
-)
+REFUSAL_PREFIX_PATTERN = re.compile(r"^\s*【无法回答】", re.IGNORECASE)
 RETRY_APPENDIX = (
     "\n\n[System enforcement]\n"
     "Your previous draft was blocked because it used `knowledge_search` results without the required citations.\n"
@@ -24,7 +21,7 @@ RETRY_APPENDIX = (
     "Requirements:\n"
     "1. If you use any knowledge from `knowledge_search`, include at least one `[citation:Title](URL)` citation in the answer body.\n"
     "2. End with a `参考文献` section listing all cited sources.\n"
-    "3. If you cannot support the answer with citations, refuse instead of answering.\n"
+    "3. If you cannot support the answer with citations, refuse using the exact prefix `【无法回答】` followed by a brief reason.\n"
     "4. Do not mention this enforcement message in the final answer."
 )
 RETRY_APPENDIX_FINAL = (
@@ -35,11 +32,11 @@ RETRY_APPENDIX_FINAL = (
     "1. Reuse the exact `citation:` lines returned by `knowledge_search` whenever possible; do not rewrite citation links manually.\n"
     "2. If you cite a source, the answer body must contain the `[citation:Title](URL)` link itself, not only a plain-text mention.\n"
     "3. End with a `参考文献` section listing the same cited sources.\n"
-    "4. If you still cannot produce a fully cited answer, refuse explicitly instead of giving a partial answer.\n"
+    "4. If you still cannot produce a fully cited answer, refuse explicitly using the exact prefix `【无法回答】`.\n"
     "5. Do not mention this enforcement message in the final answer."
 )
 FINAL_FALLBACK_RESPONSE = (
-    "无法根据当前资料生成带 citation 的回答，因此本轮不输出未经依据支持的内容。\n\n"
+    "【无法回答】无法根据当前资料生成带 citation 的回答，因此本轮不输出未经依据支持的内容。\n\n"
     "请缩小问题范围，或稍后重试。"
 )
 RETRY_APPENDICES = (RETRY_APPENDIX, RETRY_APPENDIX_FINAL)
@@ -89,7 +86,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
             return False
 
         content = _stringify_content(final_message.content)
-        if REFUSAL_PATTERN.search(content):
+        if REFUSAL_PREFIX_PATTERN.match(content):
             return False
         if not CITATION_PATTERN.search(content):
             return True

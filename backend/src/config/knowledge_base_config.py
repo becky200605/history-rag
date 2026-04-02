@@ -117,12 +117,12 @@ class MineruConfig(BaseModel):
         description="Timeout in seconds for the MinerU gRPC request.",
     )
     keepalive_time_ms: int = Field(
-        default=60000,
+        default=120000,
         ge=1,
         description="Interval in milliseconds between gRPC keepalive pings for MinerU.",
     )
     keepalive_timeout_ms: int = Field(
-        default=20000,
+        default=60000,
         ge=1,
         description="Timeout in milliseconds for gRPC keepalive ping acknowledgements from MinerU.",
     )

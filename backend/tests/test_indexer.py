@@ -1,4 +1,6 @@
 import sys
+from threading import Lock
+from time import sleep
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -447,7 +449,7 @@ def test_upsert_global_knowledge_record_resumes_from_checkpoint(monkeypatch) -> 
     assert progress == [(5, 5, fingerprint)]
 
 
-def test_upsert_global_knowledge_record_parallelizes_fresh_upload(monkeypatch) -> None:
+def test_upsert_global_knowledge_record_parallelizes_batches_and_tracks_prefix_progress(monkeypatch) -> None:
     monkeypatch.setattr(
         indexer,
         "get_knowledge_base_config",
@@ -455,7 +457,7 @@ def test_upsert_global_knowledge_record_parallelizes_fresh_upload(monkeypatch) -
             docs_path="/tmp/knowledge/docs",
             qdrant=SimpleNamespace(
                 collection_name="knowledge_base",
-                upsert_batch_size=64,
+                upsert_batch_size=2,
                 upsert_parallelism=2,
             ),
             chunking=SimpleNamespace(chunk_size=80, chunk_overlap=0),
@@ -483,6 +485,8 @@ def test_upsert_global_knowledge_record_parallelizes_fresh_upload(monkeypatch) -
 
     deleted_doc_ids: list[list[str]] = []
     added_payloads: list[list[str]] = []
+    progress: list[tuple[int, int, str]] = []
+    payload_lock = Lock()
 
     class _Client:
         pass
@@ -492,7 +496,11 @@ def test_upsert_global_knowledge_record_parallelizes_fresh_upload(monkeypatch) -
             pass
 
         def add_documents(self, documents, **kwargs):
-            added_payloads.append([document.page_content for document in documents])
+            payload = [document.page_content for document in documents]
+            if payload == ["chunk-0", "chunk-1"]:
+                sleep(0.05)
+            with payload_lock:
+                added_payloads.append(payload)
             return ["p1"]
 
     monkeypatch.setattr(indexer, "get_qdrant_client", lambda: _Client())
@@ -500,9 +508,21 @@ def test_upsert_global_knowledge_record_parallelizes_fresh_upload(monkeypatch) -
     monkeypatch.setattr(indexer, "_delete_points_by_doc_ids", lambda client, collection_name, doc_ids: deleted_doc_ids.append(doc_ids))
     monkeypatch.setattr(indexer, "QdrantVectorStore", _VectorStore)
 
-    total_chunks, fingerprint = indexer.upsert_global_knowledge_record("a.pdf")
+    total_chunks, fingerprint = indexer.upsert_global_knowledge_record(
+        "a.pdf",
+        on_batch_complete=lambda next_chunk_index, total, content_fingerprint: progress.append(
+            (next_chunk_index, total, content_fingerprint)
+        ),
+    )
 
     assert total_chunks == 6
     assert fingerprint == indexer._chunk_fingerprint(chunks)
     assert deleted_doc_ids == [["doc-1"]]
-    assert sorted(added_payloads) == [["chunk-0", "chunk-1", "chunk-2"], ["chunk-3", "chunk-4", "chunk-5"]]
+    assert sorted(added_payloads) == [["chunk-0", "chunk-1"], ["chunk-2", "chunk-3"], ["chunk-4", "chunk-5"]]
+    assert progress == [(2, 6, fingerprint), (4, 6, fingerprint), (6, 6, fingerprint)]
+
+
+def test_retryable_upsert_exception_treats_qdrant_408_as_retryable() -> None:
+    exc = Exception("Unexpected Response: 408 (Request Timeout)\nRaw response content:\nb''")
+
+    assert indexer._retryable_upsert_exception(exc) is True

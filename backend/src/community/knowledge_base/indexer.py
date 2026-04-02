@@ -1,6 +1,6 @@
 """Index documents into the knowledge base."""
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import json
 import logging
 from collections.abc import Callable
@@ -66,25 +66,6 @@ def _build_vector_store(
         collection_name=collection_name,
         embedding=embeddings,
     )
-
-
-def _split_chunks_into_shards(
-    chunks: list[Document],
-    parallelism: int,
-) -> list[tuple[int, list[Document]]]:
-    if parallelism <= 1 or len(chunks) <= 1:
-        return [(0, chunks)]
-
-    shard_count = min(parallelism, len(chunks))
-    shard_size = (len(chunks) + shard_count - 1) // shard_count
-    shards: list[tuple[int, list[Document]]] = []
-    for shard_index in range(shard_count):
-        start_index = shard_index * shard_size
-        if start_index >= len(chunks):
-            break
-        end_index = min(start_index + shard_size, len(chunks))
-        shards.append((start_index, chunks[start_index:end_index]))
-    return shards
 
 
 def _load_pdf_documents(path: Path) -> list[Document]:
@@ -377,6 +358,12 @@ def _retryable_upsert_exception(exc: Exception) -> bool:
         return True
 
     message = str(exc).lower()
+    if "unexpected response:" in message:
+        if "408" in message or "429" in message:
+            return True
+        for status_code in ("500", "502", "503", "504"):
+            if status_code in message:
+                return True
     if "no embedding data received" in message:
         return True
     if "rate limit" in message or "temporarily unavailable" in message:
@@ -469,9 +456,17 @@ def _upsert_chunk_shards_parallel(
     chunks: list[Document],
     collection_name: str,
     parallelism: int,
+    start_chunk_index: int = 0,
+    on_batch_complete: Callable[[int, int], None] | None = None,
 ) -> int:
-    shards = _split_chunks_into_shards(chunks, parallelism)
-    if len(shards) <= 1:
+    total_chunks = len(chunks)
+    effective_start = max(0, min(start_chunk_index, total_chunks))
+    batch_size = _get_upsert_batch_size()
+    batch_ranges = [
+        (batch_start, min(batch_start + batch_size, total_chunks))
+        for batch_start in range(effective_start, total_chunks, batch_size)
+    ]
+    if len(batch_ranges) <= 1 or parallelism <= 1:
         vector_store = _build_vector_store(
             client=client,
             collection_name=collection_name,
@@ -481,33 +476,79 @@ def _upsert_chunk_shards_parallel(
             vector_store,
             chunks,
             collection_name=collection_name,
+            start_chunk_index=effective_start,
+            on_batch_complete=on_batch_complete,
         )
 
     logger.info(
-        "Uploading %s chunks to %s using %s parallel shard workers",
-        len(chunks),
+        "Uploading %s chunks to %s using %s parallel batch workers from chunk %s",
+        total_chunks,
         collection_name,
-        len(shards),
+        min(parallelism, len(batch_ranges)),
+        effective_start,
     )
 
-    def _worker(shard: tuple[int, list[Document]]) -> int:
-        start_index, shard_chunks = shard
+    def _worker(batch_start: int, batch_end: int) -> tuple[int, int]:
         vector_store = _build_vector_store(
             client=client,
             collection_name=collection_name,
             embeddings=embeddings,
         )
-        _upsert_chunk_batches(
+        _add_documents_with_retry(
             vector_store,
-            shard_chunks,
+            chunks[batch_start:batch_end],
             collection_name=collection_name,
         )
-        return start_index + len(shard_chunks)
+        return batch_start, batch_end
 
-    with ThreadPoolExecutor(max_workers=len(shards), thread_name_prefix="qdrant-upsert") as executor:
-        results = list(executor.map(_worker, shards))
+    next_batch_to_schedule = 0
+    completed_batch_starts: set[int] = set()
+    frontier_chunk_index = effective_start
+    first_exception: Exception | None = None
 
-    return max(results, default=0)
+    with ThreadPoolExecutor(
+        max_workers=min(parallelism, len(batch_ranges)),
+        thread_name_prefix="qdrant-upsert",
+    ) as executor:
+        in_flight: dict[Future[tuple[int, int]], tuple[int, int]] = {}
+
+        def _schedule_next_batch() -> bool:
+            nonlocal next_batch_to_schedule
+            if next_batch_to_schedule >= len(batch_ranges) or first_exception is not None:
+                return False
+            batch_start, batch_end = batch_ranges[next_batch_to_schedule]
+            future = executor.submit(_worker, batch_start, batch_end)
+            in_flight[future] = (batch_start, batch_end)
+            next_batch_to_schedule += 1
+            return True
+
+        while len(in_flight) < min(parallelism, len(batch_ranges)) and _schedule_next_batch():
+            pass
+
+        while in_flight:
+            done, _pending = wait(in_flight, return_when=FIRST_COMPLETED)
+            for future in done:
+                batch_start, batch_end = in_flight.pop(future)
+                try:
+                    future.result()
+                except Exception as exc:
+                    if first_exception is None:
+                        first_exception = exc
+                    continue
+
+                completed_batch_starts.add(batch_start)
+                while frontier_chunk_index < total_chunks and frontier_chunk_index in completed_batch_starts:
+                    frontier_chunk_index = min(frontier_chunk_index + batch_size, total_chunks)
+                    if on_batch_complete is not None:
+                        on_batch_complete(frontier_chunk_index, total_chunks)
+
+                if first_exception is None:
+                    _schedule_next_batch()
+
+        if first_exception is not None:
+            raise first_exception
+
+    return total_chunks
 
 
 def index_documents(
@@ -760,9 +801,17 @@ def upsert_global_knowledge_record(
             chunks=chunks,
             collection_name=kb_config.qdrant.collection_name,
             parallelism=parallelism,
+            start_chunk_index=effective_resume_chunk_index,
+            on_batch_complete=(
+                None
+                if on_batch_complete is None
+                else lambda next_chunk_index, total_chunks: on_batch_complete(
+                    next_chunk_index,
+                    total_chunks,
+                    fingerprint,
+                )
+            ),
         )
-        if on_batch_complete is not None:
-            on_batch_complete(len(chunks), len(chunks), fingerprint)
     else:
         vector_store = _build_vector_store(
             client=client,

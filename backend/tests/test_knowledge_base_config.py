@@ -27,8 +27,8 @@ class TestMineruConfig:
     def test_mineru_request_timeout_default_is_one_hour(self):
         cfg = MineruConfig()
         assert cfg.request_timeout == 3600
-        assert cfg.keepalive_time_ms == 60000
-        assert cfg.keepalive_timeout_ms == 20000
+        assert cfg.keepalive_time_ms == 120000
+        assert cfg.keepalive_timeout_ms == 60000
         assert cfg.keepalive_permit_without_calls is True
         assert cfg.max_message_bytes == 512 * 1024 * 1024
 

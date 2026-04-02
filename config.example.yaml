@@ -360,6 +360,10 @@ memory:
 #     api_token: $MINERU_API_TOKEN
 #     model_version: $MINERU_MODEL_VERSION
 #     request_timeout: 3600
+#     keepalive_time_ms: ${MINERU_GRPC_KEEPALIVE_TIME_MS:-60000}
+#     keepalive_timeout_ms: ${MINERU_GRPC_KEEPALIVE_TIMEOUT_MS:-20000}
+#     keepalive_permit_without_calls: ${MINERU_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS:-true}
+#     max_message_bytes: ${MINERU_GRPC_MAX_MESSAGE_BYTES:-536870912}
 #   translation_rpc:
 #     enabled: $TRANSLATION_RPC_ENABLED
 #     # Defaults to the same host/IP as MinerU, but keeps its own port/auth config

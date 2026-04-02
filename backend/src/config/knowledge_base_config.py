@@ -116,6 +116,25 @@ class MineruConfig(BaseModel):
         default=3600,
         description="Timeout in seconds for the MinerU gRPC request.",
     )
+    keepalive_time_ms: int = Field(
+        default=60000,
+        ge=1,
+        description="Interval in milliseconds between gRPC keepalive pings for MinerU.",
+    )
+    keepalive_timeout_ms: int = Field(
+        default=20000,
+        ge=1,
+        description="Timeout in milliseconds for gRPC keepalive ping acknowledgements from MinerU.",
+    )
+    keepalive_permit_without_calls: bool = Field(
+        default=True,
+        description="Whether MinerU gRPC keepalive pings are allowed when there are no active RPCs.",
+    )
+    max_message_bytes: int = Field(
+        default=512 * 1024 * 1024,
+        ge=1,
+        description="Maximum gRPC request/response size in bytes for MinerU.",
+    )
 
 
 class TranslationRpcConfig(BaseModel):

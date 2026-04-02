@@ -27,6 +27,10 @@ class TestMineruConfig:
     def test_mineru_request_timeout_default_is_one_hour(self):
         cfg = MineruConfig()
         assert cfg.request_timeout == 3600
+        assert cfg.keepalive_time_ms == 60000
+        assert cfg.keepalive_timeout_ms == 20000
+        assert cfg.keepalive_permit_without_calls is True
+        assert cfg.max_message_bytes == 512 * 1024 * 1024
 
     def test_mineru_custom_config(self):
         """Custom Mineru configuration should be loaded correctly."""
@@ -40,6 +44,10 @@ class TestMineruConfig:
                 "api_token": "test-token",
                 "model_version": "vlm-test",
                 "request_timeout": 10,
+                "keepalive_time_ms": 45000,
+                "keepalive_timeout_ms": 15000,
+                "keepalive_permit_without_calls": False,
+                "max_message_bytes": 1024,
             },
         }
 
@@ -54,6 +62,10 @@ class TestMineruConfig:
         assert cfg.mineru.api_token == "test-token"
         assert cfg.mineru.model_version == "vlm-test"
         assert cfg.mineru.request_timeout == 10
+        assert cfg.mineru.keepalive_time_ms == 45000
+        assert cfg.mineru.keepalive_timeout_ms == 15000
+        assert cfg.mineru.keepalive_permit_without_calls is False
+        assert cfg.mineru.max_message_bytes == 1024
 
     def test_book_metadata_custom_config(self):
         data = {

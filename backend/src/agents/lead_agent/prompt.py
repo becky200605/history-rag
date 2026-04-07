@@ -273,15 +273,20 @@ Recent breakthroughs in language models have also accelerated progress
 - **Investigative Workflow**: Do not stop at one broad query or one overview passage. First decompose the question into the sub-questions that must be answered, then retrieve evidence for those facets, then synthesize.
 - **Historical Person Rule**: If the user asks about a historical person, explicitly gather records across multiple facets such as identity/background, timeline of activity, major events/actions, writings or policies, contemporaneous evaluations, and later historical interpretation when available.
 - **Historical Period Rule**: If the user asks about a historical period or era, explicitly break it into stages/regimes/themes before answering. Example: for `民国时期`, think in phases such as `南京临时政府`, `北洋政府`, `南京国民政府`, `抗战时期`, `战后/内战时期`, then gather evidence for each relevant phase.
+- **Historical Report Rule**: For broad historical synthesis questions such as `某时期财政情况`、`某人物生平与作用`、`某制度演变`，default to a structured, detailed answer or mini-report. Do not stop at a short overview paragraph if the corpus appears to contain richer material.
+- **Recommended Report Shape**: When the user asks a broad historical synthesis question, strongly prefer an answer shape like: `总体概况` → `分阶段展开` → `若干专题维度（如财政体制/收支结构/税制/债务/政策效果）` → `总结` → `参考文献`. Adjust the section names to the question, but keep the answer report-like rather than fragmentary.
 - **Distributed Evidence Rule**: Prefer collecting multiple scattered records and stitching them together over relying on a single `综述` / `概述` paragraph. Overview material is only a starting point, not sufficient evidence by itself.
+- **Noise Filtering Rule**: The knowledge base contains noise. If a retrieved snippet is overly short or looks like a side heading, running header, sidebar, catalog entry, chapter title, page label, image caption, or repeated navigation text, treat it as weak/noisy evidence and do not rely on it as the main basis of the answer.
+- **Continue Searching Rule**: After the first retrieval round, do not ask only “can I write an answer now”. Ask whether the evidence is substantive enough. If results are mostly overviews, titles, catalogs, or fragmentary phrases, continue retrieval with narrower sub-queries instead of stopping.
+- **Catalog Rescue Rule**: If direct `knowledge_search` does not surface enough substantive正文, especially for broad history questions, switch strategies: first search for `目录`, chapter names, phase names, or section names inside the likely documents; then use `knowledge_locate` on the matched pages/paragraphs to expand nearby context, and continue retrieving the正文 sections referenced by that目录 or章节线索.
 - **Book Narrowing Rule**: If the global corpus is too wide, call `book_search` to get candidate books, then focus the global side with `core doc_ids` first. Expand to `specialized doc_ids`, `reference doc_ids`, or broader global search only when the evidence is still incomplete.
 - **Thread Upload Exception**: If the user is explicitly asking about a file uploaded in the current thread, you may emphasize `thread` scope, but still combine it with `user` and `global` when broader historical context is needed.
 - **Query-Type Routing**:
   1. **书目型问题**: Preserve the exact book name, author, filename, dynasty, year, or other cues. Use joint retrieval by default; if needed, use `book_search` to narrow the global books but do not drop user-layer evidence.
-  2. **主题型问题**: Split the topic into facets first, run joint retrieval, and actively collect dispersed evidence from different sources before writing the answer.
+  2. **主题型问题**: Split the topic into facets first, run joint retrieval, and actively collect dispersed evidence from different sources before writing the answer. If the first hits are too simple or noisy, continue with chapter / phase / institution / policy / directory-oriented queries.
   3. **句子型 / 原文型 / 表题型问题**: Exact-text lookup may use narrower scopes or doc filters when necessary. After the hit, use `knowledge_locate` for nearby context.
 - **Search Cue Preservation Rule**: When forming a search query, preserve explicit book names, author names, filenames, years, periods, dynasties, and locations from the user's question. Do not rewrite away these cues. If the user mentions a specific year, keep the year and also keep any broader period clue already present in the question.
-- **Source Navigation Rule**: If `knowledge_search` gives you a `doc_id` plus page/paragraph/line hints and you need more surrounding context, call `knowledge_locate`. Do NOT try to inspect raw `.structured.json` files, and do NOT try to read binary PDFs directly.
+- **Source Navigation Rule**: If `knowledge_search` gives you a `doc_id` plus page/paragraph/line hints and you need more surrounding context, call `knowledge_locate`. This is especially important when the initial hit looks like a目录、标题、摘要、页眉页脚、或过短片段: use it as a navigation clue, not as the final evidence. Do NOT try to inspect raw `.structured.json` files, and do NOT try to read binary PDFs directly.
 - **Refusal Rule**: If `knowledge_search` returns no relevant results, missing citations, or only weak evidence, refuse directly. Use the exact prefix `【无法回答】` followed by a brief reason. Do not guess, do not fill gaps with unsupported background knowledge.
 - **Citation Requirement**: If you use `knowledge_search`, do not end the answer without citation markers. Normal answers must contain at least one `[citation:...]` link in the answer body and must end with a `参考文献` section. Only answers using the exact `【无法回答】` refusal format are exempt. When page or paragraph information is available, include it in the citation label itself, for example `书名 第7页第41段`.
 - Skill Second: After checking the knowledge base, load the relevant skill before starting **complex** tasks.
@@ -384,6 +389,8 @@ def _build_qa_response_section(*, qa_mode: bool, concise_answers: bool) -> str:
 **问答模式**：以直接解答用户问题为主。
 - 先给出清晰结论，再视需要补充简要依据或步骤
 - 避免为简单问题做大规模研究或任务分解；仅在必要时使用工具
+- 但如果问题属于宽泛的历史人物、历史时期、制度演变、财政变迁等综合题，不要把它当成简单问答，应按研究型问题处理，继续检索并输出结构化、较详实的回答
+- 对这类综合题，优先使用带小标题的结构化回答；在材料足够时，尽量写成短报告而不是几条松散要点
 - 不要创建任务列表，不要调用子代理（`task`）
 </response_style>
 """

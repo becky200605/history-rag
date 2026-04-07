@@ -23,3 +23,7 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Historical Period Rule" in prompt
     assert "北洋政府" in prompt
     assert "Distributed Evidence Rule" in prompt
+    assert "Historical Report Rule" in prompt
+    assert "Recommended Report Shape" in prompt
+    assert "Noise Filtering Rule" in prompt
+    assert "Catalog Rescue Rule" in prompt

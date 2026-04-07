@@ -213,6 +213,7 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
     lines.append("3. 如果需要收束全库范围，再优先用 `core doc_ids` 调 `knowledge_search(query=..., doc_ids=..., scopes=\"global\")`。")
     lines.append("4. 只有核心通用书证据不足且问题明显需要专题材料时，才扩大到 `specialized doc_ids` 或 `reference doc_ids`。")
     lines.append("5. 不要只抓综述段落；优先汇总多个分散片段后再回答。")
+    lines.append("6. 如果搜到的大多是目录、标题、页眉页脚、边栏或过短片段，不要急着作答，把它们当作导航线索，继续搜目录/章节名/阶段名，并配合 `knowledge_locate` 展开正文。")
     if core_doc_ids:
         lines.append(f"core doc_ids: {core_doc_ids}")
     if specialized_doc_ids:
@@ -337,6 +338,8 @@ def knowledge_search_tool(
 
     formatted_output += "---\n"
     formatted_output += "这些结果已经做过联合检索与分面扩展；回答前先归并不同来源里的分散证据，不要只摘取单个综述段落。\n"
+    formatted_output += "如果某条结果看起来像目录、标题、页眉页脚、边栏、图表标题或过短片段，把它当作导航线索，不要直接拿来支撑最终结论。\n"
+    formatted_output += "遇到这类线索时，继续搜索对应的目录词、章节名、阶段名、制度名，再调用 `knowledge_locate` 展开附近正文。\n"
     formatted_output += "使用答案时，直接复制上面的 `citation:` 行，不要自己重写。\n"
     formatted_output += "如果需要更多上下文，调用 `knowledge_locate`；不要去读原始 PDF 或 `.structured.json`。\n"
     formatted_output += "如果证据不足，使用 `【无法回答】` 开头直接拒答，并简要说明当前资料范围内没有足够依据。"

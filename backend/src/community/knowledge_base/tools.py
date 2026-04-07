@@ -224,6 +224,8 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
     lines.append("6. 对进入当前层的相关候选书，尽量逐本检索一遍；不要只读到一本就停止。")
     lines.append("7. 回答前要整合不同层级、不同书籍里的证据，不要只抓单个综述段落，也不要让单本书主导全部结论。")
     lines.append("8. 如果搜到的大多是目录、标题、页眉页脚、边栏或过短片段，不要急着作答，把它们当作导航线索，继续搜目录/章节名/阶段名，并配合 `knowledge_locate` 展开正文。")
+    lines.append("9. 默认假设关键信息是散落的：散落在很多书里，也散落在同一本书的不同章节、不同段落里，所以往往需要检索一本书的很多地方才能形成用户满意的回答。")
+    lines.append("10. 在真正作答前，先检查：现在的资料是否已经覆盖了问题的每个主要部分？每个部分是否都有足够的实质证据？如果还没有，就继续检索，不要急着回答。")
     if user_doc_ids:
         lines.append(f"user doc_ids: {user_doc_ids}")
     if thread_doc_ids:

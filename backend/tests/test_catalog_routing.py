@@ -238,3 +238,5 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "reference doc_ids: ref-1" in output
     assert "all doc_ids: user-1, core-1, spec-1, ref-1" in output
     assert "尽量逐本检索一遍" in output
+    assert "默认假设关键信息是散落的" in output
+    assert "不要急着回答" in output

@@ -237,3 +237,4 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "specialized doc_ids: spec-1" in output
     assert "reference doc_ids: ref-1" in output
     assert "all doc_ids: user-1, core-1, spec-1, ref-1" in output
+    assert "尽量逐本检索一遍" in output

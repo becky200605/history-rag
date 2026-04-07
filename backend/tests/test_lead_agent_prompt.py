@@ -20,6 +20,8 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Book Search First Rule" in prompt
     assert "book_search(query=...)" in prompt
     assert "Layered Book Routing Rule" in prompt
+    assert "Book Coverage Rule" in prompt
+    assert "Cross-Book Synthesis Rule" in prompt
     assert "Historical Person Rule" in prompt
     assert "Historical Period Rule" in prompt
     assert "北洋政府" in prompt

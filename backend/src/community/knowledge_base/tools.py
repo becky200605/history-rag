@@ -221,8 +221,9 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
     lines.append("3. 再检索系统层的 `核心通用书`，先建立稳固的总体框架。")
     lines.append("4. 如果核心通用书仍不足，再扩展到 `专题支撑书`。")
     lines.append("5. `补充材料 / 参考工具书` 作为最后补强层，用来补细节、对照和查缺。")
-    lines.append("6. 回答前要整合不同层级书籍里的证据，不要只抓单个综述段落。")
-    lines.append("7. 如果搜到的大多是目录、标题、页眉页脚、边栏或过短片段，不要急着作答，把它们当作导航线索，继续搜目录/章节名/阶段名，并配合 `knowledge_locate` 展开正文。")
+    lines.append("6. 对进入当前层的相关候选书，尽量逐本检索一遍；不要只读到一本就停止。")
+    lines.append("7. 回答前要整合不同层级、不同书籍里的证据，不要只抓单个综述段落，也不要让单本书主导全部结论。")
+    lines.append("8. 如果搜到的大多是目录、标题、页眉页脚、边栏或过短片段，不要急着作答，把它们当作导航线索，继续搜目录/章节名/阶段名，并配合 `knowledge_locate` 展开正文。")
     if user_doc_ids:
         lines.append(f"user doc_ids: {user_doc_ids}")
     if thread_doc_ids:

@@ -104,6 +104,35 @@ def test_search_book_catalog_reads_generated_sidecar_metadata(tmp_path, monkeypa
     assert results[0].metadata_source is not None
 
 
+def test_search_book_catalog_broad_query_keeps_core_and_specialized_books(tmp_path, monkeypatch) -> None:
+    docs_root = tmp_path / "knowledge" / "docs"
+    docs_root.mkdir(parents=True)
+    (docs_root / "qing_general.md").write_text("# 清代财政总论\n清代财政总体变迁", encoding="utf-8")
+    (docs_root / "qing_tax.md").write_text("# 清代税制\n田赋与厘金改革", encoding="utf-8")
+    (docs_root / "qing_salt.md").write_text("# 清代盐政\n盐课与专卖财政", encoding="utf-8")
+    _write_metadata_sidecar(
+        docs_root,
+        [
+            '{"source_filename":"qing_general.md","type":"core","categories":["财政史","清史"],"eras":["清代"],"summary":"清代财政通论"}',
+            '{"source_filename":"qing_tax.md","type":"specialized","categories":["税制","财政史"],"eras":["清代"],"summary":"清代税制演变"}',
+            '{"source_filename":"qing_salt.md","type":"reference","categories":["盐政","财政史"],"eras":["清代"],"summary":"清代盐课资料"}',
+        ],
+    )
+
+    monkeypatch.setattr(
+        catalog_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(docs_path=str(docs_root)),
+    )
+
+    results = search_book_catalog("清代中国财政情况变迁", top_k=3)
+
+    result_types = {item.type for item in results}
+    assert "core" in result_types
+    assert "specialized" in result_types or "reference" in result_types
+    assert len(results) >= 3
+
+
 def test_list_book_catalog_reads_global_ingestion_preview_filename(tmp_path, monkeypatch) -> None:
     docs_root = tmp_path / "knowledge" / "docs"
     ingestion_dir = docs_root / ".ingestion"
@@ -240,3 +269,17 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "尽量逐本检索一遍" in output
     assert "默认假设关键信息是散落的" in output
     assert "不要急着回答" in output
+
+
+def test_book_search_tool_uses_larger_top_k(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_search(query, thread_id=None, user_id=None, top_k=8):
+        captured["top_k"] = top_k
+        return []
+
+    monkeypatch.setattr(tools_module, "search_book_catalog", fake_search)
+
+    tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
+
+    assert captured["top_k"] == 20

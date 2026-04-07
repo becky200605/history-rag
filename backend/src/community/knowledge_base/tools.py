@@ -30,7 +30,7 @@ from src.community.knowledge_base.catalog import (
 from src.community.knowledge_base.citations import resolve_result_citation_context
 from src.community.knowledge_base.locator import extract_document_context, locate_document
 
-BOOK_SEARCH_TOP_K = 8
+BOOK_SEARCH_TOP_K = 20
 KNOWLEDGE_SEARCH_TOP_K = 6
 KNOWLEDGE_RESULT_MAX_CHARS = 900
 KNOWLEDGE_RESULT_MAX_LINES = 24

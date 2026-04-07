@@ -30,6 +30,15 @@ BOOK_METADATA_FILENAMES = (".book_metadata.jsonl", ".book_metadata.json")
 CORE_TYPE = "core"
 SPECIALIZED_TYPE = "specialized"
 REFERENCE_TYPE = "reference"
+BOOK_LAYER_ORDER = ("user", "thread", CORE_TYPE, SPECIALIZED_TYPE, REFERENCE_TYPE, "unknown")
+BOOK_LAYER_MINIMA = {
+    "user": 3,
+    "thread": 2,
+    CORE_TYPE: 3,
+    SPECIALIZED_TYPE: 4,
+    REFERENCE_TYPE: 3,
+    "unknown": 2,
+}
 
 BROAD_QUERY_HINTS = (
     "通史",
@@ -404,15 +413,19 @@ def _metadata_overlap_score(entry: BookCatalogEntry, query_tokens: list[str]) ->
 
 def _metadata_type_boost(entry: BookCatalogEntry, query: str) -> float:
     book_type = _normalize_type(entry.type)
+    if entry.scope == "user":
+        return 0.9 if _is_broad_query(query) else 1.1
+    if entry.scope == "thread":
+        return 0.75 if _is_broad_query(query) else 0.95
     if book_type == "unknown":
-        return 0.0
+        return 0.15
 
     broad = _is_broad_query(query)
     specific = _is_specific_query(query)
     if broad and book_type == CORE_TYPE:
-        return 1.2
+        return 0.95
     if broad and book_type in {SPECIALIZED_TYPE, REFERENCE_TYPE}:
-        return 0.35
+        return 0.75
     if specific and book_type in {SPECIALIZED_TYPE, REFERENCE_TYPE}:
         return 1.0
     if specific and book_type == CORE_TYPE:
@@ -422,6 +435,58 @@ def _metadata_type_boost(entry: BookCatalogEntry, query: str) -> float:
     if book_type in {SPECIALIZED_TYPE, REFERENCE_TYPE}:
         return 0.6
     return 0.0
+
+
+def _result_layer(entry: BookCatalogEntry) -> str:
+    if entry.scope == "user":
+        return "user"
+    if entry.scope == "thread":
+        return "thread"
+    normalized = _normalize_type(entry.type)
+    return normalized if normalized != "unknown" else "unknown"
+
+
+def _expand_book_catalog_results(
+    scored_entries: list[BookCatalogEntry],
+    *,
+    top_k: int,
+) -> list[BookCatalogEntry]:
+    if not scored_entries:
+        return []
+
+    limit = max(top_k, sum(BOOK_LAYER_MINIMA.values()))
+    selected: list[BookCatalogEntry] = []
+    selected_ids: set[str] = set()
+
+    for entry in scored_entries[:top_k]:
+        if entry.doc_id in selected_ids:
+            continue
+        selected.append(entry)
+        selected_ids.add(entry.doc_id)
+
+    for layer in BOOK_LAYER_ORDER:
+        minimum = BOOK_LAYER_MINIMA.get(layer, 0)
+        if minimum <= 0:
+            continue
+        already_selected = sum(1 for entry in selected if _result_layer(entry) == layer)
+        if already_selected >= minimum:
+            continue
+        layer_candidates = [entry for entry in scored_entries if _result_layer(entry) == layer and entry.doc_id not in selected_ids]
+        for entry in layer_candidates[: max(0, minimum - already_selected)]:
+            if entry.doc_id in selected_ids:
+                continue
+            selected.append(entry)
+            selected_ids.add(entry.doc_id)
+
+    for entry in scored_entries:
+        if len(selected) >= limit:
+            break
+        if entry.doc_id in selected_ids:
+            continue
+        selected.append(entry)
+        selected_ids.add(entry.doc_id)
+
+    return selected[:limit]
 
 
 def _build_global_entries(
@@ -718,8 +783,15 @@ def search_book_catalog(
         score += _exact_match_boost(entry, query, tokens)
         score += _metadata_overlap_score(entry, tokens)
         score += _metadata_type_boost(entry, query)
-        if score > 0:
-            scored.append((score, replace(entry, score=score)))
+        if score <= 0:
+            normalized_query = normalize_search_text(query)
+            search_text = normalize_search_text(entry.search_text)
+            if normalized_query and any(token in search_text for token in tokens[:3]):
+                score = 0.15
+            elif _is_broad_query(query):
+                score = 0.05
+        scored.append((score, replace(entry, score=score)))
 
     scored.sort(key=lambda item: item[0], reverse=True)
-    return [entry for _, entry in scored[:top_k]]
+    ordered = [entry for _, entry in scored]
+    return _expand_book_catalog_results(ordered, top_k=top_k)

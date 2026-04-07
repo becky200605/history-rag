@@ -17,13 +17,16 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
 
     prompt = prompt_module.apply_prompt_template()
 
-    assert "Joint Retrieval Default" in prompt
-    assert "knowledge_search(query=...)" in prompt
+    assert "Book Search First Rule" in prompt
+    assert "book_search(query=...)" in prompt
+    assert "Layered Book Routing Rule" in prompt
     assert "Historical Person Rule" in prompt
     assert "Historical Period Rule" in prompt
     assert "北洋政府" in prompt
     assert "Distributed Evidence Rule" in prompt
     assert "Historical Report Rule" in prompt
     assert "Recommended Report Shape" in prompt
+    assert "Suggested Questions Rule" in prompt
+    assert "建议问题" in prompt
     assert "Noise Filtering Rule" in prompt
     assert "Catalog Rescue Rule" in prompt

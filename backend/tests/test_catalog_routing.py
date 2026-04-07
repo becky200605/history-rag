@@ -140,6 +140,26 @@ def test_list_book_catalog_reads_global_ingestion_preview_filename(tmp_path, mon
 def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     candidates = [
         BookCatalogEntry(
+            doc_id="user-1",
+            title="User Book",
+            filename="user.md",
+            scope="user",
+            source_path="/tmp/user.md",
+            source_url="/api/secure-knowledge/users/me/knowledge/docs/user.md",
+            original_url=None,
+            preview="",
+            search_text="user",
+            search_tokens=["user"],
+            type="user",
+            categories=["摘录"],
+            eras=["民国"],
+            regions=["全国"],
+            keywords=[],
+            summary="用户材料",
+            priority=0,
+            score=5.0,
+        ),
+        BookCatalogEntry(
             doc_id="core-1",
             title="Core Book",
             filename="core.md",
@@ -200,14 +220,20 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
             score=2.0,
         ),
     ]
-    monkeypatch.setattr(tools_module, "search_book_catalog", lambda query, thread_id=None, top_k=8: candidates)
+    monkeypatch.setattr(
+        tools_module,
+        "search_book_catalog",
+        lambda query, thread_id=None, user_id=None, top_k=8: candidates,
+    )
 
     output = tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
 
+    assert "### 用户书籍" in output
     assert "### 核心通用书" in output
     assert "### 专题支撑书" in output
-    assert "### 参考/工具书" in output
+    assert "### 补充材料 / 参考工具书" in output
+    assert "user doc_ids: user-1" in output
     assert "core doc_ids: core-1" in output
     assert "specialized doc_ids: spec-1" in output
     assert "reference doc_ids: ref-1" in output
-    assert "all doc_ids: core-1, spec-1, ref-1" in output
+    assert "all doc_ids: user-1, core-1, spec-1, ref-1" in output

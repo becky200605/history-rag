@@ -51,9 +51,27 @@ type TranslationLayoutItem = {
   textWidth: number;
 };
 
+type CompareLayoutItem = {
+  key: string;
+  contextParagraph: ContextParagraph;
+  paragraph: KnowledgeStructuredParagraph;
+  bbox: NonNullable<KnowledgeStructuredParagraph["bbox"]>;
+  source: "current" | "previous-spill";
+  textLeft: number;
+  textTop: number;
+  visibleTop: number;
+  visibleHeight: number;
+  continuesFromPreviousPage: boolean;
+  continuesToNextPage: boolean;
+};
+
 const TRANSLATION_BLOCK_MARGIN_TOP = 10;
 const TRANSLATION_BLOCK_MARGIN_BOTTOM = 16;
 const TRANSLATION_LINE_HEIGHT = 22;
+const COMPARE_TEXT_PADDING_X = 8;
+const COMPARE_TEXT_PADDING_Y = 4;
+const COMPARE_LINE_HEIGHT = 1.42;
+const PAGE_OVERFLOW_TOLERANCE = 8;
 
 function paragraphKey(
   page: KnowledgeStructuredPage,
@@ -113,9 +131,149 @@ function buildExcerptMarkdown(
     .join("\n");
 }
 
+function characterWidthWeight(character: string) {
+  if (!character.trim()) {
+    return 0.34;
+  }
+  if (/[A-Z0-9]/.test(character)) {
+    return 0.62;
+  }
+  if (/[a-z]/.test(character)) {
+    return 0.56;
+  }
+  if (
+    /[\u2e80-\u2eff\u2f00-\u2fdf\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/.test(
+      character,
+    )
+  ) {
+    return 1;
+  }
+  return 0.48;
+}
+
+function estimateTextHeight(text: string, width: number, fontSize: number) {
+  const normalizedWidth = Math.max(width / fontSize, 1);
+  const lines = text.split("\n").reduce((total, line) => {
+    const lineUnits = Array.from(line).reduce(
+      (sum, character) => sum + characterWidthWeight(character),
+      0,
+    );
+    return total + Math.max(1, Math.ceil(lineUnits / normalizedWidth));
+  }, 0);
+  return lines * fontSize * COMPARE_LINE_HEIGHT;
+}
+
 function paragraphFontSize(paragraph: KnowledgeStructuredParagraph) {
-  const height = paragraph.bbox?.height ?? 42;
-  return Math.max(14, Math.min(24, height * 0.34));
+  const bbox = paragraph.bbox;
+  if (!bbox) {
+    return 14;
+  }
+
+  const availableWidth = Math.max(bbox.width - COMPARE_TEXT_PADDING_X, 18);
+  const availableHeight = Math.max(bbox.height - COMPARE_TEXT_PADDING_Y, 14);
+  const maxSize = Math.max(9, Math.min(28, Math.floor(availableHeight * 0.72)));
+  let low = 8;
+  let high = maxSize;
+  let best = 8;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const estimatedHeight = estimateTextHeight(paragraph.text, availableWidth, mid);
+    if (estimatedHeight <= availableHeight) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return best;
+}
+
+function buildCompareLayoutItems(
+  currentPage: KnowledgeStructuredPage,
+  previousPage: KnowledgeStructuredPage | null,
+) {
+  const currentPageHeight = currentPage.page_meta?.page_height ?? 0;
+  if (currentPageHeight <= 0) {
+    return [];
+  }
+
+  const layoutItems: CompareLayoutItem[] = [];
+
+  for (const paragraph of currentPage.paragraphs ?? []) {
+    const bbox = paragraph.bbox;
+    if (!bbox) {
+      continue;
+    }
+
+    const textTop = bbox.y;
+    const visibleTop = Math.max(textTop, 0);
+    const visibleBottom = Math.min(textTop + bbox.height, currentPageHeight);
+    if (visibleBottom <= visibleTop) {
+      continue;
+    }
+
+    layoutItems.push({
+      key: paragraphKey(currentPage, paragraph),
+      contextParagraph: buildContextParagraph(currentPage, paragraph),
+      paragraph,
+      bbox,
+      source: "current",
+      textLeft: bbox.x,
+      textTop,
+      visibleTop,
+      visibleHeight: visibleBottom - visibleTop,
+      continuesFromPreviousPage: textTop < -PAGE_OVERFLOW_TOLERANCE,
+      continuesToNextPage:
+        textTop + bbox.height > currentPageHeight + PAGE_OVERFLOW_TOLERANCE,
+    });
+  }
+
+  const previousPageHeight = previousPage?.page_meta?.page_height ?? 0;
+  if (previousPage && previousPageHeight > 0) {
+    for (const paragraph of previousPage.paragraphs ?? []) {
+      const bbox = paragraph.bbox;
+      if (!bbox) {
+        continue;
+      }
+      if (bbox.y + bbox.height <= previousPageHeight + PAGE_OVERFLOW_TOLERANCE) {
+        continue;
+      }
+
+      const textTop = bbox.y - previousPageHeight;
+      const visibleTop = Math.max(textTop, 0);
+      const visibleBottom = Math.min(textTop + bbox.height, currentPageHeight);
+      if (visibleBottom <= visibleTop) {
+        continue;
+      }
+
+      layoutItems.push({
+        key: `${paragraphKey(previousPage, paragraph)}:spill-${currentPage.pdf_page_no ?? currentPage.page_no ?? "page"}`,
+        contextParagraph: buildContextParagraph(previousPage, paragraph),
+        paragraph,
+        bbox,
+        source: "previous-spill",
+        textLeft: bbox.x,
+        textTop,
+        visibleTop,
+        visibleHeight: visibleBottom - visibleTop,
+        continuesFromPreviousPage: true,
+        continuesToNextPage:
+          textTop + bbox.height > currentPageHeight + PAGE_OVERFLOW_TOLERANCE,
+      });
+    }
+  }
+
+  return layoutItems.sort((left, right) => {
+    if (left.visibleTop !== right.visibleTop) {
+      return left.visibleTop - right.visibleTop;
+    }
+    if (left.textLeft !== right.textLeft) {
+      return left.textLeft - right.textLeft;
+    }
+    return left.source.localeCompare(right.source);
+  });
 }
 
 export function KnowledgeSidePane({
@@ -153,6 +311,8 @@ export function KnowledgeSidePane({
   const translationBlockRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const createDerivedMutation = useCreateUserDerivedKnowledge();
   const [pageState, setPageState] = useState<PageState>({ status: "idle" });
+  const [previousPageData, setPreviousPageData] =
+    useState<KnowledgeStructuredPage | null>(null);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [canvasMetrics, setCanvasMetrics] = useState({
@@ -175,21 +335,37 @@ export function KnowledgeSidePane({
   useEffect(() => {
     if (!currentPdfPageNo) {
       setPageState({ status: "idle" });
+      setPreviousPageData(null);
       return;
     }
 
     let cancelled = false;
     setPageState({ status: "loading" });
-    getKnowledgeStructuredPageForDocumentUrl(documentUrl, {
-      pdfPageNo: currentPdfPageNo,
-    })
-      .then((data) => {
-        if (!cancelled) {
-          setPageState({ status: "ready", data });
+    setPreviousPageData(null);
+
+    const previousPagePromise =
+      currentPdfPageNo > 1
+        ? getKnowledgeStructuredPageForDocumentUrl(documentUrl, {
+            pdfPageNo: currentPdfPageNo - 1,
+          }).catch(() => null)
+        : Promise.resolve(null);
+
+    Promise.all([
+      getKnowledgeStructuredPageForDocumentUrl(documentUrl, {
+        pdfPageNo: currentPdfPageNo,
+      }),
+      previousPagePromise,
+    ])
+      .then(([data, previousPage]) => {
+        if (cancelled) {
+          return;
         }
+        setPreviousPageData(previousPage);
+        setPageState({ status: "ready", data });
       })
       .catch((error: Error) => {
         if (!cancelled) {
+          setPreviousPageData(null);
           setPageState({
             status: "error",
             message: error.message || "结构化页加载失败",
@@ -205,6 +381,10 @@ export function KnowledgeSidePane({
   const pageData = pageState.status === "ready" ? pageState.data : null;
   const pageWidth = pageData?.page_meta?.page_width ?? 0;
   const pageHeight = pageData?.page_meta?.page_height ?? 0;
+  const compareLayoutItems = useMemo(
+    () => (pageData ? buildCompareLayoutItems(pageData, previousPageData) : []),
+    [pageData, previousPageData],
+  );
 
   const paragraphs = useMemo(
     () =>
@@ -524,79 +704,106 @@ export function KnowledgeSidePane({
               transform: `scale(${canvasMetrics.scaleX}, ${canvasMetrics.scaleY})`,
             }}
           >
-            {(pageData.paragraphs ?? []).map((paragraph) => {
-              const bbox = paragraph.bbox;
-              if (!bbox) {
-                return null;
-              }
-
-              const contextParagraph = buildContextParagraph(pageData, paragraph);
-              const isActive = activeKey === contextParagraph.key;
+            {compareLayoutItems.map((item) => {
+              const isActive = activeKey === item.contextParagraph.key;
               return (
-                <div
-                  key={contextParagraph.key}
-                  className={cn(
-                    "absolute overflow-hidden rounded-sm border text-left transition-colors select-none",
-                    isExcerptable && "cursor-context-menu",
-                    isActive
-                      ? "border-emerald-500/95 bg-emerald-50/70"
-                      : isHighlightable
-                        ? "border-transparent bg-transparent hover:border-emerald-400/90 hover:bg-emerald-50/45"
-                        : "border-transparent bg-transparent",
-                  )}
-                  style={{
-                    left: `${bbox.x}px`,
-                    top: `${bbox.y}px`,
-                    width: `${bbox.width}px`,
-                    height: `${Math.max(bbox.height, 24)}px`,
-                    padding: "2px 4px",
-                    fontSize: `${paragraphFontSize(paragraph)}px`,
-                    lineHeight: 1.42,
-                    letterSpacing: "0.01em",
-                    color: "#1c1917",
-                  }}
-                  onMouseEnter={
-                    isHighlightable ? () => setHoveredKey(contextParagraph.key) : undefined
-                  }
-                  onMouseLeave={
-                    isHighlightable
-                      ? () =>
-                          setHoveredKey((current) =>
-                            current === contextParagraph.key ? null : current,
-                          )
-                      : undefined
-                  }
-                  onPointerDownCapture={
-                    isExcerptable
-                      ? (event) => {
-                          if (event.button !== 2) {
-                            return;
+                <div key={item.key}>
+                  <div
+                    className={cn(
+                      "absolute overflow-hidden rounded-sm border text-left transition-colors select-none",
+                      isExcerptable && "cursor-context-menu",
+                      item.source === "previous-spill"
+                        ? "border-dashed"
+                        : "border-solid",
+                      isActive
+                        ? "border-emerald-500/95 bg-emerald-50/70"
+                        : isHighlightable
+                          ? "border-transparent bg-transparent hover:border-emerald-400/90 hover:bg-emerald-50/45"
+                          : "border-transparent bg-transparent",
+                    )}
+                    style={{
+                      left: `${item.textLeft}px`,
+                      top: `${item.textTop}px`,
+                      width: `${item.bbox.width}px`,
+                      height: `${Math.max(item.bbox.height, 24)}px`,
+                      padding: "2px 4px",
+                      fontSize: `${paragraphFontSize(item.paragraph)}px`,
+                      lineHeight: COMPARE_LINE_HEIGHT,
+                      letterSpacing: "0.01em",
+                      color: "#1c1917",
+                    }}
+                    onMouseEnter={
+                      isHighlightable
+                        ? () => setHoveredKey(item.contextParagraph.key)
+                        : undefined
+                    }
+                    onMouseLeave={
+                      isHighlightable
+                        ? () =>
+                            setHoveredKey((current) =>
+                              current === item.contextParagraph.key ? null : current,
+                            )
+                        : undefined
+                    }
+                    onPointerDownCapture={
+                      isExcerptable
+                        ? (event) => {
+                            if (event.button !== 2) {
+                              return;
+                            }
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openContextMenu(item.contextParagraph, {
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
                           }
-                          event.preventDefault();
-                          event.stopPropagation();
-                          openContextMenu(contextParagraph, {
-                            x: event.clientX,
-                            y: event.clientY,
-                          });
-                        }
-                      : undefined
-                  }
-                  onContextMenuCapture={
-                    isExcerptable
-                      ? (event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          openContextMenu(contextParagraph, {
-                            x: event.clientX,
-                            y: event.clientY,
-                          });
-                        }
-                      : undefined
-                  }
-                >
-                  <div className="pointer-events-none whitespace-pre-wrap break-words">
-                    {paragraph.text}
+                        : undefined
+                    }
+                    onContextMenuCapture={
+                      isExcerptable
+                        ? (event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openContextMenu(item.contextParagraph, {
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }
+                        : undefined
+                    }
+                  >
+                    <div className="pointer-events-none whitespace-pre-wrap break-words">
+                      {item.paragraph.text}
+                    </div>
                   </div>
+
+                  {item.continuesFromPreviousPage ? (
+                    <div
+                      className="pointer-events-none absolute rounded-full bg-amber-100/90 px-2 py-0.5 text-[10px] font-medium text-amber-800 shadow-sm"
+                      style={{
+                        left: `${Math.max(item.textLeft + 4, 4)}px`,
+                        top: `${Math.max(item.visibleTop + 4, 4)}px`,
+                      }}
+                    >
+                      续上页
+                    </div>
+                  ) : null}
+
+                  {item.continuesToNextPage ? (
+                    <div
+                      className="pointer-events-none absolute rounded-full bg-sky-100/90 px-2 py-0.5 text-[10px] font-medium text-sky-800 shadow-sm"
+                      style={{
+                        left: `${Math.max(item.textLeft + 4, 4)}px`,
+                        top: `${Math.max(
+                          item.visibleTop + item.visibleHeight - 22,
+                          item.visibleTop + 4,
+                        )}px`,
+                      }}
+                    >
+                      续下页
+                    </div>
+                  ) : null}
                 </div>
               );
             })}

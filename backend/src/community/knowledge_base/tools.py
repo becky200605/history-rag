@@ -126,7 +126,7 @@ def _truncate_text(text: str, *, max_chars: int, max_lines: int | None = None) -
 
 def _normalize_type(value: str | None) -> str:
     normalized = (value or "").strip().lower()
-    if normalized in {CORE_TYPE, SPECIALIZED_TYPE, REFERENCE_TYPE}:
+    if normalized in {"user", "thread", CORE_TYPE, SPECIALIZED_TYPE, REFERENCE_TYPE}:
         return normalized
     return "unknown"
 
@@ -153,13 +153,16 @@ def _format_book_metadata(candidate: BookCatalogEntry) -> str:
 
 def _group_book_candidates(candidates: list[BookCatalogEntry]) -> dict[str, list[BookCatalogEntry]]:
     grouped = {
+        "user": [],
+        "thread": [],
         CORE_TYPE: [],
         SPECIALIZED_TYPE: [],
         REFERENCE_TYPE: [],
         "unknown": [],
     }
     for candidate in candidates:
-        grouped.setdefault(_normalize_type(candidate.type), grouped["unknown"]).append(candidate)
+        candidate_key = "user" if candidate.scope == "user" else "thread" if candidate.scope == "thread" else _normalize_type(candidate.type)
+        grouped.setdefault(candidate_key, grouped["unknown"]).append(candidate)
     return grouped
 
 
@@ -167,24 +170,27 @@ def _group_book_candidates(candidates: list[BookCatalogEntry]) -> dict[str, list
 def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) -> str:
     """Search candidate books before full-text retrieval.
 
-    Use this tool when the corpus is large and you need candidate global books
-    before calling `knowledge_search`. Do not treat this as a user-only step:
-    normal historical QA should combine user knowledge and global knowledge.
+    Use this tool first for historical/domain questions. It finds likely user
+    books and system books before full-text retrieval so the agent can search
+    in a layered order instead of jumping directly into the whole corpus.
 
     Args:
         query: The user's research question or topic description.
     """
     thread_id = runtime.context.get("thread_id")
-    candidates = search_book_catalog(query, thread_id=thread_id, top_k=BOOK_SEARCH_TOP_K)
+    user_id = runtime.context.get("user_id")
+    candidates = search_book_catalog(query, thread_id=thread_id, user_id=user_id, top_k=BOOK_SEARCH_TOP_K)
     if not candidates:
         return "No likely books found for this query."
 
     grouped = _group_book_candidates(candidates)
     lines = ["## 候选书目", ""]
     section_titles = (
+        ("user", "用户书籍"),
+        ("thread", "当前线程书籍"),
         (CORE_TYPE, "核心通用书"),
         (SPECIALIZED_TYPE, "专题支撑书"),
-        (REFERENCE_TYPE, "参考/工具书"),
+        (REFERENCE_TYPE, "补充材料 / 参考工具书"),
         ("unknown", "其他候选书"),
     )
     for role, title in section_titles:
@@ -201,6 +207,8 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
                 lines.append(metadata_text)
             lines.append("")
 
+    user_doc_ids = ", ".join(candidate.doc_id for candidate in grouped["user"])
+    thread_doc_ids = ", ".join(candidate.doc_id for candidate in grouped["thread"])
     core_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[CORE_TYPE])
     specialized_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[SPECIALIZED_TYPE])
     reference_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[REFERENCE_TYPE])
@@ -208,12 +216,17 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
 
     lines.append("---")
     lines.append("推荐链路:")
-    lines.append("1. 默认做联合检索：`knowledge_search(query=...)`，同时覆盖 user/thread/global。")
-    lines.append("2. 如果问题明显是历史人物、历史事件、历史时期，先把问题拆成若干子面向再检索，例如人物的生平/活动/评价，时期的前后阶段/关键政权/制度变化。")
-    lines.append("3. 如果需要收束全库范围，再优先用 `core doc_ids` 调 `knowledge_search(query=..., doc_ids=..., scopes=\"global\")`。")
-    lines.append("4. 只有核心通用书证据不足且问题明显需要专题材料时，才扩大到 `specialized doc_ids` 或 `reference doc_ids`。")
-    lines.append("5. 不要只抓综述段落；优先汇总多个分散片段后再回答。")
-    lines.append("6. 如果搜到的大多是目录、标题、页眉页脚、边栏或过短片段，不要急着作答，把它们当作导航线索，继续搜目录/章节名/阶段名，并配合 `knowledge_locate` 展开正文。")
+    lines.append("1. 先做书目分层，不要跳过 `book_search` 直接整库检索。")
+    lines.append("2. 先检索 `用户书籍`；如果当前线程有相关上传，也并行参考 `当前线程书籍`。")
+    lines.append("3. 再检索系统层的 `核心通用书`，先建立稳固的总体框架。")
+    lines.append("4. 如果核心通用书仍不足，再扩展到 `专题支撑书`。")
+    lines.append("5. `补充材料 / 参考工具书` 作为最后补强层，用来补细节、对照和查缺。")
+    lines.append("6. 回答前要整合不同层级书籍里的证据，不要只抓单个综述段落。")
+    lines.append("7. 如果搜到的大多是目录、标题、页眉页脚、边栏或过短片段，不要急着作答，把它们当作导航线索，继续搜目录/章节名/阶段名，并配合 `knowledge_locate` 展开正文。")
+    if user_doc_ids:
+        lines.append(f"user doc_ids: {user_doc_ids}")
+    if thread_doc_ids:
+        lines.append(f"thread doc_ids: {thread_doc_ids}")
     if core_doc_ids:
         lines.append(f"core doc_ids: {core_doc_ids}")
     if specialized_doc_ids:
@@ -233,16 +246,17 @@ def knowledge_search_tool(
 ) -> str:
     """Search the internal knowledge base for domain-specific information.
 
-    Default behavior is joint retrieval across user/thread/global so the model
-    can answer with both personal and system-level evidence. For broad history
-    questions, this tool also expands the query into multiple investigative
-    facets so scattered records can be gathered and synthesized together.
+    This tool should usually be used after `book_search`, so retrieval can
+    focus on the right books in a layered order instead of jumping into the
+    whole corpus. For broad history questions, it also expands the query into
+    multiple investigative facets so scattered records can be gathered and
+    synthesized together.
 
     Recommended use:
-    1. For normal questions, call `knowledge_search(query=...)` and let it search
-       user + thread + global together.
-    2. If you already narrowed likely global books with `book_search`, pass
-       `doc_ids` to focus the global side while still keeping scope control explicit.
+    1. First call `book_search(query=...)` to identify likely user/system books.
+    2. Then call `knowledge_search` against the selected layer of books.
+       Search user books first, then core system books, then specialized books,
+       and only later use reference/supporting material when needed.
     3. For exact quotation / page / paragraph lookups, you may use narrower
        scopes or doc filters and then call `knowledge_locate` for nearby context.
 
@@ -251,9 +265,8 @@ def knowledge_search_tool(
 
     Args:
         query: The search query describing what information you need.
-        doc_ids: Optional comma-separated candidate global book IDs from `book_search`.
-        scopes: Optional comma-separated scopes: `user`, `thread`, `global`. Omit this
-            for the normal joint-search path.
+        doc_ids: Optional comma-separated candidate book IDs from `book_search`.
+        scopes: Optional comma-separated scopes: `user`, `thread`, `global`.
     """
     try:
         from src.community.knowledge_base.retriever import get_retriever

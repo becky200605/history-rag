@@ -13,6 +13,7 @@ from src.community.knowledge_base.book_metadata import (
 from src.community.knowledge_base.common import (
     derive_global_doc_id,
     derive_thread_doc_id,
+    derive_user_doc_id,
     extract_title_from_text,
     normalize_search_text,
     resolve_project_path,
@@ -20,6 +21,7 @@ from src.community.knowledge_base.common import (
 )
 from src.community.knowledge_base.ingestion import list_ingestion_records
 from src.community.knowledge_base.structured_document import load_structured_document
+from src.community.knowledge_base.user_store import list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
@@ -430,6 +432,7 @@ def _build_global_entries(
         return []
 
     entries: list[BookCatalogEntry] = []
+    seen_filenames: set[str] = set()
     ingestion_dir = docs_root / ".ingestion"
 
     if ingestion_dir.exists():
@@ -468,6 +471,42 @@ def _build_global_entries(
                 search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
             )
             entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
+            seen_filenames.add(str(source_filename))
+            if preview_filename:
+                seen_filenames.add(str(preview_filename))
+
+    for path in sorted(docs_root.iterdir()):
+        if not path.is_file():
+            continue
+        if path.name.startswith("."):
+            continue
+        if path.suffix.lower() in {".json", ".jsonl"}:
+            continue
+        if path.name in seen_filenames:
+            continue
+
+        preview = _read_preview(path)
+        search_excerpt = _read_preview(path, max_chars=3600)
+        if not preview and path.suffix.lower() == ".structured" and path.name.endswith(".structured.json"):
+            preview = _read_structured_preview(path)
+        if not search_excerpt and path.suffix.lower() == ".structured" and path.name.endswith(".structured.json"):
+            search_excerpt = _read_structured_search_excerpt(path)
+
+        title = path.stem
+        extracted_title = extract_title_from_text(preview, title)
+        entry = BookCatalogEntry(
+            doc_id=derive_global_doc_id(docs_root, path),
+            title=title,
+            filename=path.name,
+            scope="global",
+            source_path=str(path),
+            source_url=f"/api/knowledge/docs/{path.name}",
+            original_url=None,
+            preview=preview[:240],
+            search_text=normalize_search_text(f"{title} {extracted_title} {search_excerpt}"),
+            search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
+        )
+        entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
 
     return entries
 
@@ -522,12 +561,67 @@ def _build_thread_entries(
     return entries
 
 
-def list_book_catalog(thread_id: str | None = None) -> list[BookCatalogEntry]:
-    """List global knowledge books plus optional current-thread uploads."""
+def _build_user_entries(
+    user_id: str,
+    metadata_index: dict[str, CatalogMetadataRecord],
+) -> list[BookCatalogEntry]:
+    docs_dir = get_paths().user_knowledge_docs_dir(user_id)
+    if not docs_dir.exists():
+        return []
+
+    entries: list[BookCatalogEntry] = []
+    for record in list_user_records(user_id):
+        if not record.get("retrieval_enabled") or not record.get("indexable"):
+            continue
+
+        record_id = str(record.get("id") or "")
+        target_filename = str(record.get("index_target_filename") or "")
+        source_filename = str(record.get("source_filename") or target_filename)
+        if not record_id or not target_filename:
+            continue
+
+        preview_filename = record.get("preview_filename")
+        preview_path = docs_dir / str(preview_filename or source_filename or target_filename)
+        structured_path = Path(str(record.get("structured_path"))) if record.get("structured_path") else None
+        if not preview_path.exists() and not structured_path:
+            continue
+
+        preview = _read_preview(preview_path) if preview_path.exists() else ""
+        search_excerpt = _read_preview(preview_path, max_chars=3600) if preview_path.exists() else ""
+        if not preview and structured_path:
+            preview = _read_structured_preview(structured_path)
+        if not search_excerpt and structured_path:
+            search_excerpt = _read_structured_search_excerpt(structured_path)
+
+        title = record.get("display_title") or record.get("title") or Path(source_filename or target_filename).stem
+        extracted_title = extract_title_from_text(preview, str(title))
+        entry = BookCatalogEntry(
+            doc_id=derive_user_doc_id(record_id),
+            title=str(title),
+            filename=source_filename or target_filename,
+            scope="user",
+            source_path=str(preview_path),
+            source_url=str(record.get("preview_artifact_url") or record.get("source_artifact_url") or ""),
+            original_url=str(record.get("source_artifact_url") or "") or None,
+            preview=preview[:240],
+            search_text=normalize_search_text(f"{title} {extracted_title} {search_excerpt}"),
+            search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
+            type="user",
+        )
+        entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
+
+    return entries
+
+
+def list_book_catalog(thread_id: str | None = None, user_id: str | None = None) -> list[BookCatalogEntry]:
+    """List user/global knowledge books plus optional current-thread uploads."""
     kb_config = get_knowledge_base_config()
     docs_root = resolve_project_path(kb_config.docs_path)
     metadata_index = _load_book_metadata_index(docs_root)
     entries = _build_global_entries(docs_root, metadata_index)
+    if user_id:
+        user_metadata_index = _load_book_metadata_index(get_paths().user_knowledge_docs_dir(user_id))
+        entries = _build_user_entries(user_id, user_metadata_index) + entries
     if thread_id:
         thread_metadata_index = _load_book_metadata_index(get_paths().sandbox_uploads_dir(thread_id))
         entries = _build_thread_entries(thread_id, thread_metadata_index) + entries
@@ -598,9 +692,14 @@ def _exact_match_boost(entry: BookCatalogEntry, query: str, query_tokens: list[s
     return boost
 
 
-def search_book_catalog(query: str, thread_id: str | None = None, top_k: int = 8) -> list[BookCatalogEntry]:
+def search_book_catalog(
+    query: str,
+    thread_id: str | None = None,
+    user_id: str | None = None,
+    top_k: int = 8,
+) -> list[BookCatalogEntry]:
     """Return the most relevant candidate books for a query."""
-    entries = list_book_catalog(thread_id)
+    entries = list_book_catalog(thread_id=thread_id, user_id=user_id)
     tokens = tokenize_search_text(query)
     if not entries or not tokens:
         return []

@@ -1,3 +1,5 @@
+import re
+
 from langchain_core.embeddings import Embeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
@@ -14,11 +16,127 @@ Module for retrieving documents from the knowledge base using Qdrant.
 """
 
 _retriever_instance = None
+DEFAULT_SEARCH_SCOPES = ("user", "thread", "global")
+MIN_RESULT_LIMIT = 6
+MIN_PER_QUERY_TOP_K = 4
+MAX_QUERY_VARIANTS = 8
+EXACT_LOOKUP_HINTS = (
+    "原文",
+    "原句",
+    "逐字",
+    "页",
+    "段",
+    "行",
+    "表",
+    "图",
+    "标题",
+    "引文",
+    "引用",
+    "怎么写",
+)
+BROAD_EXPLORATION_HINTS = (
+    "人物",
+    "时期",
+    "时代",
+    "阶段",
+    "历史",
+    "沿革",
+    "演变",
+    "变迁",
+    "经过",
+    "原因",
+    "影响",
+    "生平",
+    "经历",
+    "活动",
+    "思想",
+    "政策",
+    "制度",
+)
+PERIOD_QUERY_HINTS = (
+    "时期",
+    "时代",
+    "阶段",
+    "年间",
+    "前期",
+    "后期",
+)
+HISTORICAL_PERIOD_FACETS = {
+    "民国": ["南京临时政府", "北洋政府", "南京国民政府", "抗日战争时期", "解放战争时期"],
+    "民国时期": ["南京临时政府", "北洋政府", "南京国民政府", "抗日战争时期", "解放战争时期"],
+    "晚清": ["同治时期", "光绪时期", "清末新政", "宣统时期", "预备立宪"],
+    "清末": ["同治时期", "光绪时期", "清末新政", "宣统时期", "预备立宪"],
+    "北洋时期": ["袁世凯时期", "皖系时期", "直系时期", "奉系时期"],
+}
 SCOPE_BOOSTS = {
     "user": 1.05,
     "thread": 1.0,
     "global": 0.95,
 }
+
+
+def _normalize_query_text(query: str) -> str:
+    return re.sub(r"\s+", " ", query).strip()
+
+
+def _looks_like_exact_lookup(query: str) -> bool:
+    normalized = _normalize_query_text(query)
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in ("“", "”", "\"", "《", "》")):
+        return True
+    if re.search(r"第\s*\d+\s*[页段行章节卷]", normalized):
+        return True
+    return any(hint in normalized for hint in EXACT_LOOKUP_HINTS)
+
+
+def _is_broad_exploration_query(query: str) -> bool:
+    normalized = _normalize_query_text(query)
+    if not normalized or _looks_like_exact_lookup(normalized):
+        return False
+    if len(normalized) <= 24:
+        return True
+    return any(hint in normalized for hint in BROAD_EXPLORATION_HINTS)
+
+
+def _build_query_variants(query: str) -> list[dict[str, str | float]]:
+    normalized = _normalize_query_text(query)
+    if not normalized:
+        return [{"query": query, "label": "原始问题", "weight": 1.0}]
+
+    variants: list[dict[str, str | float]] = [
+        {"query": normalized, "label": "原始问题", "weight": 1.0},
+    ]
+    seen = {normalized}
+
+    def add_variant(text: str, label: str, weight: float) -> None:
+        candidate = _normalize_query_text(text)
+        if not candidate or candidate in seen or len(variants) >= MAX_QUERY_VARIANTS:
+            return
+        seen.add(candidate)
+        variants.append({"query": candidate, "label": label, "weight": weight})
+
+    if _is_broad_exploration_query(normalized):
+        add_variant(f"{normalized} 史料记载", "史料记载", 0.97)
+        add_variant(f"{normalized} 事件经过", "事件经过", 0.95)
+        add_variant(f"{normalized} 背景影响", "背景影响", 0.93)
+
+        if any(hint in normalized for hint in PERIOD_QUERY_HINTS):
+            add_variant(f"{normalized} 阶段脉络", "阶段脉络", 0.92)
+
+        for period, facets in HISTORICAL_PERIOD_FACETS.items():
+            if period not in normalized:
+                continue
+            for facet in facets:
+                add_variant(f"{facet} {normalized}", f"{period}分期:{facet}", 0.91)
+                if len(variants) >= MAX_QUERY_VARIANTS:
+                    break
+            if len(variants) >= MAX_QUERY_VARIANTS:
+                break
+
+    return variants
+
+
 SOURCE_KIND_BOOSTS = {
     "annotation": 1.30,
     "excerpt": 1.20,
@@ -90,13 +208,20 @@ class KnowledgeBaseRetriever:
             )
         )
         base_score = float(result.get("score", 0.0) or 0.0)
-        return base_score * SCOPE_BOOSTS.get(scope, 1.0) * SOURCE_KIND_BOOSTS.get(source_kind, 1.0)
+        query_variant_weight = float(result.get("query_variant_weight", 1.0) or 1.0)
+        return (
+            base_score
+            * SCOPE_BOOSTS.get(scope, 1.0)
+            * SOURCE_KIND_BOOSTS.get(source_kind, 1.0)
+            * query_variant_weight
+        )
 
     def _search_collection(
         self,
         collection_name: str,
         query: str,
         doc_ids: list[str] | None = None,
+        top_k: int | None = None,
     ) -> list[dict]:
         vector_store = QdrantVectorStore(
             client=self.client,
@@ -117,7 +242,7 @@ class KnowledgeBaseRetriever:
 
         results = vector_store.similarity_search_with_score(
             query,
-            k=self.config.retrieval.top_k,
+            k=top_k or self.config.retrieval.top_k,
             filter=qdrant_filter,
             score_threshold=self.config.retrieval.score_threshold,
         )
@@ -142,6 +267,79 @@ class KnowledgeBaseRetriever:
 
         return formatted_results
 
+    def _merge_duplicate_results(self, results: list[dict]) -> list[dict]:
+        deduped: dict[tuple[str, int | None, int | None, str, str], dict] = {}
+        for result in results:
+            metadata = result.get("metadata", {})
+            dedupe_key = (
+                metadata.get("origin_doc_id")
+                or metadata.get("doc_id")
+                or result.get("filename", ""),
+                metadata.get("pdf_page_no")
+                or metadata.get("page_no")
+                or metadata.get("page")
+                or metadata.get("line_start"),
+                metadata.get("paragraph_no_in_doc")
+                or metadata.get("paragraph_no")
+                or metadata.get("line_end"),
+                result.get("content", ""),
+                metadata.get("source_kind", ""),
+            )
+            existing = deduped.get(dedupe_key)
+            if existing is None:
+                result.setdefault("matched_queries", [])
+                if result.get("matched_query") and result["matched_query"] not in result["matched_queries"]:
+                    result["matched_queries"].append(result["matched_query"])
+                deduped[dedupe_key] = result
+                continue
+
+            existing_queries = existing.setdefault("matched_queries", [])
+            for matched_query in result.get("matched_queries") or []:
+                if matched_query not in existing_queries:
+                    existing_queries.append(matched_query)
+            if result.get("matched_query") and result["matched_query"] not in existing_queries:
+                existing_queries.append(result["matched_query"])
+            if result.get("weighted_score", result.get("score", 0)) > existing.get(
+                "weighted_score",
+                existing.get("score", 0),
+            ):
+                existing.update(result)
+                existing["matched_queries"] = existing_queries
+
+        return list(deduped.values())
+
+    def _select_diverse_results(self, results: list[dict], limit: int) -> list[dict]:
+        remaining = list(results)
+        selected: list[dict] = []
+        seen_doc_ids: dict[str, int] = {}
+        seen_titles: dict[str, int] = {}
+
+        while remaining and len(selected) < limit:
+            best_index = 0
+            best_score = -1.0
+            for index, candidate in enumerate(remaining):
+                metadata = candidate.get("metadata", {})
+                doc_id = str(metadata.get("origin_doc_id") or metadata.get("doc_id") or "")
+                title = str(metadata.get("title") or candidate.get("filename") or "")
+                adjusted_score = float(candidate.get("weighted_score", candidate.get("score", 0.0)) or 0.0)
+                adjusted_score *= 0.9 ** seen_doc_ids.get(doc_id, 0)
+                adjusted_score *= 0.95 ** seen_titles.get(title, 0)
+                if adjusted_score > best_score:
+                    best_index = index
+                    best_score = adjusted_score
+
+            chosen = remaining.pop(best_index)
+            selected.append(chosen)
+            chosen_metadata = chosen.get("metadata", {})
+            chosen_doc_id = str(chosen_metadata.get("origin_doc_id") or chosen_metadata.get("doc_id") or "")
+            chosen_title = str(chosen_metadata.get("title") or chosen.get("filename") or "")
+            if chosen_doc_id:
+                seen_doc_ids[chosen_doc_id] = seen_doc_ids.get(chosen_doc_id, 0) + 1
+            if chosen_title:
+                seen_titles[chosen_title] = seen_titles.get(chosen_title, 0) + 1
+
+        return selected
+
     def search(
         self,
         query: str,
@@ -151,7 +349,13 @@ class KnowledgeBaseRetriever:
         scopes: list[str] | None = None,
     ) -> list[dict]:
         """Search for relevant documents."""
-        enabled_scopes = scopes or ["user", "thread", "global"]
+        enabled_scopes = scopes or list(DEFAULT_SEARCH_SCOPES)
+        query_variants = _build_query_variants(query)
+        per_query_top_k = max(self.config.retrieval.top_k, MIN_PER_QUERY_TOP_K)
+        final_limit = max(
+            self.config.retrieval.top_k,
+            MIN_RESULT_LIMIT if len(query_variants) > 1 else self.config.retrieval.top_k,
+        )
         collections: list[str] = []
         if user_id and "user" in enabled_scopes:
             collections.append(
@@ -172,65 +376,54 @@ class KnowledgeBaseRetriever:
             collections.append(self.config.qdrant.collection_name)
 
         merged_results: list[dict] = []
-        for collection_name in collections:
-            try:
-                merged_results.extend(
-                    self._search_collection(
+        for variant in query_variants:
+            variant_query = str(variant["query"])
+            variant_label = str(variant["label"])
+            variant_weight = float(variant["weight"])
+
+            for collection_name in collections:
+                try:
+                    results = self._search_collection(
                         collection_name,
-                        query,
+                        variant_query,
                         doc_ids=doc_ids
                         if collection_name == self.config.qdrant.collection_name
                         else None,
+                        top_k=per_query_top_k,
                     )
-                )
-            except Exception:
-                continue
+                except Exception:
+                    continue
+                for result in results:
+                    result["matched_query"] = variant_label
+                    result["query_variant"] = variant_query
+                    result["query_variant_weight"] = variant_weight
+                    merged_results.append(result)
 
-        try:
-            merged_results.extend(
-                lexical_search_documents(
-                    query,
+            try:
+                lexical_results = lexical_search_documents(
+                    variant_query,
                     thread_id=thread_id,
                     user_id=user_id,
                     doc_ids=doc_ids,
                     scopes=enabled_scopes,
-                    top_k=self.config.retrieval.top_k,
+                    top_k=per_query_top_k,
                 )
-            )
-        except Exception:
-            pass
+            except Exception:
+                lexical_results = []
+
+            for result in lexical_results:
+                result["matched_query"] = variant_label
+                result["query_variant"] = variant_query
+                result["query_variant_weight"] = variant_weight
+                merged_results.append(result)
 
         for result in merged_results:
             result["weighted_score"] = self._score_result(result)
 
         merged_results.sort(key=lambda item: item.get("weighted_score", item.get("score", 0)), reverse=True)
-
-        deduped_results: list[dict] = []
-        seen_keys: set[tuple[str, int | None, int | None, str, str]] = set()
-        for result in merged_results:
-            metadata = result.get("metadata", {})
-            dedupe_key = (
-                metadata.get("origin_doc_id")
-                or metadata.get("doc_id")
-                or result.get("filename", ""),
-                metadata.get("pdf_page_no")
-                or metadata.get("page_no")
-                or metadata.get("page")
-                or metadata.get("line_start"),
-                metadata.get("paragraph_no_in_doc")
-                or metadata.get("paragraph_no")
-                or metadata.get("line_end"),
-                result.get("content", ""),
-                metadata.get("source_kind", ""),
-            )
-            if dedupe_key in seen_keys:
-                continue
-            seen_keys.add(dedupe_key)
-            deduped_results.append(result)
-            if len(deduped_results) >= self.config.retrieval.top_k:
-                break
-
-        return deduped_results
+        deduped_results = self._merge_duplicate_results(merged_results)
+        deduped_results.sort(key=lambda item: item.get("weighted_score", item.get("score", 0)), reverse=True)
+        return self._select_diverse_results(deduped_results, limit=final_limit)
 
 
 def get_retriever() -> KnowledgeBaseRetriever:

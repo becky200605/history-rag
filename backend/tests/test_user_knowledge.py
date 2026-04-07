@@ -10,6 +10,8 @@ from langchain_core.documents import Document
 if "qdrant_client" not in sys.modules:
     qdrant_client = ModuleType("qdrant_client")
     qdrant_models = ModuleType("qdrant_client.models")
+    qdrant_http = ModuleType("qdrant_client.http")
+    qdrant_http_exceptions = ModuleType("qdrant_client.http.exceptions")
 
     class _DummyQdrantClient:  # pragma: no cover - test import shim
         def __init__(self, *args, **kwargs) -> None:
@@ -41,6 +43,9 @@ if "qdrant_client" not in sys.modules:
             self.args = args
             self.kwargs = kwargs
 
+    class _DummyResponseHandlingException(Exception):  # pragma: no cover - test import shim
+        pass
+
     qdrant_client.QdrantClient = _DummyQdrantClient
     qdrant_client.models = qdrant_models
     qdrant_models.Distance = _DummyDistance
@@ -48,8 +53,11 @@ if "qdrant_client" not in sys.modules:
     qdrant_models.Filter = _DummyFilter
     qdrant_models.FieldCondition = _DummyFieldCondition
     qdrant_models.MatchAny = _DummyMatchAny
+    qdrant_http_exceptions.ResponseHandlingException = _DummyResponseHandlingException
     sys.modules["qdrant_client"] = qdrant_client
     sys.modules["qdrant_client.models"] = qdrant_models
+    sys.modules["qdrant_client.http"] = qdrant_http
+    sys.modules["qdrant_client.http.exceptions"] = qdrant_http_exceptions
 
 if "langchain_qdrant" not in sys.modules:
     langchain_qdrant = ModuleType("langchain_qdrant")
@@ -201,7 +209,7 @@ def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) 
 
     retriever = retriever_module.KnowledgeBaseRetriever()
 
-    def fake_search_collection(collection_name: str, query: str, doc_ids=None):
+    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
         if "__user__" in collection_name:
             return [
                 {
@@ -243,6 +251,65 @@ def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) 
     results = retriever.search("query", thread_id="thread-1", user_id="user-1")
 
     assert [result["content"] for result in results[:3]] == ["用户知识", "会话知识", "公共知识"]
+
+
+def test_retriever_expands_broad_historical_query_and_merges_matched_queries(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            retrieval=SimpleNamespace(top_k=3, score_threshold=0.0),
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
+    monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
+    seen_queries: list[tuple[str, str, list[str] | None, int | None]] = []
+
+    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
+        seen_queries.append((collection_name, query, doc_ids, top_k))
+        doc_id = "global-doc" if collection_name == "knowledge_base" else f"{collection_name}-doc"
+        scope = "global"
+        source_kind = "global_document"
+        filename = "global.md"
+        if "__user__" in collection_name:
+            scope = "user"
+            source_kind = "upload"
+            filename = "user.md"
+        return [
+            {
+                "content": "重复片段" if scope == "global" else f"{scope}-独立片段",
+                "score": 1.0,
+                "filename": filename,
+                "source": filename,
+                "page": None,
+                "source_type": "structured",
+                "metadata": {
+                    "scope": scope,
+                    "source_kind": source_kind,
+                    "doc_id": doc_id,
+                    "title": "民国财政史料" if scope == "global" else "个人笔记",
+                },
+            }
+        ]
+
+    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+
+    results = retriever.search("民国时期财政有什么变化", thread_id="thread-1", user_id="user-1")
+
+    executed_queries = [query for _, query, _, _ in seen_queries]
+    assert "民国时期财政有什么变化" in executed_queries
+    assert any("史料记载" in query for query in executed_queries)
+    assert any("北洋政府" in query for query in executed_queries)
+    assert any("南京国民政府" in query for query in executed_queries)
+    assert all(top_k == 4 for _, _, _, top_k in seen_queries)
+
+    global_result = next(result for result in results if result["metadata"]["scope"] == "global")
+    assert "原始问题" in global_result["matched_queries"]
+    assert any(label.startswith("民国分期:") for label in global_result["matched_queries"])
 
 
 def test_get_qdrant_client_uses_configured_server_timeout(monkeypatch) -> None:

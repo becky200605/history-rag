@@ -31,7 +31,7 @@ from src.community.knowledge_base.citations import resolve_result_citation_conte
 from src.community.knowledge_base.locator import extract_document_context, locate_document
 
 BOOK_SEARCH_TOP_K = 8
-KNOWLEDGE_SEARCH_TOP_K = 3
+KNOWLEDGE_SEARCH_TOP_K = 6
 KNOWLEDGE_RESULT_MAX_CHARS = 900
 KNOWLEDGE_RESULT_MAX_LINES = 24
 ALLOWED_SEARCH_SCOPES = {"user", "thread", "global"}
@@ -167,8 +167,9 @@ def _group_book_candidates(candidates: list[BookCatalogEntry]) -> dict[str, list
 def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) -> str:
     """Search candidate books before full-text retrieval.
 
-    Use this tool first when the corpus is large or when you need to narrow the
-    search to a smaller set of likely relevant books before calling `knowledge_search`.
+    Use this tool when the corpus is large and you need candidate global books
+    before calling `knowledge_search`. Do not treat this as a user-only step:
+    normal historical QA should combine user knowledge and global knowledge.
 
     Args:
         query: The user's research question or topic description.
@@ -207,10 +208,11 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
 
     lines.append("---")
     lines.append("推荐链路:")
-    lines.append("1. 先查个人知识：`knowledge_search(query=..., scopes=\"user\")`。")
-    lines.append("2. 如果个人知识不足，再优先用 `core doc_ids` 调 `knowledge_search(query=..., doc_ids=..., scopes=\"global\")`。")
-    lines.append("3. 只有核心通用书证据不足且问题明显需要专题材料时，才扩大到 `specialized doc_ids` 或 `reference doc_ids`。")
-    lines.append("4. `all doc_ids` 或不带 `doc_ids` 的整库检索，仅在最后阶段使用。")
+    lines.append("1. 默认做联合检索：`knowledge_search(query=...)`，同时覆盖 user/thread/global。")
+    lines.append("2. 如果问题明显是历史人物、历史事件、历史时期，先把问题拆成若干子面向再检索，例如人物的生平/活动/评价，时期的前后阶段/关键政权/制度变化。")
+    lines.append("3. 如果需要收束全库范围，再优先用 `core doc_ids` 调 `knowledge_search(query=..., doc_ids=..., scopes=\"global\")`。")
+    lines.append("4. 只有核心通用书证据不足且问题明显需要专题材料时，才扩大到 `specialized doc_ids` 或 `reference doc_ids`。")
+    lines.append("5. 不要只抓综述段落；优先汇总多个分散片段后再回答。")
     if core_doc_ids:
         lines.append(f"core doc_ids: {core_doc_ids}")
     if specialized_doc_ids:
@@ -230,20 +232,27 @@ def knowledge_search_tool(
 ) -> str:
     """Search the internal knowledge base for domain-specific information.
 
-    Use this tool in staged retrieval:
-    1. Search personal knowledge first with `scopes="user"`.
-    2. If still insufficient, search global/core knowledge with `scopes="global"` and
-       candidate `doc_ids` from `book_search`.
-    3. Search specialized/global-wide material only at a later stage when the earlier
-       evidence is insufficient or the query explicitly asks for exact wording.
+    Default behavior is joint retrieval across user/thread/global so the model
+    can answer with both personal and system-level evidence. For broad history
+    questions, this tool also expands the query into multiple investigative
+    facets so scattered records can be gathered and synthesized together.
+
+    Recommended use:
+    1. For normal questions, call `knowledge_search(query=...)` and let it search
+       user + thread + global together.
+    2. If you already narrowed likely global books with `book_search`, pass
+       `doc_ids` to focus the global side while still keeping scope control explicit.
+    3. For exact quotation / page / paragraph lookups, you may use narrower
+       scopes or doc filters and then call `knowledge_locate` for nearby context.
 
     This tool searches through curated internal documents and returns relevant
     knowledge snippets with source document references.
 
     Args:
         query: The search query describing what information you need.
-        doc_ids: Optional comma-separated candidate book IDs from `book_search`.
-        scopes: Optional comma-separated scopes: `user`, `thread`, `global`.
+        doc_ids: Optional comma-separated candidate global book IDs from `book_search`.
+        scopes: Optional comma-separated scopes: `user`, `thread`, `global`. Omit this
+            for the normal joint-search path.
     """
     try:
         from src.community.knowledge_base.retriever import get_retriever
@@ -279,6 +288,7 @@ def knowledge_search_tool(
         doc_id = metadata.get("doc_id")
         line_start = metadata.get("line_start")
         line_end = metadata.get("line_end")
+        matched_queries = [str(item) for item in result.get("matched_queries") or [] if str(item).strip()]
         citation_context = resolve_result_citation_context(
             result,
             thread_id=runtime.context.get("thread_id"),
@@ -298,6 +308,8 @@ def knowledge_search_tool(
         formatted_output += f"### 来源 {i}: {title} - 相关度: {score:.2f}\n"
         if doc_id:
             formatted_output += f"doc_id: {doc_id}\n"
+        if matched_queries:
+            formatted_output += f"命中分面: {'、'.join(matched_queries)}\n"
         if citation_context.get("source_label") and citation_context.get("source_scope") in {"user", "thread"}:
             formatted_output += f"来源类型: {citation_context['source_label']}\n"
         if (
@@ -324,6 +336,7 @@ def knowledge_search_tool(
         formatted_output += f"{content}\n\n"
 
     formatted_output += "---\n"
+    formatted_output += "这些结果已经做过联合检索与分面扩展；回答前先归并不同来源里的分散证据，不要只摘取单个综述段落。\n"
     formatted_output += "使用答案时，直接复制上面的 `citation:` 行，不要自己重写。\n"
     formatted_output += "如果需要更多上下文，调用 `knowledge_locate`；不要去读原始 PDF 或 `.structured.json`。\n"
     formatted_output += "如果证据不足，使用 `【无法回答】` 开头直接拒答，并简要说明当前资料范围内没有足够依据。"

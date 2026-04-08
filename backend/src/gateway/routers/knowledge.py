@@ -44,6 +44,7 @@ from src.community.knowledge_base.structured_document import (
 )
 from src.community.knowledge_base.translation_grpc import translate_blocks_to_chinese_via_grpc
 from src.config.knowledge_base_config import get_knowledge_base_config
+from src.community.knowledge_base.common import derive_global_doc_id
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +258,39 @@ class TranslationBlockRequest(BaseModel):
 
 class TranslateBlocksRequest(BaseModel):
     paragraphs: list[TranslationBlockRequest]
+    source_language_hint: str | None = None
+
+
+def _build_structured_page_payload(document: Any, *, page_no: int | None, pdf_page_no: int | None) -> dict[str, Any] | None:
+    for page in document.payload.get("pages") or []:
+        current_page_no = int(page.get("page_no") or 0)
+        current_pdf_page_no = int(page.get("pdf_page_no") or current_page_no)
+        if page_no is not None and current_page_no != page_no:
+            continue
+        if pdf_page_no is not None and current_pdf_page_no != pdf_page_no:
+            continue
+        return {
+            "doc_id": document.doc_id,
+            "scope": document.scope,
+            "filename": document.filename,
+            "title": document.title,
+            "page_count": len(list(document.payload.get("pages") or [])),
+            "page_no": page.get("page_no"),
+            "pdf_page_no": page.get("pdf_page_no"),
+            "book_page_no": page.get("book_page_no"),
+            "page_number_source": page.get("page_number_source"),
+            "page_meta": page.get("meta") or {},
+            "paragraphs": [
+                {
+                    **paragraph,
+                    "bbox": paragraph.get("bbox") or build_bbox_from_position(paragraph.get("position")),
+                }
+                for paragraph in page.get("paragraphs") or []
+            ],
+            "source_url": _encode_url_path(document.source_url),
+            "original_url": _encode_url_path(document.original_url),
+        }
+    return None
 
 
 async def save_upload_file(file: UploadFile, destination: Path, chunk_size: int = UPLOAD_CHUNK_SIZE) -> int:
@@ -1033,6 +1067,8 @@ def list_global_knowledge_files() -> dict:
 
         stat = file_path.stat()
         entry: dict[str, Any] = {
+            "doc_id": derive_global_doc_id(docs_dir, file_path),
+            "scope": "global",
             "filename": file_path.name,
             "size": stat.st_size,
             "extension": file_path.suffix,
@@ -1270,6 +1306,7 @@ async def retry_global_knowledge_file(filename: str) -> dict:
     should_enqueue_embedding = bool(record.get("index_target_path")) and current_status in {
         "parsed",
         "index_failed",
+        "indexed",
     }
     should_enqueue_ocr = current_status in {"failed", "uploaded", "pending_parse"} or not should_enqueue_embedding
 
@@ -1483,34 +1520,9 @@ def get_knowledge_structured_page(
     if not document:
         raise HTTPException(status_code=404, detail="Structured document not found")
 
-    for page in document.payload.get("pages") or []:
-        current_page_no = int(page.get("page_no") or 0)
-        current_pdf_page_no = int(page.get("pdf_page_no") or current_page_no)
-        if page_no is not None and current_page_no != page_no:
-            continue
-        if pdf_page_no is not None and current_pdf_page_no != pdf_page_no:
-            continue
-        return {
-            "doc_id": document.doc_id,
-            "scope": document.scope,
-            "filename": document.filename,
-            "title": document.title,
-            "page_count": len(list(document.payload.get("pages") or [])),
-            "page_no": page.get("page_no"),
-            "pdf_page_no": page.get("pdf_page_no"),
-            "book_page_no": page.get("book_page_no"),
-            "page_number_source": page.get("page_number_source"),
-            "page_meta": page.get("meta") or {},
-            "paragraphs": [
-                {
-                    **paragraph,
-                    "bbox": paragraph.get("bbox") or build_bbox_from_position(paragraph.get("position")),
-                }
-                for paragraph in page.get("paragraphs") or []
-            ],
-            "source_url": _encode_url_path(document.source_url),
-            "original_url": _encode_url_path(document.original_url),
-        }
+    payload = _build_structured_page_payload(document, page_no=page_no, pdf_page_no=pdf_page_no)
+    if payload is not None:
+        return payload
 
     raise HTTPException(status_code=404, detail="Structured page not found")
 
@@ -1543,7 +1555,10 @@ def translate_knowledge_blocks(
         return {"translations": []}
 
     try:
-        translations = translate_blocks_to_chinese_via_grpc(blocks)
+        translations = translate_blocks_to_chinese_via_grpc(
+            blocks,
+            source_language_hint=payload.source_language_hint,
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Translation failed: {exc}") from exc
 

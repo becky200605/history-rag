@@ -2,14 +2,17 @@
 
 import {
   BookmarkPlusIcon,
+  CheckSquareIcon,
   FileIcon,
   Loader2Icon,
   PencilIcon,
   RefreshCwIcon,
   SearchIcon,
+  SquareIcon,
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -306,12 +309,15 @@ function retryActionLabel(status?: string) {
       return "重新解析";
     case "index_failed":
       return "重新入库";
+    case "indexed":
+      return "重新入库";
     default:
       return "重试";
   }
 }
 
 export default function KnowledgeManagementPage() {
+  const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -330,6 +336,7 @@ export default function KnowledgeManagementPage() {
   const [regionsInput, setRegionsInput] = useState("");
   const [keywordsInput, setKeywordsInput] = useState("");
   const [summaryInput, setSummaryInput] = useState("");
+  const [selectedFilenames, setSelectedFilenames] = useState<string[]>([]);
 
   const { data, isLoading, error, refetch, isFetching } = useKnowledgeFiles();
   const uploadMutation = useUploadKnowledgeFiles();
@@ -421,6 +428,42 @@ export default function KnowledgeManagementPage() {
     });
   }, [searchQuery, sortedFiles, statusFilter]);
 
+  useEffect(() => {
+    const visibleFilenames = new Set(filteredFiles.map((file) => file.filename));
+    setSelectedFilenames((current) =>
+      current.filter((filename) => visibleFilenames.has(filename)),
+    );
+  }, [filteredFiles]);
+
+  const selectedFiles = useMemo(
+    () => filteredFiles.filter((file) => selectedFilenames.includes(file.filename)),
+    [filteredFiles, selectedFilenames],
+  );
+  const selectableVisibleFiles = useMemo(
+    () =>
+      filteredFiles.filter(
+        (file) => Boolean(file.doc_id) && file.parse_status === "indexed",
+      ),
+    [filteredFiles],
+  );
+
+  const allVisibleSelected =
+    selectableVisibleFiles.length > 0 &&
+    selectedFiles.length === selectableVisibleFiles.length;
+
+  const selectedMaterialsPayload = useMemo(
+    () =>
+      selectedFiles
+        .filter((file) => Boolean(file.doc_id) && file.parse_status === "indexed")
+        .map((file) => ({
+          doc_id: String(file.doc_id),
+          title: file.filename.replace(/\.[^.]+$/, ""),
+          filename: file.filename,
+          scope: file.scope ?? "global",
+        })),
+    [selectedFiles],
+  );
+
   const resetUploadDialog = () => {
     setPendingFiles([]);
     setIsUploadDialogOpen(false);
@@ -490,7 +533,7 @@ export default function KnowledgeManagementPage() {
 
   const handleImportToPersonal = async (filename: string) => {
     try {
-      const result = await importMutation.mutateAsync(filename);
+      const result = await importMutation.mutateAsync({ filename });
       toast.success(result.message);
     } catch (importError) {
       toast.error((importError as Error).message || "加入知识库失败");
@@ -591,6 +634,39 @@ export default function KnowledgeManagementPage() {
     } catch (regenerateError) {
       toast.error((regenerateError as Error).message || "AI 生成失败");
     }
+  };
+
+  const toggleFileSelection = (filename: string) => {
+    setSelectedFilenames((current) =>
+      current.includes(filename)
+        ? current.filter((item) => item !== filename)
+        : [...current, filename],
+    );
+  };
+
+  const handleToggleAllVisible = () => {
+    if (allVisibleSelected) {
+      setSelectedFilenames([]);
+      return;
+    }
+    setSelectedFilenames(
+      filteredFiles
+        .filter((file) => file.parse_status === "indexed" && file.doc_id)
+        .map((file) => file.filename),
+    );
+  };
+
+  const handleStartChat = () => {
+    if (selectedMaterialsPayload.length === 0) {
+      toast.error("请先勾选已入库的资料");
+      return;
+    }
+
+    router.push(
+      `/workspace/chats/new?materials=${encodeURIComponent(
+        JSON.stringify(selectedMaterialsPayload),
+      )}`,
+    );
   };
 
   return (
@@ -781,6 +857,17 @@ export default function KnowledgeManagementPage() {
                 <Button
                   variant="outline"
                   size="sm"
+                  className="h-8 border-[rgba(57,130,152,0.18)] bg-white px-3 text-[rgb(23,89,108)]"
+                  onClick={handleStartChat}
+                  disabled={selectedMaterialsPayload.length === 0}
+                >
+                  <BookmarkPlusIcon className="size-4" />
+                  基于已选资料提问
+                  {selectedMaterialsPayload.length > 0 ? ` (${selectedMaterialsPayload.length})` : ""}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   className="h-8 border-[rgba(57,130,152,0.18)] bg-white px-2.5 text-[rgb(23,89,108)]"
                   onClick={() => void refetch()}
                   disabled={isFetching}
@@ -856,6 +943,20 @@ export default function KnowledgeManagementPage() {
                 <Table className="w-[1600px] table-fixed text-xs">
                   <TableHeader className="sticky top-0 z-10 bg-[rgb(247,251,252)]/95 backdrop-blur">
                     <TableRow className="hover:bg-[rgb(247,251,252)]/95">
+                      <TableHead className="w-[60px] min-w-[60px]">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-slate-600 hover:text-slate-900"
+                          onClick={handleToggleAllVisible}
+                        >
+                          {allVisibleSelected ? (
+                            <CheckSquareIcon className="size-4" />
+                          ) : (
+                            <SquareIcon className="size-4" />
+                          )}
+                          <span className="sr-only">全选</span>
+                        </button>
+                      </TableHead>
                       <TableHead className="w-[320px] min-w-[320px]">文件</TableHead>
                       <TableHead className="w-[120px] min-w-[120px]">文档类型</TableHead>
                       <TableHead className="w-[120px] min-w-[120px]">检索类型</TableHead>
@@ -870,6 +971,9 @@ export default function KnowledgeManagementPage() {
                   </TableHeader>
                   <TableBody>
                     {filteredFiles.map((file) => {
+                      const isSelected = selectedFilenames.includes(file.filename);
+                      const canSelectForChat =
+                        Boolean(file.doc_id) && file.parse_status === "indexed";
                       const isDeleting =
                         deleteMutation.isPending &&
                         deletingFilename === file.filename;
@@ -882,7 +986,7 @@ export default function KnowledgeManagementPage() {
                       const typeLabel = knowledgeTypeLabel(file.type);
                       const canRetry =
                         file.indexable &&
-                        ["failed", "index_failed"].includes(file.parse_status ?? "");
+                        ["failed", "index_failed", "indexed"].includes(file.parse_status ?? "");
                       const retryLabel = retryActionLabel(file.parse_status);
                       const hasEditableMetadataSource =
                         Boolean(file.structured_filename) ||
@@ -895,6 +999,25 @@ export default function KnowledgeManagementPage() {
 
                       return (
                         <TableRow key={file.filename} className="h-14">
+                          <TableCell className="w-[60px] min-w-[60px] py-2.5">
+                            <button
+                              type="button"
+                              className="inline-flex items-center justify-center text-slate-600 hover:text-slate-900"
+                              onClick={() => toggleFileSelection(file.filename)}
+                              disabled={!canSelectForChat}
+                              title={
+                                canSelectForChat
+                                  ? "选择资料用于问答"
+                                  : "当前文件未完成入库，暂不可用于问答"
+                              }
+                            >
+                              {isSelected ? (
+                                <CheckSquareIcon className="size-4" />
+                              ) : (
+                                <SquareIcon className="size-4" />
+                              )}
+                            </button>
+                          </TableCell>
                           <TableCell className="w-[320px] min-w-[320px] py-2.5">
                             <div className="flex items-center gap-2">
                               <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[rgb(241,248,249)] text-[rgb(57,130,152)]">

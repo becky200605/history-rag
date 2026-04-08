@@ -1,7 +1,7 @@
 import importlib.util
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 from fastapi import HTTPException
 
@@ -171,7 +171,7 @@ def test_process_single_global_embedding_failure_is_isolated(monkeypatch) -> Non
         "next_chunk_index": 16,
         "total_chunks": 30,
         "content_fingerprint": "fp-a",
-        "batch_size": 16,
+        "batch_size": knowledge_router._get_upsert_batch_size(),
     }
     assert records["b.pdf"]["parse_status"] == "queued_embedding"
     assert records["b.pdf"]["error"] is None
@@ -275,3 +275,50 @@ def test_process_single_global_embedding_resumes_from_checkpoint(monkeypatch, tm
     assert records["a.pdf"]["parse_status"] == "indexed"
     assert records["a.pdf"]["error"] is None
     assert records["a.pdf"]["embedding_checkpoint"] is None
+
+
+async def _call_retry_global_knowledge_file(filename: str):
+    return await knowledge_router.retry_global_knowledge_file(filename)
+
+
+def test_retry_global_knowledge_file_requeues_indexed_document_for_embedding(monkeypatch, tmp_path) -> None:
+    source_path = tmp_path / "indexed.pdf"
+    source_path.write_text("pdf", encoding="utf-8")
+    records = {
+        "indexed.pdf": {
+            "source_filename": "indexed.pdf",
+            "indexable": True,
+            "parse_status": "indexed",
+            "index_target_path": "/tmp/indexed.structured.json",
+            "error": None,
+        },
+    }
+    enqueued: list[str] = []
+
+    monkeypatch.setattr(
+        knowledge_router,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(enabled=True),
+    )
+    monkeypatch.setattr(
+        knowledge_router,
+        "_find_global_record",
+        lambda filename: dict(records[filename]) if filename in records else None,
+    )
+    monkeypatch.setattr(knowledge_router, "get_global_docs_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        knowledge_router,
+        "_save_global_record",
+        lambda filename, record: records.__setitem__(filename, dict(record)),
+    )
+    monkeypatch.setattr(knowledge_router, "_ensure_global_queue_workers_started", lambda: None)
+    monkeypatch.setattr(knowledge_router, "_enqueue_global_embedding", enqueued.append)
+
+    import asyncio
+
+    result = asyncio.run(_call_retry_global_knowledge_file("indexed.pdf"))
+
+    assert result["success"] is True
+    assert "重新加入入库队列" in result["message"]
+    assert records["indexed.pdf"]["parse_status"] == "queued_embedding"
+    assert enqueued == ["indexed.pdf"]

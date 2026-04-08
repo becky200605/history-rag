@@ -168,6 +168,72 @@ def test_build_chunks_splits_long_structured_paragraph_but_preserves_metadata(mo
         assert len(chunk.page_content) <= 20
 
 
+def test_build_chunks_merges_vertical_structured_sentences_in_groups_of_five(monkeypatch) -> None:
+    _set_chunking_config(monkeypatch, chunk_size=500, chunk_overlap=0)
+
+    documents = [
+        Document(
+            page_content=f"第{i}句",
+            metadata={
+                "source": "/tmp/vertical.structured.json",
+                "source_type": "structured",
+                "layout_hint": "vertical",
+                "page_no": 3,
+                "pdf_page_no": 3,
+                "paragraph_id": f"page-3-p{i}",
+                "paragraph_no": i,
+                "paragraph_no_in_doc": i,
+                "line_start": i,
+                "line_end": i,
+            },
+        )
+        for i in range(1, 8)
+    ]
+
+    chunks = indexer._build_chunks(documents, scope="global", thread_id=None)
+
+    assert len(chunks) == 2
+    assert chunks[0].page_content == "第1句\n第2句\n第3句\n第4句\n第5句"
+    assert chunks[1].page_content == "第6句\n第7句"
+    assert chunks[0].metadata["paragraph_no"] == 1
+    assert chunks[0].metadata["paragraph_end_no"] == 5
+    assert chunks[0].metadata["merged_paragraph_count"] == 5
+    assert chunks[0].metadata["line_start"] == 1
+    assert chunks[0].metadata["line_end"] == 5
+    assert chunks[0].metadata["bbox"] is None
+    assert chunks[1].metadata["paragraph_no"] == 6
+    assert chunks[1].metadata["paragraph_end_no"] == 7
+    assert chunks[1].metadata["merged_paragraph_count"] == 2
+
+
+def test_build_chunks_keeps_horizontal_structured_sentences_unmerged(monkeypatch) -> None:
+    _set_chunking_config(monkeypatch, chunk_size=500, chunk_overlap=0)
+
+    documents = [
+        Document(
+            page_content=f"第{i}句",
+            metadata={
+                "source": "/tmp/horizontal.structured.json",
+                "source_type": "structured",
+                "layout_hint": "horizontal",
+                "page_no": 1,
+                "pdf_page_no": 1,
+                "paragraph_id": f"page-1-p{i}",
+                "paragraph_no": i,
+                "paragraph_no_in_doc": i,
+                "line_start": i,
+                "line_end": i,
+            },
+        )
+        for i in range(1, 4)
+    ]
+
+    chunks = indexer._build_chunks(documents, scope="global", thread_id=None)
+
+    assert len(chunks) == 3
+    assert [chunk.page_content for chunk in chunks] == ["第1句", "第2句", "第3句"]
+
+
 def test_upsert_documents_replaces_doc_ids_without_replacing_collection(monkeypatch) -> None:
     _set_chunking_config(monkeypatch, chunk_size=80, chunk_overlap=0)
 

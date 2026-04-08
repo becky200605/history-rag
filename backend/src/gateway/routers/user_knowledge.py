@@ -17,6 +17,13 @@ from src.community.knowledge_base.mineru_grpc import build_structured_document_f
 from src.community.knowledge_base.retriever import get_qdrant_client
 from src.community.knowledge_base.structured_document import build_bbox_from_position, build_structured_document
 from src.community.knowledge_base.translation_grpc import translate_blocks_to_chinese_via_grpc
+from src.community.knowledge_base.user_spaces import (
+    DEFAULT_KNOWLEDGE_SPACE_ID,
+    create_user_knowledge_space,
+    get_default_knowledge_space,
+    get_user_knowledge_space_map,
+    list_user_knowledge_spaces,
+)
 from src.community.knowledge_base.user_store import (
     build_user_derived_record,
     build_user_doc_public_url,
@@ -57,6 +64,12 @@ class CreateUserDerivedKnowledgeRequest(BaseModel):
     origin_anchor: dict[str, Any] | None = None
     derived_from_id: str | None = None
     hints: dict[str, str] | None = None
+    knowledge_space_id: str | None = None
+
+
+class CreateUserKnowledgeSpaceRequest(BaseModel):
+    name: str
+    description: str = ""
 
 
 class UpdateUserKnowledgeContentRequest(BaseModel):
@@ -71,6 +84,7 @@ class TranslationBlockRequest(BaseModel):
 
 class TranslateBlocksRequest(BaseModel):
     paragraphs: list[TranslationBlockRequest]
+    source_language_hint: str | None = None
 
 
 async def save_upload_file(file: UploadFile, destination: Path, chunk_size: int = UPLOAD_CHUNK_SIZE) -> int:
@@ -84,9 +98,39 @@ async def save_upload_file(file: UploadFile, destination: Path, chunk_size: int 
     return size
 
 
-def _serialize_record(record: dict[str, Any]) -> dict[str, Any]:
+def _serialize_space(space: dict[str, Any], *, stats: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = {
+        "id": space.get("id"),
+        "name": space.get("name"),
+        "description": space.get("description"),
+        "type": space.get("type"),
+        "readonly": bool(space.get("readonly", False)),
+        "is_default": bool(space.get("is_default", False)),
+        "created_at": space.get("created_at"),
+        "updated_at": space.get("updated_at"),
+    }
+    if stats:
+        payload.update(stats)
+    return payload
+
+
+def _serialize_record(
+    record: dict[str, Any],
+    *,
+    knowledge_space_map: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     source_filename = record.get("source_filename")
     preview_filename = record.get("preview_filename")
+    space_map = knowledge_space_map or {}
+    knowledge_space_id = str(record.get("knowledge_space_id") or "")
+    if not knowledge_space_id:
+        knowledge_space_id = DEFAULT_KNOWLEDGE_SPACE_ID
+    knowledge_space = space_map.get(knowledge_space_id)
+    document_type = (
+        record.get("hints", {}).get("document_type_hint")
+        if isinstance(record.get("hints"), dict)
+        else None
+    )
     return {
         "id": record.get("id"),
         "user_id": record.get("user_id"),
@@ -97,6 +141,8 @@ def _serialize_record(record: dict[str, Any]) -> dict[str, Any]:
         "origin_doc_id": record.get("origin_doc_id"),
         "origin_filename": record.get("origin_filename"),
         "origin_anchor": record.get("origin_anchor"),
+        "knowledge_space_id": knowledge_space_id,
+        "knowledge_space_name": knowledge_space.get("name") if knowledge_space else None,
         "retrieval_enabled": record.get("retrieval_enabled", False),
         "filename": source_filename,
         "size": record.get("source_size", 0),
@@ -111,10 +157,51 @@ def _serialize_record(record: dict[str, Any]) -> dict[str, Any]:
         "structured_filename": record.get("structured_filename"),
         "index_target_filename": record.get("index_target_filename"),
         "hints": record.get("hints", {}),
+        "document_type": document_type,
         "error": record.get("error"),
         "created_at": record.get("created_at"),
         "updated_at": record.get("updated_at"),
     }
+
+
+def _resolve_personal_knowledge_space_id(user_id: str, requested_space_id: str | None) -> str:
+    available_spaces = get_user_knowledge_space_map(user_id)
+    normalized = str(requested_space_id or "").strip()
+    if normalized:
+        space = available_spaces.get(normalized)
+        if not space:
+            raise HTTPException(status_code=404, detail="Knowledge space not found")
+        if str(space.get("type") or "") != "personal" or bool(space.get("readonly", False)):
+            raise HTTPException(status_code=400, detail="Knowledge space is read-only")
+        return normalized
+    return get_default_knowledge_space(user_id)["id"]
+
+
+def _build_space_stats(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    stats: dict[str, dict[str, Any]] = {}
+    for record in records:
+        space_id = str(record.get("knowledge_space_id") or "")
+        if not space_id:
+            continue
+        stat = stats.setdefault(
+            space_id,
+            {
+                "record_count": 0,
+                "document_count": 0,
+                "note_count": 0,
+                "latest_updated_at": None,
+            },
+        )
+        stat["record_count"] += 1
+        source_kind = str(record.get("source_kind") or "")
+        if source_kind in {"upload", "import_ref"}:
+            stat["document_count"] += 1
+        else:
+            stat["note_count"] += 1
+        updated_at = record.get("updated_at")
+        if updated_at and (not stat["latest_updated_at"] or str(updated_at) > str(stat["latest_updated_at"])):
+            stat["latest_updated_at"] = updated_at
+    return stats
 
 
 def _build_global_doc_id(filename: str) -> str:
@@ -304,7 +391,10 @@ def _build_record_editor_payload(user_id: str, record: dict[str, Any]) -> dict[s
         editable = True
 
     return {
-        "record": _serialize_record(record),
+        "record": _serialize_record(
+            record,
+            knowledge_space_map=get_user_knowledge_space_map(user_id),
+        ),
         "title": title,
         "mode": mode,
         "editable": editable,
@@ -369,8 +459,18 @@ def _structured_page_payload(document: Any, *, page_no: int | None, pdf_page_no:
 
 
 @router.get("/list", response_model=dict)
-def list_user_knowledge_records(user_id: str) -> dict:
+def list_user_knowledge_records(
+    user_id: str,
+    knowledge_space_id: str | None = Query(default=None),
+) -> dict:
     records = list_user_records(user_id)
+    knowledge_space_map = get_user_knowledge_space_map(user_id)
+    if knowledge_space_id:
+        records = [
+            record
+            for record in records
+            if str(record.get("knowledge_space_id") or "") == knowledge_space_id
+        ]
     indexed_count = sum(1 for record in records if record.get("parse_status") == "indexed")
     latest_updated_at = next(
         (record.get("updated_at") for record in records if record.get("updated_at")),
@@ -387,11 +487,46 @@ def list_user_knowledge_records(user_id: str) -> dict:
         doc_count = 0
 
     return {
-        "records": [_serialize_record(record) for record in records],
+        "records": [
+            _serialize_record(record, knowledge_space_map=knowledge_space_map)
+            for record in records
+        ],
         "count": len(records),
         "indexed_count": indexed_count,
         "doc_count": doc_count,
         "latest_updated_at": latest_updated_at,
+    }
+
+
+@router.get("/spaces", response_model=dict)
+def get_user_knowledge_spaces(user_id: str) -> dict:
+    spaces = list_user_knowledge_spaces(user_id)
+    stats_by_space = _build_space_stats(list_user_records(user_id))
+    return {
+        "spaces": [
+            _serialize_space(space, stats=stats_by_space.get(str(space.get("id"))))
+            for space in spaces
+        ]
+    }
+
+
+@router.post("/spaces", response_model=dict)
+def create_personal_knowledge_space(
+    user_id: str,
+    payload: CreateUserKnowledgeSpaceRequest,
+) -> dict:
+    try:
+        space = create_user_knowledge_space(
+            user_id,
+            name=payload.name,
+            description=payload.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "success": True,
+        "space": _serialize_space(space),
+        "message": f"Created knowledge space {space['name']}",
     }
 
 
@@ -402,6 +537,7 @@ async def upload_user_knowledge_files(
     language_hint: str | None = Form(default=None),
     layout_hint: str | None = Form(default=None),
     document_type_hint: str | None = Form(default=None),
+    knowledge_space_id: str | None = Form(default=None),
 ) -> dict:
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -409,6 +545,8 @@ async def upload_user_knowledge_files(
     docs_dir = get_user_docs_dir(user_id)
     uploaded: list[dict[str, Any]] = []
     indexed_record_ids: list[str] = []
+    resolved_space_id = _resolve_personal_knowledge_space_id(user_id, knowledge_space_id)
+    knowledge_space_map = get_user_knowledge_space_map(user_id)
     hints = {
         key: value
         for key, value in {
@@ -436,6 +574,7 @@ async def upload_user_knowledge_files(
             size=file_size,
             content_type=file.content_type,
             hints=hints,
+            knowledge_space_id=resolved_space_id,
         )
 
         file_ext = file_path.suffix.lower()
@@ -467,7 +606,7 @@ async def upload_user_knowledge_files(
                 indexed_record_ids.append(str(record["id"]))
 
         save_user_record(user_id, record)
-        uploaded.append(_serialize_record(record))
+        uploaded.append(_serialize_record(record, knowledge_space_map=knowledge_space_map))
 
     if indexed_record_ids:
         indexed_chunks = upsert_user_knowledge_records(user_id, indexed_record_ids)
@@ -485,21 +624,33 @@ async def upload_user_knowledge_files(
 
 
 @router.post("/import-from-global", response_model=dict)
-def import_global_document_reference(user_id: str, payload: UserKnowledgeImportRequest) -> dict:
+def import_global_document_reference(
+    user_id: str,
+    payload: UserKnowledgeImportRequest,
+    knowledge_space_id: str | None = Query(default=None),
+) -> dict:
     filename = Path(payload.filename).name
     if not filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
+    resolved_space_id = _resolve_personal_knowledge_space_id(user_id, knowledge_space_id)
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
     file_path = docs_root / filename
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Global knowledge document not found")
 
-    existing = find_user_import_record(user_id, filename)
+    existing = find_user_import_record(
+        user_id,
+        filename,
+        knowledge_space_id=resolved_space_id,
+    )
     if existing:
         return {
             "success": True,
-            "record": _serialize_record(existing),
+            "record": _serialize_record(
+                existing,
+                knowledge_space_map=get_user_knowledge_space_map(user_id),
+            ),
             "message": f"{filename} is already in personal knowledge favorites",
         }
 
@@ -508,11 +659,15 @@ def import_global_document_reference(user_id: str, payload: UserKnowledgeImportR
         title=file_path.stem,
         origin_doc_id=_build_global_doc_id(filename),
         origin_filename=filename,
+        knowledge_space_id=resolved_space_id,
     )
     save_user_record(user_id, record)
     return {
         "success": True,
-        "record": _serialize_record(record),
+        "record": _serialize_record(
+            record,
+            knowledge_space_map=get_user_knowledge_space_map(user_id),
+        ),
         "message": f"Added {filename} to personal knowledge favorites",
     }
 
@@ -623,8 +778,8 @@ def create_user_derived_knowledge_record(
     payload: CreateUserDerivedKnowledgeRequest,
 ) -> dict:
     source_kind = payload.source_kind.strip().lower()
-    if source_kind not in {"excerpt", "annotation", "note"}:
-        raise HTTPException(status_code=400, detail="source_kind must be excerpt, annotation, or note")
+    if source_kind not in {"excerpt", "annotation", "note", "translation"}:
+        raise HTTPException(status_code=400, detail="source_kind must be excerpt, annotation, note, or translation")
 
     title = payload.title.strip()
     content = payload.content.replace("\r\n", "\n")
@@ -648,6 +803,7 @@ def create_user_derived_knowledge_record(
         origin_anchor=payload.origin_anchor,
         derived_from_id=payload.derived_from_id,
         hints=payload.hints,
+        knowledge_space_id=_resolve_personal_knowledge_space_id(user_id, payload.knowledge_space_id),
     )
     source_filename = f"{temp_record['id']}.md"
     encoded_content = persisted_content.encode("utf-8")
@@ -663,6 +819,7 @@ def create_user_derived_knowledge_record(
         origin_anchor=payload.origin_anchor,
         derived_from_id=payload.derived_from_id,
         hints=payload.hints,
+        knowledge_space_id=_resolve_personal_knowledge_space_id(user_id, payload.knowledge_space_id),
     )
     record["id"] = temp_record["id"]
     record["created_at"] = temp_record["created_at"]
@@ -698,7 +855,10 @@ def create_user_derived_knowledge_record(
     latest = load_user_record(user_id, str(record["id"])) or record
     return {
         "success": True,
-        "record": _serialize_record(latest),
+        "record": _serialize_record(
+            latest,
+            knowledge_space_map=get_user_knowledge_space_map(user_id),
+        ),
         "message": f"Created personal {source_kind} document",
     }
 
@@ -745,9 +905,9 @@ def get_user_knowledge_structured_page(
         raise HTTPException(status_code=404, detail="Structured document not found")
 
     page_payload = _structured_page_payload(document, page_no=page_no, pdf_page_no=pdf_page_no)
-    if page_payload is None:
-        raise HTTPException(status_code=404, detail="Structured page not found")
-    return page_payload
+    if page_payload is not None:
+        return page_payload
+    raise HTTPException(status_code=404, detail="Structured page not found")
 
 
 @router.post("/docs/{filename}/translate-blocks", response_model=dict)
@@ -772,7 +932,10 @@ def translate_user_knowledge_blocks(
         return {"translations": []}
 
     try:
-        translations = translate_blocks_to_chinese_via_grpc(blocks)
+        translations = translate_blocks_to_chinese_via_grpc(
+            blocks,
+            source_language_hint=payload.source_language_hint,
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Translation failed: {exc}") from exc
 

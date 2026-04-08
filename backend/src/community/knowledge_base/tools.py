@@ -55,6 +55,18 @@ def _parse_doc_ids(doc_ids: str | None) -> list[str] | None:
     return parsed or None
 
 
+def _coerce_runtime_string_list(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        parsed = [item.strip() for item in value.split(",") if item.strip()]
+        return parsed or None
+    if isinstance(value, (list, tuple, set)):
+        parsed = [str(item).strip() for item in value if str(item).strip()]
+        return parsed or None
+    return None
+
+
 def _parse_scopes(scopes: str | None) -> list[str] | None:
     if not scopes:
         return None
@@ -67,6 +79,28 @@ def _parse_scopes(scopes: str | None) -> list[str] | None:
         seen.add(normalized)
         parsed.append(normalized)
     return parsed or None
+
+
+def _runtime_selected_doc_ids(runtime: ToolRuntime[ContextT, ThreadState]) -> list[str] | None:
+    return _coerce_runtime_string_list(runtime.context.get("selected_doc_ids"))
+
+
+def _runtime_selected_scopes(runtime: ToolRuntime[ContextT, ThreadState]) -> list[str] | None:
+    selected_scopes = _coerce_runtime_string_list(runtime.context.get("selected_sources_scope"))
+    return _parse_scopes(",".join(selected_scopes)) if selected_scopes else None
+
+
+def _intersect_doc_ids(
+    requested_doc_ids: list[str] | None,
+    selected_doc_ids: list[str] | None,
+) -> list[str] | None:
+    if not requested_doc_ids:
+        return selected_doc_ids
+    if not selected_doc_ids:
+        return requested_doc_ids
+    allowed = set(selected_doc_ids)
+    intersection = [doc_id for doc_id in requested_doc_ids if doc_id in allowed]
+    return intersection or []
 
 
 def _normalize_retry_query(query: str) -> str:
@@ -361,8 +395,14 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
     """
     thread_id = runtime.context.get("thread_id")
     user_id = runtime.context.get("user_id")
+    selected_doc_ids = _runtime_selected_doc_ids(runtime)
     candidates = search_book_catalog(query, thread_id=thread_id, user_id=user_id, top_k=BOOK_SEARCH_TOP_K)
+    if selected_doc_ids:
+        allowed = set(selected_doc_ids)
+        candidates = [candidate for candidate in candidates if candidate.doc_id in allowed]
     if not candidates:
+        if selected_doc_ids:
+            return "当前对话已限定在所选资料范围内，但这些资料里没有找到匹配的候选书目。"
         return "No likely books found for this query."
 
     grouped = _group_book_candidates(candidates)
@@ -465,32 +505,40 @@ def knowledge_search_tool(
         thread_id = runtime.context.get("thread_id")
         user_id = runtime.context.get("user_id")
         parsed_doc_ids = _parse_doc_ids(doc_ids)
+        selected_doc_ids = _runtime_selected_doc_ids(runtime)
+        effective_doc_ids = _intersect_doc_ids(parsed_doc_ids, selected_doc_ids)
+        if parsed_doc_ids and selected_doc_ids and not effective_doc_ids:
+            return (
+                "当前 `knowledge_search` 传入的 `doc_ids` 不在本轮已选资料范围内。"
+                "请改用已选资料对应的 `doc_ids`，或重新发起不带资料限制的对话。"
+            )
         parsed_scopes = _parse_scopes(scopes)
+        selected_scopes = _runtime_selected_scopes(runtime)
         mixed_layer_error = _validate_single_layer_doc_ids(
-            parsed_doc_ids,
+            effective_doc_ids,
             thread_id=thread_id,
             user_id=user_id,
         )
         if mixed_layer_error:
             return mixed_layer_error
         inferred_scopes = _infer_scopes_from_doc_ids(
-            parsed_doc_ids,
+            effective_doc_ids,
             thread_id=thread_id,
             user_id=user_id,
         )
-        effective_scopes = _merge_scopes(parsed_scopes, inferred_scopes)
+        effective_scopes = _merge_scopes(selected_scopes, parsed_scopes, inferred_scopes)
         results = retriever.search(
             query,
             thread_id=thread_id,
             user_id=user_id,
-            doc_ids=parsed_doc_ids,
+            doc_ids=effective_doc_ids,
             scopes=effective_scopes,
         )
     except Exception as e:
         return f"Error searching knowledge base: {e}"
 
     if not results:
-        return _build_no_result_guidance(query, parsed_doc_ids)
+        return _build_no_result_guidance(query, effective_doc_ids)
 
     formatted_output = "## 检索结果\n\n"
 

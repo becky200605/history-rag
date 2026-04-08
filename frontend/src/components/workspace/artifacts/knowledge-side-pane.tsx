@@ -282,8 +282,10 @@ export function KnowledgeSidePane({
   mode,
   originFilename,
   originTitle,
+  knowledgeSpaceId,
   referencePageHeight,
   referencePageWidth,
+  translationSourceLanguageHint,
   interactive = true,
   highlightable,
   excerptable,
@@ -296,8 +298,10 @@ export function KnowledgeSidePane({
   mode: KnowledgeSidePaneMode;
   originFilename: string;
   originTitle: string;
+  knowledgeSpaceId?: string;
   referencePageHeight?: number | null;
   referencePageWidth?: number | null;
+  translationSourceLanguageHint?: string;
   interactive?: boolean;
   highlightable?: boolean;
   excerptable?: boolean;
@@ -539,6 +543,9 @@ export function KnowledgeSidePane({
         key: paragraph.key,
         text: paragraph.text,
       })),
+      {
+        sourceLanguageHint: translationSourceLanguageHint,
+      },
     )
       .then((items) => {
         if (cancelled) {
@@ -575,6 +582,7 @@ export function KnowledgeSidePane({
     paragraphs,
     translationCacheKey,
     translationMap,
+    translationSourceLanguageHint,
   ]);
 
   const activeKey = useMemo(
@@ -610,6 +618,7 @@ export function KnowledgeSidePane({
           title,
           content,
           sourceKind: "excerpt",
+          knowledgeSpaceId,
           originScope: resolvedDocument?.scope ?? "global",
           originDocId: resolvedDocument?.filename ?? pageData?.doc_id ?? null,
           originFilename: pageData?.filename ?? originFilename,
@@ -623,7 +632,9 @@ export function KnowledgeSidePane({
         setContextMenu(null);
         toast.success("已创建摘录，正在跳转笔记");
         router.push(
-          `/workspace/notes?record=${encodeURIComponent(result.record.id)}`,
+          `/workspace/notes?space=${encodeURIComponent(
+            knowledgeSpaceId ?? result.record.knowledge_space_id ?? "",
+          )}&record=${encodeURIComponent(result.record.id)}`,
         );
       } catch (error) {
         console.error(error);
@@ -635,6 +646,7 @@ export function KnowledgeSidePane({
       documentUrl,
       originFilename,
       originTitle,
+      knowledgeSpaceId,
       pageData?.doc_id,
       pageData?.filename,
       router,

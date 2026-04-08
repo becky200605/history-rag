@@ -10,6 +10,8 @@ export interface UserKnowledgeRecord {
   origin_doc_id?: string | null;
   origin_filename?: string | null;
   origin_anchor?: Record<string, unknown> | null;
+  knowledge_space_id?: string | null;
+  knowledge_space_name?: string | null;
   retrieval_enabled: boolean;
   filename?: string | null;
   size: number;
@@ -24,7 +26,23 @@ export interface UserKnowledgeRecord {
   structured_filename?: string | null;
   index_target_filename?: string | null;
   hints?: Record<string, string>;
+  document_type?: string | null;
   error?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface UserKnowledgeSpace {
+  id: string;
+  name: string;
+  description?: string | null;
+  type: "personal" | "public";
+  readonly: boolean;
+  is_default: boolean;
+  record_count?: number;
+  document_count?: number;
+  note_count?: number;
+  latest_updated_at?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -58,17 +76,25 @@ export interface UserKnowledgeRecordContentResponse {
 export interface CreateUserDerivedKnowledgeInput {
   title: string;
   content: string;
-  sourceKind: "excerpt" | "annotation" | "note";
+  sourceKind: "excerpt" | "annotation" | "translation" | "note";
   originScope?: string | null;
   originDocId?: string | null;
   originFilename?: string | null;
   originAnchor?: Record<string, unknown> | null;
   derivedFromId?: string | null;
   hints?: Record<string, string> | null;
+  knowledgeSpaceId?: string | null;
 }
 
-export async function listUserKnowledgeRecords(): Promise<UserKnowledgeListResponse> {
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/list`, {
+export async function listUserKnowledgeRecords(
+  knowledgeSpaceId?: string | null,
+): Promise<UserKnowledgeListResponse> {
+  const params = new URLSearchParams();
+  if (knowledgeSpaceId) {
+    params.set("knowledge_space_id", knowledgeSpaceId);
+  }
+  const query = params.toString();
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/list${query ? `?${query}` : ""}`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -84,6 +110,7 @@ export async function uploadUserKnowledgeFiles(
     languageHint?: string;
     layoutHint?: string;
     documentTypeHint?: string;
+    knowledgeSpaceId?: string | null;
   },
 ): Promise<UserKnowledgeUploadResponse> {
   const formData = new FormData();
@@ -99,6 +126,9 @@ export async function uploadUserKnowledgeFiles(
   if (options?.documentTypeHint) {
     formData.append("document_type_hint", options.documentTypeHint);
   }
+  if (options?.knowledgeSpaceId) {
+    formData.append("knowledge_space_id", options.knowledgeSpaceId);
+  }
 
   const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/upload`, {
     method: "POST",
@@ -111,12 +141,48 @@ export async function uploadUserKnowledgeFiles(
   return (await response.json()) as UserKnowledgeUploadResponse;
 }
 
-export async function importGlobalKnowledgeToPersonal(filename: string): Promise<{
+export async function listUserKnowledgeSpaces(): Promise<{ spaces: UserKnowledgeSpace[] }> {
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/spaces`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Failed to list knowledge spaces" }));
+    throw new Error(error.message ?? error.detail ?? "Failed to list knowledge spaces");
+  }
+  return (await response.json()) as { spaces: UserKnowledgeSpace[] };
+}
+
+export async function createUserKnowledgeSpace(payload: {
+  name: string;
+  description?: string;
+}): Promise<{ success: boolean; space: UserKnowledgeSpace; message: string }> {
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/spaces`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Failed to create knowledge space" }));
+    throw new Error(error.message ?? error.detail ?? "Failed to create knowledge space");
+  }
+  return (await response.json()) as { success: boolean; space: UserKnowledgeSpace; message: string };
+}
+
+export async function importGlobalKnowledgeToPersonal(
+  filename: string,
+  knowledgeSpaceId?: string | null,
+): Promise<{
   success: boolean;
   record: UserKnowledgeRecord;
   message: string;
 }> {
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/import-from-global`, {
+  const params = new URLSearchParams();
+  if (knowledgeSpaceId) {
+    params.set("knowledge_space_id", knowledgeSpaceId);
+  }
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/import-from-global${params.toString() ? `?${params.toString()}` : ""}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -156,6 +222,7 @@ export async function createUserDerivedKnowledge(
       origin_anchor: payload.originAnchor,
       derived_from_id: payload.derivedFromId,
       hints: payload.hints,
+      knowledge_space_id: payload.knowledgeSpaceId,
     }),
   });
   if (!response.ok) {

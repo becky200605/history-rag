@@ -7,7 +7,7 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -23,6 +23,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   KnowledgeStructuredViewer,
 } from "@/components/workspace/artifacts/knowledge-structured-viewer";
+import { UserKnowledgeSpaceSwitcher } from "@/components/workspace/user-knowledge-space-switcher";
 import {
   WorkspaceBody,
   WorkspaceContainer,
@@ -34,6 +35,7 @@ import {
   useDeleteUserKnowledgeRecord,
   useUploadUserKnowledgeFiles,
   useUserKnowledgeRecords,
+  useUserKnowledgeSpaces,
 } from "@/core/knowledge/user-hooks";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
@@ -183,14 +185,29 @@ function buildKnowledgePreviewUrl(record: UserKnowledgeRecord) {
 }
 
 export default function KnowledgeLibraryPage() {
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const selectedSpaceIdFromQuery = searchParams.get("space");
 
-  const { data, isLoading, error } = useUserKnowledgeRecords();
+  const spacesQuery = useUserKnowledgeSpaces();
+  const personalSpaces = useMemo(
+    () => (spacesQuery.data?.spaces ?? []).filter((space) => space.type === "personal"),
+    [spacesQuery.data?.spaces],
+  );
+  const activeSpaceId = useMemo(() => {
+    if (selectedSpaceIdFromQuery && personalSpaces.some((space) => space.id === selectedSpaceIdFromQuery)) {
+      return selectedSpaceIdFromQuery;
+    }
+    return personalSpaces.find((space) => space.is_default)?.id ?? personalSpaces[0]?.id ?? null;
+  }, [personalSpaces, selectedSpaceIdFromQuery]);
+
+  const { data, isLoading, error } = useUserKnowledgeRecords(activeSpaceId);
   const deleteMutation = useDeleteUserKnowledgeRecord();
   const uploadMutation = useUploadUserKnowledgeFiles();
 
@@ -203,6 +220,15 @@ export default function KnowledgeLibraryPage() {
   useEffect(() => {
     document.title = "知识库 - 财政历史智能知识库";
   }, []);
+
+  useEffect(() => {
+    if (!activeSpaceId || selectedSpaceIdFromQuery === activeSpaceId) {
+      return;
+    }
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("space", activeSpaceId);
+    router.replace(`${pathname}?${params.toString()}`);
+  }, [activeSpaceId, pathname, router, searchParams, selectedSpaceIdFromQuery]);
 
   useEffect(() => {
     if (records.length === 0) {
@@ -260,8 +286,17 @@ export default function KnowledgeLibraryPage() {
       toast.error("请选择要上传的文件");
       return;
     }
+    if (!activeSpaceId) {
+      toast.error("当前没有可用的个人知识库文件夹");
+      return;
+    }
     try {
-      await uploadMutation.mutateAsync({ files: pendingFiles });
+      await uploadMutation.mutateAsync({
+        files: pendingFiles,
+        options: {
+          knowledgeSpaceId: activeSpaceId,
+        },
+      });
       toast.success(`已提交 ${pendingFiles.length} 个文件`);
       setPendingFiles([]);
       setIsUploadDialogOpen(false);
@@ -290,6 +325,29 @@ export default function KnowledgeLibraryPage() {
     <WorkspaceContainer>
       <WorkspaceHeader />
       <WorkspaceBody className="min-h-0 overflow-hidden bg-white">
+        <div className="border-b border-slate-200 bg-white px-4 py-3 md:px-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-base font-medium text-slate-900">个人知识库</div>
+              <div className="text-sm text-slate-500">
+                用文件夹整理个人资料，底层检索仍然统一管理。
+              </div>
+            </div>
+            {personalSpaces.length > 0 ? (
+              <UserKnowledgeSpaceSwitcher
+                spaces={personalSpaces}
+                selectedSpaceId={activeSpaceId ?? personalSpaces[0]!.id}
+                onSelect={(spaceId) => {
+                  const params = new URLSearchParams(searchParams.toString());
+                  params.set("space", spaceId);
+                  params.delete("record");
+                  router.push(`${pathname}?${params.toString()}`);
+                }}
+              />
+            ) : null}
+          </div>
+        </div>
+
         <div className="flex h-full min-h-0 w-full overflow-hidden bg-white">
           <aside className="flex min-h-0 w-full shrink-0 flex-col border-b border-slate-200 bg-white lg:w-[240px] lg:border-r lg:border-b-0">
             <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
@@ -314,6 +372,7 @@ export default function KnowledgeLibraryPage() {
                   variant="ghost"
                   size="sm"
                   className="h-8 rounded-md px-2 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+                  disabled={!activeSpaceId}
                   onClick={() => setIsUploadDialogOpen(true)}
                 >
                   <PlusIcon className="size-4" />
@@ -384,6 +443,7 @@ export default function KnowledgeLibraryPage() {
                   documentUrl={selectedPreviewUrl}
                   initialPdfPageNo={selectedInitialPdfPageNo}
                   excerptable
+                  knowledgeSpaceId={activeSpaceId ?? undefined}
                   highlightable={false}
                   originFilename={selectedRecord.origin_filename ?? selectedRecord.filename ?? "未知文档"}
                   originTitle={getRecordTitle(selectedRecord)}
@@ -396,7 +456,9 @@ export default function KnowledgeLibraryPage() {
         <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
           <DialogContent className="sm:max-w-xl border-slate-200 bg-white">
             <DialogHeader>
-              <DialogTitle className="text-slate-900">上传资料</DialogTitle>
+              <DialogTitle className="text-slate-900">
+                上传资料到{personalSpaces.find((space) => space.id === activeSpaceId)?.name ?? "当前文件夹"}
+              </DialogTitle>
             </DialogHeader>
             <div className="space-y-3">
               <input

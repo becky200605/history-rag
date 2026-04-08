@@ -33,6 +33,7 @@ UPSERT_RETRY_ATTEMPTS = 4
 UPSERT_RETRY_BASE_DELAY_SECONDS = 5.0
 UPSERT_BATCH_SIZE = 64
 UPSERT_PARALLELISM = 2
+VERTICAL_STRUCTURED_MERGE_SIZE = 5
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +262,10 @@ def _is_structured_document(document: Document) -> bool:
     return str(document.metadata.get("source_type", "")).lower() == STRUCTURED_SOURCE_TYPE
 
 
+def _is_vertical_structured_document(document: Document) -> bool:
+    return _is_structured_document(document) and str(document.metadata.get("layout_hint") or "").lower() == "vertical"
+
+
 def _build_document_splitter(chunk_size: int, chunk_overlap: int) -> RecursiveCharacterTextSplitter:
     return RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
@@ -296,6 +301,72 @@ def _split_regular_document(document: Document, splitter: RecursiveCharacterText
     return chunks or [document]
 
 
+def _build_vertical_structured_chunk(
+    documents: list[Document],
+    *,
+    splitter: RecursiveCharacterTextSplitter,
+    chunk_size: int,
+) -> list[Document]:
+    if not documents:
+        return []
+
+    first = documents[0]
+    last = documents[-1]
+    merged_document = Document(
+        page_content="\n".join(
+            document.page_content.strip()
+            for document in documents
+            if document.page_content.strip()
+        ),
+        metadata={
+            **first.metadata,
+            "line_start": first.metadata.get("line_start"),
+            "line_end": last.metadata.get("line_end"),
+            "paragraph_no": first.metadata.get("paragraph_no"),
+            "paragraph_no_in_doc": first.metadata.get("paragraph_no_in_doc"),
+            "paragraph_end_no": last.metadata.get("paragraph_no"),
+            "paragraph_end_no_in_doc": last.metadata.get("paragraph_no_in_doc"),
+            "merged_paragraph_count": len(documents),
+            "bbox": None,
+            "bbox_source": "vertical_sentence_merge",
+        },
+    )
+    return _split_structured_document(merged_document, splitter, chunk_size)
+
+
+def _split_vertical_structured_documents(
+    documents: list[Document],
+    *,
+    splitter: RecursiveCharacterTextSplitter,
+    chunk_size: int,
+) -> list[Document]:
+    chunks: list[Document] = []
+    batch: list[Document] = []
+
+    for document in documents:
+        batch.append(document)
+        if len(batch) == VERTICAL_STRUCTURED_MERGE_SIZE:
+            chunks.extend(
+                _build_vertical_structured_chunk(
+                    batch,
+                    splitter=splitter,
+                    chunk_size=chunk_size,
+                )
+            )
+            batch = []
+
+    if batch:
+        chunks.extend(
+            _build_vertical_structured_chunk(
+                batch,
+                splitter=splitter,
+                chunk_size=chunk_size,
+            )
+        )
+
+    return chunks
+
+
 def _build_chunks(documents: list[Document], scope: str, thread_id: str | None) -> list[Document]:
     kb_config = get_knowledge_base_config()
     splitter = _build_document_splitter(
@@ -309,11 +380,38 @@ def _build_chunks(documents: list[Document], scope: str, thread_id: str | None) 
         if document.metadata.get("source")
     }
     chunks: list[Document] = []
-    for document in documents:
+    index = 0
+    while index < len(documents):
+        document = documents[index]
+        if _is_vertical_structured_document(document):
+            source = str(document.metadata.get("source", ""))
+            pdf_page_no = document.metadata.get("pdf_page_no")
+            grouped_documents: list[Document] = []
+            while index < len(documents):
+                candidate = documents[index]
+                if not _is_vertical_structured_document(candidate):
+                    break
+                if str(candidate.metadata.get("source", "")) != source:
+                    break
+                if candidate.metadata.get("pdf_page_no") != pdf_page_no:
+                    break
+                grouped_documents.append(candidate)
+                index += 1
+
+            chunks.extend(
+                _split_vertical_structured_documents(
+                    grouped_documents,
+                    splitter=splitter,
+                    chunk_size=chunk_size,
+                )
+            )
+            continue
+
         if _is_structured_document(document):
             chunks.extend(_split_structured_document(document, splitter, chunk_size))
         else:
             chunks.extend(_split_regular_document(document, splitter))
+        index += 1
     return _annotate_chunks(chunks, source_text_by_path, scope=scope, thread_id=thread_id)
 
 

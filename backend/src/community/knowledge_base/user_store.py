@@ -11,6 +11,11 @@ from uuid import uuid4
 
 from src.community.knowledge_base.document_parsers import infer_parse_method as infer_document_parse_method
 from src.community.knowledge_base.structured_document import save_structured_document
+from src.community.knowledge_base.user_spaces import (
+    DEFAULT_KNOWLEDGE_SPACE_ID,
+    get_default_knowledge_space,
+    get_user_knowledge_space_map,
+)
 from src.config.paths import get_paths
 
 TEXT_PREVIEW_EXTENSIONS = {".md", ".txt"}
@@ -25,6 +30,32 @@ def _utc_now() -> str:
 
 def _record_path(user_id: str, record_id: str) -> Path:
     return get_paths().user_knowledge_catalog_dir(user_id) / f"{record_id}.json"
+
+
+def _write_record(user_id: str, record: dict[str, Any], *, touch_updated_at: bool) -> None:
+    record["user_id"] = user_id
+    if touch_updated_at:
+        record["updated_at"] = _utc_now()
+    _record_path(user_id, str(record["id"])).write_text(
+        json.dumps(record, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _normalize_record_knowledge_space(
+    user_id: str,
+    record: dict[str, Any],
+    *,
+    space_map: dict[str, dict[str, Any]] | None = None,
+) -> bool:
+    available_spaces = space_map or get_user_knowledge_space_map(user_id)
+    existing_space_id = str(record.get("knowledge_space_id") or "").strip()
+    if existing_space_id and existing_space_id in available_spaces:
+        return False
+
+    default_space = available_spaces.get(DEFAULT_KNOWLEDGE_SPACE_ID) or get_default_knowledge_space(user_id)
+    record["knowledge_space_id"] = default_space["id"]
+    return True
 
 
 def ensure_user_knowledge_dirs(user_id: str) -> None:
@@ -83,6 +114,7 @@ def _base_user_record(
     origin_doc_id: str | None = None,
     origin_filename: str | None = None,
     origin_anchor: dict[str, Any] | None = None,
+    knowledge_space_id: str | None = None,
 ) -> dict[str, Any]:
     if source_kind not in USER_SOURCE_KINDS:
         raise ValueError(f"Unsupported user knowledge source kind: {source_kind}")
@@ -98,6 +130,7 @@ def _base_user_record(
         "origin_doc_id": origin_doc_id,
         "origin_filename": origin_filename,
         "origin_anchor": origin_anchor,
+        "knowledge_space_id": knowledge_space_id or DEFAULT_KNOWLEDGE_SPACE_ID,
         "derived_from_id": None,
         "retrieval_enabled": retrieval_enabled,
         "created_at": now,
@@ -112,6 +145,7 @@ def build_user_upload_record(
     size: int,
     content_type: str | None = None,
     hints: dict[str, str] | None = None,
+    knowledge_space_id: str | None = None,
 ) -> dict[str, Any]:
     parse_method, indexable = infer_parse_method(source_filename)
     urls = build_user_doc_urls(user_id, source_filename)
@@ -121,6 +155,7 @@ def build_user_upload_record(
         source_kind="upload",
         title=Path(source_filename).stem,
         retrieval_enabled=True,
+        knowledge_space_id=knowledge_space_id,
     )
     record.update(
         {
@@ -156,6 +191,7 @@ def build_user_import_ref_record(
     title: str,
     origin_doc_id: str | None,
     origin_filename: str,
+    knowledge_space_id: str | None = None,
 ) -> dict[str, Any]:
     record = _base_user_record(
         user_id=user_id,
@@ -165,6 +201,7 @@ def build_user_import_ref_record(
         origin_scope="global",
         origin_doc_id=origin_doc_id,
         origin_filename=origin_filename,
+        knowledge_space_id=knowledge_space_id,
     )
     record.update(
         {
@@ -207,6 +244,7 @@ def build_user_derived_record(
     origin_anchor: dict[str, Any] | None = None,
     derived_from_id: str | None = None,
     hints: dict[str, str] | None = None,
+    knowledge_space_id: str | None = None,
 ) -> dict[str, Any]:
     parse_method, indexable = infer_parse_method(source_filename)
     urls = build_user_doc_urls(user_id, source_filename)
@@ -219,6 +257,7 @@ def build_user_derived_record(
         origin_doc_id=origin_doc_id,
         origin_filename=origin_filename,
         origin_anchor=origin_anchor,
+        knowledge_space_id=knowledge_space_id,
     )
     record["derived_from_id"] = derived_from_id
     record.update(
@@ -250,12 +289,7 @@ def build_user_derived_record(
 
 
 def save_user_record(user_id: str, record: dict[str, Any]) -> None:
-    record["user_id"] = user_id
-    record["updated_at"] = _utc_now()
-    _record_path(user_id, str(record["id"])).write_text(
-        json.dumps(record, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    _write_record(user_id, record, touch_updated_at=True)
 
 
 def load_user_record(user_id: str, record_id: str) -> dict[str, Any] | None:
@@ -263,13 +297,19 @@ def load_user_record(user_id: str, record_id: str) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+    if payload.get("schema_version") == 1:
+        return None
+    if _normalize_record_knowledge_space(user_id, payload):
+        _write_record(user_id, payload, touch_updated_at=False)
+    return payload
 
 
 def list_user_records(user_id: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
+    space_map = get_user_knowledge_space_map(user_id)
     for path in sorted(get_user_catalog_dir(user_id).glob("*.json")):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -277,6 +317,8 @@ def list_user_records(user_id: str) -> list[dict[str, Any]]:
             continue
         if payload.get("schema_version") == 1:
             continue
+        if _normalize_record_knowledge_space(user_id, payload, space_map=space_map):
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         records.append(payload)
     records.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
     return records
@@ -295,11 +337,18 @@ def find_user_record_by_source_filename(user_id: str, source_filename: str) -> d
     return None
 
 
-def find_user_import_record(user_id: str, origin_filename: str) -> dict[str, Any] | None:
+def find_user_import_record(
+    user_id: str,
+    origin_filename: str,
+    *,
+    knowledge_space_id: str | None = None,
+) -> dict[str, Any] | None:
     for record in list_user_records(user_id):
         if record.get("source_kind") != "import_ref":
             continue
         if record.get("origin_filename") == origin_filename:
+            if knowledge_space_id and str(record.get("knowledge_space_id") or "") != knowledge_space_id:
+                continue
             return record
     return None
 

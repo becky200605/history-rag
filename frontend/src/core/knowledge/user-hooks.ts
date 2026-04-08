@@ -1,20 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  createUserKnowledgeSpace,
   createUserDerivedKnowledge,
   deleteUserKnowledgeRecord,
   getUserKnowledgeRecordContent,
   importGlobalKnowledgeToPersonal,
+  listUserKnowledgeSpaces,
   listUserKnowledgeRecords,
   type CreateUserDerivedKnowledgeInput,
   type UserKnowledgeRecordContentResponse,
   type UserKnowledgeListResponse,
+  type UserKnowledgeSpace,
   type UserKnowledgeUploadResponse,
   updateUserKnowledgeRecordContent,
   uploadUserKnowledgeFiles,
 } from "./user-api";
 
 const USER_KNOWLEDGE_QUERY_KEY = ["user-knowledge", "records"];
+const USER_KNOWLEDGE_SPACES_QUERY_KEY = ["user-knowledge", "spaces"];
 const USER_KNOWLEDGE_CONTENT_QUERY_KEY = ["user-knowledge", "content"];
 const ACTIVE_USER_KNOWLEDGE_JOB_STATUSES = [
   "queued",
@@ -25,10 +29,10 @@ const ACTIVE_USER_KNOWLEDGE_JOB_STATUSES = [
   "parsed",
 ];
 
-export function useUserKnowledgeRecords() {
+export function useUserKnowledgeRecords(knowledgeSpaceId?: string | null) {
   return useQuery<UserKnowledgeListResponse>({
-    queryKey: USER_KNOWLEDGE_QUERY_KEY,
-    queryFn: listUserKnowledgeRecords,
+    queryKey: [...USER_KNOWLEDGE_QUERY_KEY, knowledgeSpaceId ?? "all"],
+    queryFn: () => listUserKnowledgeRecords(knowledgeSpaceId),
     refetchInterval: (query) => {
       const records = query.state.data?.records ?? [];
       const hasActiveJobs = records.some((record) =>
@@ -39,16 +43,32 @@ export function useUserKnowledgeRecords() {
   });
 }
 
+export function useUserKnowledgeSpaces() {
+  return useQuery<{ spaces: UserKnowledgeSpace[] }>({
+    queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+    queryFn: listUserKnowledgeSpaces,
+  });
+}
+
 export function useUploadUserKnowledgeFiles() {
   const queryClient = useQueryClient();
   return useMutation<
     UserKnowledgeUploadResponse,
     Error,
-    { files: File[]; options?: { languageHint?: string; layoutHint?: string; documentTypeHint?: string } }
+    {
+      files: File[];
+      options?: {
+        languageHint?: string;
+        layoutHint?: string;
+        documentTypeHint?: string;
+        knowledgeSpaceId?: string | null;
+      };
+    }
   >({
     mutationFn: ({ files, options }) => uploadUserKnowledgeFiles(files, options),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
     },
   });
 }
@@ -56,8 +76,22 @@ export function useUploadUserKnowledgeFiles() {
 export function useImportGlobalKnowledgeToPersonal() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (filename: string) => importGlobalKnowledgeToPersonal(filename),
+    mutationFn: ({ filename, knowledgeSpaceId }: { filename: string; knowledgeSpaceId?: string | null }) =>
+      importGlobalKnowledgeToPersonal(filename, knowledgeSpaceId),
     onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+    },
+  });
+}
+
+export function useCreateUserKnowledgeSpace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { name: string; description?: string }) =>
+      createUserKnowledgeSpace(payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
     },
   });
@@ -70,6 +104,7 @@ export function useCreateUserDerivedKnowledge() {
       createUserDerivedKnowledge(payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
     },
   });
 }
@@ -80,6 +115,7 @@ export function useDeleteUserKnowledgeRecord() {
     mutationFn: (recordId: string) => deleteUserKnowledgeRecord(recordId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
     },
   });
 }
@@ -102,6 +138,7 @@ export function useUpdateUserKnowledgeRecordContent() {
       }),
     onSuccess: (data, variables) => {
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
       queryClient.setQueryData(
         [...USER_KNOWLEDGE_CONTENT_QUERY_KEY, variables.recordId],
         data,

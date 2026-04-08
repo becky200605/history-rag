@@ -13,6 +13,8 @@ export interface ReindexResponse {
 }
 
 export interface KnowledgeFileInfo {
+  doc_id?: string | null;
+  scope?: "global" | "thread" | "user" | null;
   filename: string;
   size: number;
   artifact_url: string;
@@ -464,6 +466,9 @@ export async function getKnowledgeStructuredPageForDocumentUrl(
 export async function translateKnowledgeParagraphsToChineseForDocumentUrl(
   documentUrl: string,
   paragraphs: KnowledgeTranslationParagraphInput[],
+  options?: {
+    sourceLanguageHint?: string | null;
+  },
 ): Promise<KnowledgeTranslationParagraphResult[]> {
   const resolved = resolveKnowledgeDocumentUrl(documentUrl);
   if (!resolved) {
@@ -480,7 +485,10 @@ export async function translateKnowledgeParagraphsToChineseForDocumentUrl(
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ paragraphs }),
+    body: JSON.stringify({
+      paragraphs,
+      source_language_hint: options?.sourceLanguageHint ?? undefined,
+    }),
   });
   if (!response.ok) {
     const error = await response

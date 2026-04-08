@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { usePromptInputController } from "@/components/ai-elements/prompt-input";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import {
@@ -44,6 +45,52 @@ import { authClient } from "@/server/better-auth/client";
 
 const THREAD_ROUTE_HANDOFF_KEY = "workspace:thread-route-handoff";
 const THREAD_ROUTE_HANDOFF_TTL_MS = 15_000;
+
+type SelectedMaterial = {
+  doc_id: string;
+  title: string;
+  filename: string | null;
+  scope: "global" | "thread" | "user";
+};
+
+function parseSelectedMaterials(raw: string | null): SelectedMaterial[] {
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const payload = JSON.parse(raw) as unknown;
+    if (!Array.isArray(payload)) {
+      return [];
+    }
+    return payload
+      .map<SelectedMaterial | null>((item) => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+        const material = item as Record<string, unknown>;
+        const docId = String(material.doc_id ?? "").trim();
+        const title = String(material.title ?? "").trim();
+        if (!docId || !title) {
+          return null;
+        }
+        const scope = material.scope;
+        return {
+          doc_id: docId,
+          title,
+          filename:
+            typeof material.filename === "string" ? material.filename : null,
+          scope:
+            scope === "global" || scope === "thread" || scope === "user"
+              ? scope
+              : "global",
+        };
+      })
+      .filter((item): item is SelectedMaterial => item !== null);
+  } catch {
+    return [];
+  }
+}
 
 function readThreadRouteHandoff() {
   if (typeof window === "undefined") {
@@ -111,6 +158,7 @@ function clearThreadRouteHandoff(threadId?: string) {
 
 export default function ChatPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { thread_id: threadIdFromPath } = useParams<{ thread_id: string }>();
   const isNewThread = threadIdFromPath === "new";
   const { data: session, isPending: isSessionPending } = authClient.useSession();
@@ -121,6 +169,24 @@ export default function ChatPage() {
 
     return readThreadRouteHandoff()?.threadId === threadIdFromPath;
   }, [isNewThread, threadIdFromPath]);
+  const selectedMaterials = useMemo(
+    () => parseSelectedMaterials(searchParams.get("materials")),
+    [searchParams],
+  );
+  const selectedMaterialScopes = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          selectedMaterials
+            .map((item) => item.scope ?? "global")
+            .filter(
+              (scope): scope is "global" | "thread" | "user" =>
+                scope === "global" || scope === "thread" || scope === "user",
+            ),
+        ),
+      ),
+    [selectedMaterials],
+  );
 
   const accessQuery = useQuery({
     queryKey: ["thread", "access", threadIdFromPath, session?.user.id],
@@ -186,13 +252,23 @@ export default function ChatPage() {
     return null;
   }
 
-  return <ChatPageContent initialThreadIdFromPath={threadIdFromPath} />;
+  return (
+    <ChatPageContent
+      initialThreadIdFromPath={threadIdFromPath}
+      selectedMaterials={selectedMaterials}
+      selectedMaterialScopes={selectedMaterialScopes}
+    />
+  );
 }
 
 function ChatPageContent({
   initialThreadIdFromPath,
+  selectedMaterials,
+  selectedMaterialScopes,
 }: {
   initialThreadIdFromPath: string;
+  selectedMaterials: SelectedMaterial[];
+  selectedMaterialScopes: Array<"global" | "thread" | "user">;
 }) {
   const { t } = useI18n();
   const router = useRouter();
@@ -260,7 +336,12 @@ function ChatPageContent({
       }
       didNavigateForCreatedRunRef.current = true;
       rememberThreadRouteHandoff(run.thread_id);
-      router.push(pathOfThread(run.thread_id));
+      const currentQuery = searchParams.toString();
+      router.push(
+        currentQuery
+          ? `${pathOfThread(run.thread_id)}?${currentQuery}`
+          : pathOfThread(run.thread_id),
+      );
     },
     onFinish: (state) => {
       setFinalState(state);
@@ -388,8 +469,11 @@ function ChatPageContent({
       qa_mode: resolvedContext.scenario === "qa",
       concise_answers:
         resolvedContext.scenario === "qa" && resolvedContext.tier === "ultra",
+      selected_doc_ids: selectedMaterials.map((item) => item.doc_id),
+      selected_sources_scope: selectedMaterialScopes,
+      selected_materials: selectedMaterials,
     }),
-    [resolvedContext],
+    [resolvedContext, selectedMaterialScopes, selectedMaterials],
   );
 
   useEffect(() => {
@@ -514,6 +598,27 @@ function ChatPageContent({
                     onSubmit={handleSubmit}
                     onStop={handleStop}
                   />
+                  {selectedMaterials.length > 0 && (
+                    <div className="bg-background/90 mt-2 rounded-2xl border border-[rgba(57,130,152,0.16)] px-4 py-3 shadow-sm backdrop-blur-sm">
+                      <div className="text-xs font-medium tracking-[0.08em] text-[rgb(23,89,108)] uppercase">
+                        已选资料范围
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {selectedMaterials.map((material) => (
+                          <Badge
+                            key={material.doc_id}
+                            variant="secondary"
+                            className="rounded-md bg-[rgb(241,248,249)] text-[rgb(23,89,108)]"
+                          >
+                            {material.title}
+                          </Badge>
+                        ))}
+                      </div>
+                      <div className="mt-2 text-xs text-slate-500">
+                        本轮问答会优先限制在这些资料范围内检索。
+                      </div>
+                    </div>
+                  )}
                   {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" && (
                     <div className="text-muted-foreground/67 w-full translate-y-12 text-center text-xs">
                       {t.common.notAvailableInDemoMode}

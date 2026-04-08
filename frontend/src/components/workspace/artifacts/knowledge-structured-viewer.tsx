@@ -16,6 +16,7 @@ import {
   KnowledgeSidePane,
   type KnowledgeSidePaneMode,
 } from "./knowledge-side-pane";
+import { KnowledgeTranslationWorkspace } from "./knowledge-translation-workspace";
 
 export function KnowledgeStructuredViewer({
   className,
@@ -24,6 +25,7 @@ export function KnowledgeStructuredViewer({
   interactive = false,
   highlightable,
   excerptable,
+  knowledgeSpaceId,
   originFilename,
   originTitle,
 }: {
@@ -33,10 +35,14 @@ export function KnowledgeStructuredViewer({
   interactive?: boolean;
   highlightable?: boolean;
   excerptable?: boolean;
+  knowledgeSpaceId?: string;
   originFilename: string;
   originTitle: string;
 }) {
   const [mode, setMode] = useState<KnowledgeSidePaneMode>("compare");
+  const [translationSourceLanguage, setTranslationSourceLanguage] = useState<
+    "en" | "ja" | "de"
+  >("en");
   const [currentPdfPageNo, setCurrentPdfPageNo] = useState<number>(
     Math.max(initialPdfPageNo, 1),
   );
@@ -147,21 +153,34 @@ export function KnowledgeStructuredViewer({
       </div>
 
       <div className="min-h-0 flex-1">
-        <KnowledgeSidePane
-          currentPdfPageNo={currentPdfPageNo}
-          documentUrl={documentUrl}
-          mode={mode}
-          originFilename={originFilename}
-          originTitle={originTitle}
-          interactive={interactive}
-          highlightable={highlightable}
-          excerptable={excerptable}
-          fluid
-          bordered={false}
-          onPageDataChange={(pageData) => {
-            setPageCount(pageData?.page_count ?? null);
-          }}
-        />
+        {mode === "compare" ? (
+          <KnowledgeSidePane
+            currentPdfPageNo={currentPdfPageNo}
+            documentUrl={documentUrl}
+            mode={mode}
+            originFilename={originFilename}
+            originTitle={originTitle}
+            knowledgeSpaceId={knowledgeSpaceId}
+            interactive={interactive}
+            highlightable={highlightable}
+            excerptable={excerptable}
+            fluid
+            bordered={false}
+            onPageDataChange={(pageData) => {
+              setPageCount(pageData?.page_count ?? null);
+            }}
+          />
+        ) : (
+          <KnowledgeTranslationWorkspace
+            documentUrl={documentUrl}
+            currentPdfPageNo={currentPdfPageNo}
+            sourceLanguage={translationSourceLanguage}
+            onSourceLanguageChange={setTranslationSourceLanguage}
+            onPageDataChange={(pageData) => {
+              setPageCount(pageData?.page_count ?? null);
+            }}
+          />
+        )}
       </div>
     </div>
   );

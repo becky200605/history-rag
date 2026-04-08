@@ -2,7 +2,7 @@
 
 import { ChevronDownIcon, ExternalLinkIcon, FileTextIcon, Loader2Icon, PlusIcon, Trash2Icon } from "lucide-react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { UserKnowledgeSpaceSwitcher } from "@/components/workspace/user-knowledge-space-switcher";
 import {
   WorkspaceBody,
   WorkspaceContainer,
@@ -23,6 +24,7 @@ import {
   useUpdateUserKnowledgeRecordContent,
   useUserKnowledgeRecordContent,
   useUserKnowledgeRecords,
+  useUserKnowledgeSpaces,
 } from "@/core/knowledge/user-hooks";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
@@ -96,7 +98,11 @@ function getOriginAnchorNumber(
   return null;
 }
 
-function buildOriginalJumpHref(record: UserKnowledgeRecord, recordId: string) {
+function buildOriginalJumpHref(
+  record: UserKnowledgeRecord,
+  recordId: string,
+  knowledgeSpaceId?: string | null,
+) {
   if (!record.origin_filename) {
     return null;
   }
@@ -115,7 +121,7 @@ function buildOriginalJumpHref(record: UserKnowledgeRecord, recordId: string) {
     filename: record.origin_filename,
     scope: record.origin_scope,
     document_url: buildKnowledgeDocumentUrl(record.origin_scope, record.origin_filename),
-    back_href: `/workspace/notes?record=${encodeURIComponent(recordId)}`,
+    back_href: `/workspace/notes?space=${encodeURIComponent(knowledgeSpaceId ?? record.knowledge_space_id ?? "")}&record=${encodeURIComponent(recordId)}`,
     back_label: "笔记",
   });
   if (pageNo) {
@@ -197,6 +203,8 @@ function ReadonlyRecordState({
 }
 
 export default function NotesPage() {
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
@@ -204,8 +212,21 @@ export default function NotesPage() {
   const [contentDraft, setContentDraft] = useState("");
   const [draftRecordId, setDraftRecordId] = useState<string | null>(null);
   const [isExcerptOpen, setIsExcerptOpen] = useState(false);
+  const selectedSpaceIdFromQuery = searchParams.get("space");
 
-  const { data, isLoading, error } = useUserKnowledgeRecords();
+  const spacesQuery = useUserKnowledgeSpaces();
+  const personalSpaces = useMemo(
+    () => (spacesQuery.data?.spaces ?? []).filter((space) => space.type === "personal"),
+    [spacesQuery.data?.spaces],
+  );
+  const activeSpaceId = useMemo(() => {
+    if (selectedSpaceIdFromQuery && personalSpaces.some((space) => space.id === selectedSpaceIdFromQuery)) {
+      return selectedSpaceIdFromQuery;
+    }
+    return personalSpaces.find((space) => space.is_default)?.id ?? personalSpaces[0]?.id ?? null;
+  }, [personalSpaces, selectedSpaceIdFromQuery]);
+
+  const { data, isLoading, error } = useUserKnowledgeRecords(activeSpaceId);
   const createMutation = useCreateUserDerivedKnowledge();
   const deleteMutation = useDeleteUserKnowledgeRecord();
   const updateMutation = useUpdateUserKnowledgeRecordContent();
@@ -219,6 +240,15 @@ export default function NotesPage() {
   useEffect(() => {
     document.title = "笔记 - 财政历史智能知识库";
   }, []);
+
+  useEffect(() => {
+    if (!activeSpaceId || selectedSpaceIdFromQuery === activeSpaceId) {
+      return;
+    }
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("space", activeSpaceId);
+    router.replace(`${pathname}?${params.toString()}`);
+  }, [activeSpaceId, pathname, router, searchParams, selectedSpaceIdFromQuery]);
 
   useEffect(() => {
     if (records.length === 0) {
@@ -281,11 +311,16 @@ export default function NotesPage() {
   };
 
   const handleCreateNote = async () => {
+    if (!activeSpaceId) {
+      toast.error("当前没有可用的个人知识库文件夹");
+      return;
+    }
     try {
       const created = await createMutation.mutateAsync({
         title: "未命名笔记",
         content: "",
         sourceKind: "note",
+        knowledgeSpaceId: activeSpaceId,
       });
       setSelectedRecordId(created.record.id);
       toast.success("已新建笔记");
@@ -329,13 +364,35 @@ export default function NotesPage() {
     contentQuery.data?.mode === "derived" && contentQuery.data.locked_excerpt,
   );
   const originalJumpHref = selectedRecord
-    ? buildOriginalJumpHref(selectedRecord, selectedRecord.id)
+    ? buildOriginalJumpHref(selectedRecord, selectedRecord.id, activeSpaceId)
     : null;
 
   return (
     <WorkspaceContainer>
       <WorkspaceHeader />
       <WorkspaceBody className="min-h-0 overflow-hidden bg-white">
+        <div className="border-b border-slate-200 bg-white px-4 py-3 md:px-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-base font-medium text-slate-900">研究笔记</div>
+              <div className="text-sm text-slate-500">
+                笔记按知识库文件夹归档，原文摘录会自动落到当前文件夹。
+              </div>
+            </div>
+            {personalSpaces.length > 0 ? (
+              <UserKnowledgeSpaceSwitcher
+                spaces={personalSpaces}
+                selectedSpaceId={activeSpaceId ?? personalSpaces[0]!.id}
+                onSelect={(spaceId) => {
+                  const params = new URLSearchParams(searchParams.toString());
+                  params.set("space", spaceId);
+                  params.delete("record");
+                  router.push(`${pathname}?${params.toString()}`);
+                }}
+              />
+            ) : null}
+          </div>
+        </div>
         <div className="flex h-full min-h-0 w-full overflow-hidden bg-white">
           <aside className="flex min-h-0 w-full shrink-0 flex-col border-b border-slate-200 bg-white lg:w-[240px] lg:border-r lg:border-b-0">
             <div className="border-b border-slate-200 px-3 py-2 text-xs text-slate-500">

@@ -99,6 +99,7 @@ if "src.community.knowledge_base.translation_grpc" not in sys.modules:
 
 import src.community.knowledge_base.indexer as indexer_module
 import src.community.knowledge_base.retriever as retriever_module
+import src.community.knowledge_base.user_spaces as user_spaces_module
 import src.community.knowledge_base.user_store as user_store_module
 import src.config.paths as paths_module
 from src.config.paths import Paths
@@ -192,6 +193,52 @@ def test_rebuild_user_knowledge_index_indexes_upload_and_skips_import_ref(tmp_pa
     assert captured["documents"][0].metadata["scope"] == "user"
     assert captured["documents"][0].metadata["doc_id"] == upload_record["id"]
     assert captured["documents"][0].metadata["source_kind"] == "upload"
+
+
+def test_user_records_without_space_are_migrated_to_default_space(tmp_path, monkeypatch) -> None:
+    paths = Paths(tmp_path)
+    monkeypatch.setattr(paths_module, "_paths", paths)
+    paths.ensure_user_knowledge_dirs("user_1")
+
+    legacy_record = user_store_module.build_user_upload_record(
+        user_id="user_1",
+        source_filename="legacy.md",
+        size=12,
+        content_type="text/markdown",
+    )
+    legacy_record.pop("knowledge_space_id", None)
+    user_store_module.save_user_record("user_1", legacy_record)
+
+    loaded = user_store_module.load_user_record("user_1", legacy_record["id"])
+
+    assert loaded is not None
+    assert loaded["knowledge_space_id"] == user_spaces_module.DEFAULT_KNOWLEDGE_SPACE_ID
+
+
+def test_user_knowledge_spaces_endpoint_returns_default_and_public_spaces(tmp_path, monkeypatch) -> None:
+    paths = Paths(tmp_path)
+    monkeypatch.setattr(paths_module, "_paths", paths)
+    paths.ensure_user_knowledge_dirs("user_1")
+
+    created_space = user_spaces_module.create_user_knowledge_space(
+        "user_1",
+        name="晚清专题",
+        description="用于归档晚清财政资料",
+    )
+
+    app = FastAPI()
+    app.include_router(user_knowledge_router.router)
+    client = TestClient(app)
+
+    response = client.get("/api/users/user_1/knowledge/spaces")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [space["id"] for space in payload["spaces"]][:2] == [
+        user_spaces_module.DEFAULT_KNOWLEDGE_SPACE_ID,
+        created_space["id"],
+    ]
+    assert any(space["id"] == user_spaces_module.PUBLIC_KNOWLEDGE_SPACE_ID for space in payload["spaces"])
 
 
 def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) -> None:

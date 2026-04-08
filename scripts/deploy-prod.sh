@@ -65,7 +65,7 @@ echo "Running Better Auth migrations..."
 compose run --rm auth-migrate
 
 echo "Deploying history-rag with docker compose..."
-compose up -d --build --force-recreate --remove-orphans frontend gateway langgraph nginx
+compose up -d --build --remove-orphans frontend gateway langgraph nginx
 
 echo "Verifying runtime environment inside containers..."
 assert_env_present gateway OPENAI_API_KEY
@@ -74,7 +74,7 @@ assert_env_present langgraph OPENAI_API_KEY
 assert_env_present langgraph VOLCENGINE_API_KEY
 
 echo "Reloading nginx to pick up mounted config changes..."
-compose up -d --force-recreate nginx
+compose restart nginx
 
 echo "Deployment completed."
 compose ps

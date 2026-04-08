@@ -1,7 +1,6 @@
 services:
   nginx:
     image: nginx:alpine
-    container_name: history-rag-nginx
     ports:
       - "${APP_BIND_IP:-0.0.0.0}:${APP_PORT:-2026}:2026"
     volumes:
@@ -20,7 +19,6 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         PNPM_STORE_PATH: ${PNPM_STORE_PATH:-/root/.local/share/pnpm/store}
-    container_name: history-rag-frontend
     command: sh -c "cd frontend && pnpm run build && pnpm exec next start --hostname 0.0.0.0 --port 3000"
     env_file:
       - ../frontend/.production.env
@@ -42,7 +40,6 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         PNPM_STORE_PATH: ${PNPM_STORE_PATH:-/root/.local/share/pnpm/store}
-    container_name: history-rag-auth-migrate
     command: sh -c "cd frontend && pnpm auth:migrate"
     env_file:
       - ../frontend/.production.env
@@ -59,7 +56,6 @@ services:
     build:
       context: ../
       dockerfile: backend/Dockerfile
-    container_name: history-rag-gateway
     command: sh -c "cd backend && python -m uvicorn src.gateway.app:app --host 0.0.0.0 --port 8001"
     env_file:
       - ../backend/.production.env
@@ -81,7 +77,6 @@ services:
     build:
       context: ../
       dockerfile: backend/Dockerfile
-    container_name: history-rag-langgraph
     command: sh -c "cd backend && langgraph dev --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024"
     env_file:
       - ../backend/.production.env

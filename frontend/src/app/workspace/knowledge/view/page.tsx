@@ -13,7 +13,12 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { buildKnowledgePageImageURL, getKnowledgeParagraphLocation, type KnowledgeParagraphLocation } from "@/core/knowledge/api";
+import {
+  buildKnowledgeDocumentUrl,
+  buildKnowledgePageImageURLForDocumentUrl,
+  getKnowledgeParagraphLocationForDocumentUrl,
+  type KnowledgeParagraphLocation,
+} from "@/core/knowledge/api";
 
 type LoadState =
   | { status: "loading" }
@@ -23,25 +28,37 @@ type LoadState =
 export default function KnowledgeCitationViewPage() {
   const searchParams = useSearchParams();
   const filename = searchParams.get("filename") ?? "";
+  const scope = searchParams.get("scope");
+  const rawDocumentUrl = normalizeOptionalUrl(searchParams.get("document_url"));
   const pageNo = searchParams.get("page_no");
   const pdfPageNo = searchParams.get("pdf_page_no");
   const paragraphNo = searchParams.get("paragraph_no");
   const threadId = searchParams.get("thread_id");
-  const sourceUrl = normalizeOptionalUrl(searchParams.get("source_url"));
-  const originalUrl = normalizeOptionalUrl(searchParams.get("original_url"));
-  const backHref = threadId ? `/workspace/chats/${threadId}` : "/workspace/chats";
+  const explicitOriginalUrl = normalizeOptionalUrl(searchParams.get("original_url"));
+  const backHref = normalizeOptionalUrl(searchParams.get("back_href"))
+    ?? (threadId ? `/workspace/chats/${threadId}` : "/workspace/chats");
+  const backLabel = searchParams.get("back_label") ?? (threadId ? "对话" : "对话");
+  const documentUrl = useMemo(() => {
+    if (rawDocumentUrl) {
+      return rawDocumentUrl;
+    }
+    if (!filename) {
+      return null;
+    }
+    return buildKnowledgeDocumentUrl(scope === "user" ? "user" : "global", filename);
+  }, [filename, rawDocumentUrl, scope]);
 
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   useEffect(() => {
-    if (!filename || (!pageNo && !pdfPageNo && !paragraphNo)) {
+    if (!documentUrl || (!pageNo && !pdfPageNo && !paragraphNo)) {
       setState({ status: "error", message: "缺少定位参数，无法打开 citation viewer。" });
       return;
     }
 
     let cancelled = false;
     setState({ status: "loading" });
-    getKnowledgeParagraphLocation(filename, {
+    getKnowledgeParagraphLocationForDocumentUrl(documentUrl, {
       pageNo,
       pdfPageNo,
       paragraphNo,
@@ -59,7 +76,10 @@ export default function KnowledgeCitationViewPage() {
     return () => {
       cancelled = true;
     };
-  }, [filename, pageNo, pdfPageNo, paragraphNo]);
+  }, [documentUrl, pageNo, pdfPageNo, paragraphNo]);
+
+  const originalUrl = explicitOriginalUrl
+    ?? (state.status === "ready" ? state.data.original_url ?? null : null);
 
   return (
     <div className="min-h-screen px-6 py-8">
@@ -70,7 +90,7 @@ export default function KnowledgeCitationViewPage() {
               <BreadcrumbList>
                 <BreadcrumbItem>
                   <BreadcrumbLink asChild>
-                    <Link href={backHref}>对话</Link>
+                    <Link href={backHref}>{backLabel}</Link>
                   </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
@@ -122,7 +142,7 @@ export default function KnowledgeCitationViewPage() {
         {state.status === "ready" && (
           <CitationViewer
             data={state.data}
-            filename={filename}
+            documentUrl={documentUrl}
           />
         )}
       </div>
@@ -132,21 +152,21 @@ export default function KnowledgeCitationViewPage() {
 
 function CitationViewer({
   data,
-  filename,
+  documentUrl,
 }: {
   data: KnowledgeParagraphLocation;
-  filename: string;
+  documentUrl: string | null;
 }) {
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const pageWidth = data.page_meta?.page_width ?? null;
   const pageHeight = data.page_meta?.page_height ?? null;
   const bbox = data.bbox;
   const imageUrl = useMemo(() => {
-    if (!filename || !data.pdf_page_no) {
+    if (!documentUrl || !data.pdf_page_no) {
       return null;
     }
-    return buildKnowledgePageImageURL(filename, data.pdf_page_no);
-  }, [data.pdf_page_no, filename]);
+    return buildKnowledgePageImageURLForDocumentUrl(documentUrl, data.pdf_page_no);
+  }, [data.pdf_page_no, documentUrl]);
   const overlayStyle =
     bbox && pageWidth && pageHeight && imageSize
       ? {

@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDownIcon, FileTextIcon, Loader2Icon, PlusIcon, Trash2Icon } from "lucide-react";
+import { ChevronDownIcon, ExternalLinkIcon, FileTextIcon, Loader2Icon, PlusIcon, Trash2Icon } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -14,6 +15,7 @@ import {
   WorkspaceContainer,
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
+import { buildKnowledgeDocumentUrl } from "@/core/knowledge/api";
 import type { UserKnowledgeRecord } from "@/core/knowledge/user-api";
 import {
   useCreateUserDerivedKnowledge,
@@ -77,6 +79,55 @@ function getReadableRecordTitle(record: UserKnowledgeRecord) {
 
 function isNoteRecord(record: UserKnowledgeRecord) {
   return !["upload", "import_ref"].includes(record.source_kind);
+}
+
+function getOriginAnchorNumber(
+  record: UserKnowledgeRecord,
+  key: "page_no" | "pdf_page_no" | "paragraph_no",
+) {
+  const value = record.origin_anchor?.[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = parseInt(value, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
+function buildOriginalJumpHref(record: UserKnowledgeRecord, recordId: string) {
+  if (!record.origin_filename) {
+    return null;
+  }
+  if (record.origin_scope !== "global" && record.origin_scope !== "user") {
+    return null;
+  }
+
+  const pageNo = getOriginAnchorNumber(record, "page_no");
+  const pdfPageNo = getOriginAnchorNumber(record, "pdf_page_no");
+  const paragraphNo = getOriginAnchorNumber(record, "paragraph_no");
+  if (!pageNo && !pdfPageNo && !paragraphNo) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    filename: record.origin_filename,
+    scope: record.origin_scope,
+    document_url: buildKnowledgeDocumentUrl(record.origin_scope, record.origin_filename),
+    back_href: `/workspace/notes?record=${encodeURIComponent(recordId)}`,
+    back_label: "笔记",
+  });
+  if (pageNo) {
+    params.set("page_no", String(pageNo));
+  }
+  if (pdfPageNo) {
+    params.set("pdf_page_no", String(pdfPageNo));
+  }
+  if (paragraphNo) {
+    params.set("paragraph_no", String(paragraphNo));
+  }
+  return `/workspace/knowledge/view?${params.toString()}`;
 }
 
 function sortRecords(records: UserKnowledgeRecord[]) {
@@ -277,6 +328,9 @@ export default function NotesPage() {
   const hasLockedExcerpt = Boolean(
     contentQuery.data?.mode === "derived" && contentQuery.data.locked_excerpt,
   );
+  const originalJumpHref = selectedRecord
+    ? buildOriginalJumpHref(selectedRecord, selectedRecord.id)
+    : null;
 
   return (
     <WorkspaceContainer>
@@ -322,25 +376,48 @@ export default function NotesPage() {
               <div className="flex items-start gap-6">
                 <div className="min-w-0 max-w-full">
                   {selectedRecord ? (
-                    <div className="inline-flex max-w-full items-center gap-2">
-                      <Input
-                        value={titleDraft}
-                        onChange={(event) => setTitleDraft(event.target.value)}
-                        disabled={!contentQuery.data?.editable}
-                        className="h-9 w-auto min-w-0 max-w-full rounded-none border-0 bg-transparent px-0 text-lg font-medium text-slate-900 shadow-none focus-visible:ring-0 disabled:opacity-100"
-                      />
-                      {hasLockedExcerpt ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 shrink-0 rounded-md px-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                          onClick={() => setIsExcerptOpen((current) => !current)}
-                        >
-                          <ChevronDownIcon
-                            className={cn("size-4 transition-transform", isExcerptOpen && "rotate-180")}
-                          />
-                        </Button>
+                    <div className="space-y-1.5">
+                      <div className="inline-flex max-w-full items-center gap-2">
+                        <Input
+                          value={titleDraft}
+                          onChange={(event) => setTitleDraft(event.target.value)}
+                          disabled={!contentQuery.data?.editable}
+                          className="h-9 w-auto min-w-0 max-w-full rounded-none border-0 bg-transparent px-0 text-lg font-medium text-slate-900 shadow-none focus-visible:ring-0 disabled:opacity-100"
+                        />
+                        {hasLockedExcerpt ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 shrink-0 rounded-md px-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                            onClick={() => setIsExcerptOpen((current) => !current)}
+                          >
+                            <ChevronDownIcon
+                              className={cn("size-4 transition-transform", isExcerptOpen && "rotate-180")}
+                            />
+                          </Button>
+                        ) : null}
+                      </div>
+                      {(selectedRecord.origin_filename || contentQuery.data?.location_label) ? (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
+                          {selectedRecord.origin_filename ? (
+                            <span>
+                              来源：{selectedRecord.origin_filename}
+                            </span>
+                          ) : null}
+                          {contentQuery.data?.location_label ? (
+                            <span>{contentQuery.data.location_label}</span>
+                          ) : null}
+                          {originalJumpHref ? (
+                            <Link
+                              href={originalJumpHref}
+                              className="inline-flex items-center gap-1 text-[rgb(57,130,152)] hover:text-[rgb(49,113,132)]"
+                            >
+                              跳转原文
+                              <ExternalLinkIcon className="size-3.5" />
+                            </Link>
+                          ) : null}
+                        </div>
                       ) : null}
                     </div>
                   ) : null}

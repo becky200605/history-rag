@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from pathlib import Path
@@ -17,6 +18,8 @@ from src.config.subagents_config import load_subagents_config_from_dict
 from src.config.summarization_config import load_summarization_config_from_dict
 from src.config.title_config import load_title_config_from_dict
 from src.config.tool_config import ToolConfig, ToolGroupConfig
+
+logger = logging.getLogger(__name__)
 
 # Load backend env file from `backend/.env`.
 _cwd = Path(os.getcwd())
@@ -83,8 +86,11 @@ class AppConfig(BaseModel):
         """
         resolved_path = cls.resolve_config_path(config_path)
         with open(resolved_path) as f:
-            config_data = yaml.safe_load(f)
+            config_data = yaml.safe_load(f) or {}
+
+        raw_models = config_data.pop("models", [])
         config_data = cls.resolve_env_variables(config_data)
+        config_data["models"] = cls.resolve_model_configs(raw_models)
 
         # Load title config if present
         if "title" in config_data:
@@ -112,6 +118,25 @@ class AppConfig(BaseModel):
 
         result = cls.model_validate(config_data)
         return result
+
+    @classmethod
+    def resolve_model_configs(cls, models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Resolve model configs, skipping models with missing environment variables."""
+        resolved_models = []
+        for index, model in enumerate(models):
+            try:
+                resolved_models.append(cls.resolve_env_variables(model))
+            except ValueError as e:
+                if not cls._is_missing_env_error(e):
+                    raise
+                model_name = model.get("name") or f"model[{index}]"
+                logger.warning("Skipping model '%s' because %s", model_name, e)
+        return resolved_models
+
+    @staticmethod
+    def _is_missing_env_error(error: ValueError) -> bool:
+        """Return True when the value error was raised for a missing env var reference."""
+        return str(error).startswith("Environment variable ")
 
     @classmethod
     def resolve_env_variables(cls, config: Any) -> Any:

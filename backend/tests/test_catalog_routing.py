@@ -262,15 +262,14 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "### 核心通用书" in output
     assert "### 专题支撑书" in output
     assert "### 补充材料 / 参考工具书" in output
+    assert "- User Book | doc_id=user-1 | 相关度=5.00" in output
     assert "user doc_ids: user-1" in output
     assert "core doc_ids: core-1" in output
     assert "specialized doc_ids: spec-1" in output
     assert "reference doc_ids: ref-1" in output
-    assert "all doc_ids: user-1, core-1, spec-1, ref-1" in output
-    assert "一起传给 `knowledge_search` 做一轮批量检索" in output
-    assert "再对命中较好的书逐本深挖" in output
-    assert "默认假设关键信息是散落的" in output
-    assert "不要急着回答" in output
+    assert "一次只批量检索一个层级的书目" in output
+    assert "同层内可多本一起传给 `knowledge_search`" in output
+    assert "默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料" in output
 
 
 def test_book_search_tool_uses_larger_top_k(monkeypatch) -> None:
@@ -307,24 +306,24 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
         "list_book_catalog",
         lambda thread_id=None, user_id=None: [
             BookCatalogEntry(
-                doc_id="user-doc",
-                title="User Book",
-                filename="user.md",
-                scope="user",
-                source_path="/tmp/user.md",
-                source_url="/api/secure-knowledge/users/me/knowledge/docs/user.md",
+                doc_id="global-doc",
+                title="Global Book 1",
+                filename="global-1.md",
+                scope="global",
+                source_path="/tmp/global-1.md",
+                source_url="/api/knowledge/docs/global-1.md",
                 original_url=None,
                 preview="",
-                search_text="user",
-                search_tokens=["user"],
+                search_text="global",
+                search_tokens=["global"],
             ),
             BookCatalogEntry(
-                doc_id="global-doc",
-                title="Global Book",
-                filename="global.md",
+                doc_id="global-doc-2",
+                title="Global Book 2",
+                filename="global-2.md",
                 scope="global",
-                source_path="/tmp/global.md",
-                source_url="/api/knowledge/docs/global.md",
+                source_path="/tmp/global-2.md",
+                source_url="/api/knowledge/docs/global-2.md",
                 original_url=None,
                 preview="",
                 search_text="global",
@@ -336,12 +335,61 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
     tools_module.knowledge_search_tool.func(
         SimpleNamespace(context={"thread_id": "thread-1", "user_id": "user-1"}),
         "民国时期财政情况",
-        doc_ids="user-doc,global-doc",
+        doc_ids="global-doc,global-doc-2",
         scopes="global",
     )
 
-    assert captured["doc_ids"] == ["user-doc", "global-doc"]
-    assert captured["scopes"] == ["user", "global"]
+    assert captured["doc_ids"] == ["global-doc", "global-doc-2"]
+    assert captured["scopes"] == ["global"]
+
+
+def test_knowledge_search_tool_rejects_mixed_layer_doc_ids(monkeypatch) -> None:
+    retriever_stub = ModuleType("src.community.knowledge_base.retriever")
+    retriever_stub.get_retriever = lambda: SimpleNamespace(search=lambda *args, **kwargs: [])
+    monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="user-doc",
+                title="User Book",
+                filename="user.md",
+                scope="user",
+                source_path="/tmp/user.md",
+                source_url="/api/secure-knowledge/users/me/knowledge/docs/user.md",
+                original_url=None,
+                preview="",
+                search_text="user",
+                search_tokens=["user"],
+                type="user",
+            ),
+            BookCatalogEntry(
+                doc_id="reference-doc",
+                title="Reference Book",
+                filename="ref.md",
+                scope="global",
+                source_path="/tmp/ref.md",
+                source_url="/api/knowledge/docs/ref.md",
+                original_url=None,
+                preview="",
+                search_text="ref",
+                search_tokens=["ref"],
+                type="reference",
+            ),
+        ],
+    )
+
+    output = tools_module.knowledge_search_tool.func(
+        SimpleNamespace(context={"thread_id": "thread-1", "user_id": "user-1"}),
+        "任意问题",
+        doc_ids="user-doc,reference-doc",
+    )
+
+    assert "Error: 当前 `doc_ids` 混入了不同层级的书目" in output
+    assert "不能在同一轮 `knowledge_search` 里批量检索" in output
+    assert "用户书籍: user-doc" in output
+    assert "补充材料 / 参考工具书: reference-doc" in output
 
 
 def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) -> None:

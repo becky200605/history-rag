@@ -287,6 +287,67 @@ def _group_book_candidates(candidates: list[BookCatalogEntry]) -> dict[str, list
     return grouped
 
 
+def _candidate_layer_key(candidate: BookCatalogEntry) -> str:
+    if candidate.scope == "user":
+        return "user"
+    if candidate.scope == "thread":
+        return "thread"
+    return _normalize_type(candidate.type)
+
+
+def _candidate_layer_label(layer: str) -> str:
+    labels = {
+        "user": "用户书籍",
+        "thread": "当前线程书籍",
+        CORE_TYPE: "核心通用书",
+        SPECIALIZED_TYPE: "专题支撑书",
+        REFERENCE_TYPE: "补充材料 / 参考工具书",
+        "unknown": "其他候选书",
+    }
+    return labels.get(layer, "其他候选书")
+
+
+def _format_candidate_brief(candidate: BookCatalogEntry) -> str:
+    parts = [candidate.title, f"doc_id={candidate.doc_id}"]
+    if candidate.score is not None:
+        parts.append(f"相关度={candidate.score:.2f}")
+    return " | ".join(parts)
+
+
+def _validate_single_layer_doc_ids(
+    doc_ids: list[str] | None,
+    *,
+    thread_id: str | None,
+    user_id: str | None,
+) -> str | None:
+    if not doc_ids or len(doc_ids) <= 1:
+        return None
+
+    candidate_map = {
+        candidate.doc_id: _candidate_layer_key(candidate)
+        for candidate in list_book_catalog(thread_id=thread_id, user_id=user_id)
+    }
+    matched_layers: dict[str, list[str]] = {}
+    for doc_id in doc_ids:
+        layer = candidate_map.get(doc_id)
+        if not layer:
+            continue
+        matched_layers.setdefault(layer, []).append(doc_id)
+
+    if len(matched_layers) <= 1:
+        return None
+
+    layer_parts = [
+        f"{_candidate_layer_label(layer)}: {', '.join(ids)}"
+        for layer, ids in matched_layers.items()
+    ]
+    return (
+        "Error: 当前 `doc_ids` 混入了不同层级的书目，不能在同一轮 `knowledge_search` 里批量检索。\n"
+        "请一次只传一个层级的 `doc_ids`，同层内可以多本一起检索；跨层时请分多轮执行。\n"
+        f"检测到的层级: {' | '.join(layer_parts)}"
+    )
+
+
 @tool("book_search", parse_docstring=True)
 def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) -> str:
     """Search candidate books before full-text retrieval.
@@ -319,35 +380,24 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
         if not items:
             continue
         lines.append(f"### {title}")
-        for index, candidate in enumerate(items, 1):
-            lines.append(f"#### 书目 {index}: {candidate.title}")
-            lines.append(f"doc_id: {candidate.doc_id}")
-            lines.append(f"范围: {candidate.scope}")
-            metadata_text = _format_book_metadata(candidate)
-            if metadata_text:
-                lines.append(metadata_text)
-            lines.append("")
+        for candidate in items[:5]:
+            lines.append(f"- {_format_candidate_brief(candidate)}")
+        if len(items) > 5:
+            lines.append(f"- 其余 {len(items) - 5} 本已省略")
+        lines.append(f"doc_ids: {', '.join(candidate.doc_id for candidate in items)}")
+        lines.append("")
 
     user_doc_ids = ", ".join(candidate.doc_id for candidate in grouped["user"])
     thread_doc_ids = ", ".join(candidate.doc_id for candidate in grouped["thread"])
     core_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[CORE_TYPE])
     specialized_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[SPECIALIZED_TYPE])
     reference_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[REFERENCE_TYPE])
-    all_doc_ids = ", ".join(candidate.doc_id for candidate in candidates)
 
     lines.append("---")
-    lines.append("推荐链路:")
-    lines.append("1. 先做书目分层，不要跳过 `book_search` 直接整库检索。")
-    lines.append("2. 在每一层内部，优先把该层相关 `doc_ids` 一起传给 `knowledge_search` 做一轮批量检索，先看这一层里每本书分别贡献了什么。")
-    lines.append("3. 先检索 `用户书籍`；如果当前线程有相关上传，也并行参考 `当前线程书籍`。")
-    lines.append("4. 再检索系统层的 `核心通用书`，先建立稳固的总体框架。")
-    lines.append("5. 如果核心通用书仍不足，再扩展到 `专题支撑书`。")
-    lines.append("6. `补充材料 / 参考工具书` 作为最后补强层，用来补细节、对照和查缺。")
-    lines.append("7. 批量检索之后，再对命中较好的书逐本深挖；不要只读到一本就停止。")
-    lines.append("8. 回答前要整合不同层级、不同书籍里的证据，不要只抓单个综述段落，也不要让单本书主导全部结论。")
-    lines.append("9. 如果搜到的大多是目录、标题、页眉页脚、边栏或过短片段，不要急着作答，把它们当作导航线索，继续搜目录/章节名/阶段名，并配合 `knowledge_locate` 展开正文。")
-    lines.append("10. 默认假设关键信息是散落的：散落在很多书里，也散落在同一本书的不同章节、不同段落里，所以往往需要检索一本书的很多地方才能形成用户满意的回答。")
-    lines.append("11. 在真正作答前，先检查：现在的资料是否已经覆盖了问题的每个主要部分？每个部分是否都有足够的实质证据？如果还没有，就继续检索，不要急着回答。")
+    lines.append("检索规则:")
+    lines.append("1. 一次只批量检索一个层级的书目；不要混传不同层级的 `doc_ids`。")
+    lines.append("2. 同层内可多本一起传给 `knowledge_search`。")
+    lines.append("3. 默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料。")
     if user_doc_ids:
         lines.append(f"user doc_ids: {user_doc_ids}")
     if thread_doc_ids:
@@ -358,7 +408,6 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
         lines.append(f"specialized doc_ids: {specialized_doc_ids}")
     if reference_doc_ids:
         lines.append(f"reference doc_ids: {reference_doc_ids}")
-    lines.append(f"all doc_ids: {all_doc_ids}")
     return "\n".join(lines)
 
 
@@ -417,6 +466,13 @@ def knowledge_search_tool(
         user_id = runtime.context.get("user_id")
         parsed_doc_ids = _parse_doc_ids(doc_ids)
         parsed_scopes = _parse_scopes(scopes)
+        mixed_layer_error = _validate_single_layer_doc_ids(
+            parsed_doc_ids,
+            thread_id=thread_id,
+            user_id=user_id,
+        )
+        if mixed_layer_error:
+            return mixed_layer_error
         inferred_scopes = _infer_scopes_from_doc_ids(
             parsed_doc_ids,
             thread_id=thread_id,

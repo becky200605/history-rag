@@ -137,6 +137,15 @@ def _build_query_variants(query: str) -> list[dict[str, str | float]]:
     return variants
 
 
+def _select_query_variants(query: str, doc_ids: list[str] | None = None) -> list[dict[str, str | float]]:
+    variants = _build_query_variants(query)
+    if not doc_ids:
+        return variants
+    # When the search is already narrowed to specific books, keep the query
+    # anchored so the retriever does not dilute recall inside those documents.
+    return variants[:1]
+
+
 SOURCE_KIND_BOOSTS = {
     "annotation": 1.30,
     "excerpt": 1.20,
@@ -240,12 +249,24 @@ class KnowledgeBaseRetriever:
                 ]
             )
 
+        limit = top_k or self.config.retrieval.top_k
         results = vector_store.similarity_search_with_score(
             query,
-            k=top_k or self.config.retrieval.top_k,
+            k=limit,
             filter=qdrant_filter,
             score_threshold=self.config.retrieval.score_threshold,
         )
+
+        if not results and (self.config.retrieval.score_threshold or 0) > 0:
+            # Fallback: keep the same collection/filter, but relax the threshold so
+            # broad historical queries still surface candidate passages instead of
+            # returning an empty tool result to the model.
+            results = vector_store.similarity_search_with_score(
+                query,
+                k=max(limit, MIN_PER_QUERY_TOP_K * 2),
+                filter=qdrant_filter,
+                score_threshold=0.0,
+            )
 
         formatted_results: list[dict] = []
         for doc, score in results:
@@ -350,11 +371,11 @@ class KnowledgeBaseRetriever:
     ) -> list[dict]:
         """Search for relevant documents."""
         enabled_scopes = scopes or list(DEFAULT_SEARCH_SCOPES)
-        query_variants = _build_query_variants(query)
+        query_variants = _select_query_variants(query, doc_ids=doc_ids)
         per_query_top_k = max(self.config.retrieval.top_k, MIN_PER_QUERY_TOP_K)
         final_limit = max(
             self.config.retrieval.top_k,
-            MIN_RESULT_LIMIT if len(query_variants) > 1 else self.config.retrieval.top_k,
+            MIN_RESULT_LIMIT if len(query_variants) > 1 or doc_ids else self.config.retrieval.top_k,
         )
         collections: list[str] = []
         if user_id and "user" in enabled_scopes:
@@ -386,9 +407,7 @@ class KnowledgeBaseRetriever:
                     results = self._search_collection(
                         collection_name,
                         variant_query,
-                        doc_ids=doc_ids
-                        if collection_name == self.config.qdrant.collection_name
-                        else None,
+                        doc_ids=doc_ids,
                         top_k=per_query_top_k,
                     )
                 except Exception:

@@ -312,6 +312,220 @@ def test_retriever_expands_broad_historical_query_and_merges_matched_queries(mon
     assert any(label.startswith("民国分期:") for label in global_result["matched_queries"])
 
 
+def test_retriever_keeps_only_original_query_when_doc_ids_are_provided(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            retrieval=SimpleNamespace(top_k=3, score_threshold=0.0),
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
+    monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
+    seen_calls: list[tuple[str, str, list[str] | None]] = []
+
+    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
+        seen_calls.append((collection_name, query, doc_ids))
+        return [
+            {
+                "content": "结果",
+                "score": 1.0,
+                "filename": "global.md",
+                "source": "global",
+                "page": None,
+                "source_type": "structured",
+                "metadata": {"scope": "global", "source_kind": "global_document", "doc_id": "global-doc"},
+            }
+        ]
+
+    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+
+    retriever.search("民国时期财政有什么变化", user_id="user-1", doc_ids=["global-doc"], scopes=["global"])
+
+    assert seen_calls == [("knowledge_base", "民国时期财政有什么变化", ["global-doc"])]
+
+
+def test_retriever_applies_doc_ids_filter_to_each_collection(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            retrieval=SimpleNamespace(top_k=3, score_threshold=0.0),
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
+    monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
+    seen_calls: list[tuple[str, list[str] | None]] = []
+
+    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
+        seen_calls.append((collection_name, doc_ids))
+        return []
+
+    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+
+    retriever.search(
+        "清代财政变迁",
+        thread_id="thread-1",
+        user_id="user-1",
+        doc_ids=["uk-1", "thread-book.pdf", "global/book.md"],
+        scopes=["user", "thread", "global"],
+    )
+
+    assert seen_calls == [
+        ("knowledge_base__user__user-1", ["uk-1", "thread-book.pdf", "global/book.md"]),
+        ("knowledge_base__thread__thread-1", ["uk-1", "thread-book.pdf", "global/book.md"]),
+        ("knowledge_base", ["uk-1", "thread-book.pdf", "global/book.md"]),
+    ]
+
+
+def test_retriever_returns_at_least_minimum_results_when_doc_ids_are_provided(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            retrieval=SimpleNamespace(top_k=3, score_threshold=0.0),
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
+    monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
+
+    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
+        scope = "global"
+        filename = "global.md"
+        source_kind = "global_document"
+        if "__user__" in collection_name:
+            scope = "user"
+            filename = "user.md"
+            source_kind = "upload"
+        elif "__thread__" in collection_name:
+            scope = "thread"
+            filename = "thread.md"
+            source_kind = "thread_upload"
+
+        return [
+            {
+                "content": f"{scope}-片段-{index}",
+                "score": 1.0 - index * 0.01,
+                "filename": filename,
+                "source": filename,
+                "page": None,
+                "source_type": "structured",
+                "metadata": {
+                    "scope": scope,
+                    "source_kind": source_kind,
+                    "doc_id": f"{scope}-doc-{index}",
+                    "title": f"{scope}-title-{index}",
+                },
+            }
+            for index in range(3)
+        ]
+
+    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+
+    results = retriever.search(
+        "清代财政变迁",
+        thread_id="thread-1",
+        user_id="user-1",
+        doc_ids=["uk-1", "thread-book.pdf", "global/book.md"],
+        scopes=["user", "thread", "global"],
+    )
+
+    assert len(results) == 6
+
+
+def test_search_collection_retries_without_threshold_when_first_pass_is_empty(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            retrieval=SimpleNamespace(top_k=3, score_threshold=0.3),
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
+    monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
+
+    calls: list[dict[str, object]] = []
+
+    class _Doc:
+        def __init__(self) -> None:
+            self.page_content = "找回来的结果"
+            self.metadata = {"title": "史料", "doc_id": "global-doc", "source": "global.md"}
+
+    class _Store:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def similarity_search_with_score(self, query, k, filter=None, score_threshold=None):
+            calls.append({"query": query, "k": k, "score_threshold": score_threshold, "filter": filter})
+            if score_threshold == 0.3:
+                return []
+            return [(_Doc(), 0.12)]
+
+    monkeypatch.setattr(retriever_module, "QdrantVectorStore", _Store)
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
+    results = retriever._search_collection("knowledge_base", "民国时期财政状况", doc_ids=["global-doc"], top_k=4)
+
+    assert len(calls) == 2
+    assert calls[0]["score_threshold"] == 0.3
+    assert calls[1]["score_threshold"] == 0.0
+    assert results[0]["content"] == "找回来的结果"
+
+
+def test_lexical_candidate_documents_respect_doc_ids_for_user_and_thread(monkeypatch) -> None:
+    user_docs = [
+        {"doc_id": "uk_hit", "scope": "user"},
+        {"doc_id": "uk_skip", "scope": "user"},
+    ]
+    thread_docs = [
+        {"doc_id": "thread_hit.md", "scope": "thread"},
+        {"doc_id": "thread_skip.md", "scope": "thread"},
+    ]
+    global_docs = [
+        {"doc_id": "global-hit", "scope": "global"},
+        {"doc_id": "global-skip", "scope": "global"},
+    ]
+
+    monkeypatch.setattr(
+        "src.community.knowledge_base.lexical_search._iter_user_documents",
+        lambda user_id, doc_ids=None: (doc for doc in user_docs if not doc_ids or doc["doc_id"] in doc_ids),
+    )
+    monkeypatch.setattr(
+        "src.community.knowledge_base.lexical_search._iter_thread_documents",
+        lambda thread_id, doc_ids=None: (doc for doc in thread_docs if not doc_ids or doc["doc_id"] in doc_ids),
+    )
+    monkeypatch.setattr(
+        "src.community.knowledge_base.lexical_search._iter_global_documents",
+        lambda doc_ids=None: (doc for doc in global_docs if not doc_ids or doc["doc_id"] in doc_ids),
+    )
+
+    from src.community.knowledge_base.lexical_search import _iter_candidate_documents
+
+    documents = list(
+        _iter_candidate_documents(
+            thread_id="thread-1",
+            user_id="user-1",
+            doc_ids=["uk_hit", "thread_hit.md", "global-hit"],
+            scopes=["user", "thread", "global"],
+        )
+    )
+
+    assert [doc["doc_id"] for doc in documents] == ["uk_hit", "thread_hit.md", "global-hit"]
+
+
 def test_get_qdrant_client_uses_configured_server_timeout(monkeypatch) -> None:
     captured = {}
 

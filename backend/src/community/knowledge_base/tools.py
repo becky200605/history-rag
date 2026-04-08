@@ -217,15 +217,16 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
     lines.append("---")
     lines.append("推荐链路:")
     lines.append("1. 先做书目分层，不要跳过 `book_search` 直接整库检索。")
-    lines.append("2. 先检索 `用户书籍`；如果当前线程有相关上传，也并行参考 `当前线程书籍`。")
-    lines.append("3. 再检索系统层的 `核心通用书`，先建立稳固的总体框架。")
-    lines.append("4. 如果核心通用书仍不足，再扩展到 `专题支撑书`。")
-    lines.append("5. `补充材料 / 参考工具书` 作为最后补强层，用来补细节、对照和查缺。")
-    lines.append("6. 对进入当前层的相关候选书，尽量逐本检索一遍；不要只读到一本就停止。")
-    lines.append("7. 回答前要整合不同层级、不同书籍里的证据，不要只抓单个综述段落，也不要让单本书主导全部结论。")
-    lines.append("8. 如果搜到的大多是目录、标题、页眉页脚、边栏或过短片段，不要急着作答，把它们当作导航线索，继续搜目录/章节名/阶段名，并配合 `knowledge_locate` 展开正文。")
-    lines.append("9. 默认假设关键信息是散落的：散落在很多书里，也散落在同一本书的不同章节、不同段落里，所以往往需要检索一本书的很多地方才能形成用户满意的回答。")
-    lines.append("10. 在真正作答前，先检查：现在的资料是否已经覆盖了问题的每个主要部分？每个部分是否都有足够的实质证据？如果还没有，就继续检索，不要急着回答。")
+    lines.append("2. 在每一层内部，优先把该层相关 `doc_ids` 一起传给 `knowledge_search` 做一轮批量检索，先看这一层里每本书分别贡献了什么。")
+    lines.append("3. 先检索 `用户书籍`；如果当前线程有相关上传，也并行参考 `当前线程书籍`。")
+    lines.append("4. 再检索系统层的 `核心通用书`，先建立稳固的总体框架。")
+    lines.append("5. 如果核心通用书仍不足，再扩展到 `专题支撑书`。")
+    lines.append("6. `补充材料 / 参考工具书` 作为最后补强层，用来补细节、对照和查缺。")
+    lines.append("7. 批量检索之后，再对命中较好的书逐本深挖；不要只读到一本就停止。")
+    lines.append("8. 回答前要整合不同层级、不同书籍里的证据，不要只抓单个综述段落，也不要让单本书主导全部结论。")
+    lines.append("9. 如果搜到的大多是目录、标题、页眉页脚、边栏或过短片段，不要急着作答，把它们当作导航线索，继续搜目录/章节名/阶段名，并配合 `knowledge_locate` 展开正文。")
+    lines.append("10. 默认假设关键信息是散落的：散落在很多书里，也散落在同一本书的不同章节、不同段落里，所以往往需要检索一本书的很多地方才能形成用户满意的回答。")
+    lines.append("11. 在真正作答前，先检查：现在的资料是否已经覆盖了问题的每个主要部分？每个部分是否都有足够的实质证据？如果还没有，就继续检索，不要急着回答。")
     if user_doc_ids:
         lines.append(f"user doc_ids: {user_doc_ids}")
     if thread_doc_ids:
@@ -258,9 +259,11 @@ def knowledge_search_tool(
     Recommended use:
     1. First call `book_search(query=...)` to identify likely user/system books.
     2. Then call `knowledge_search` against the selected layer of books.
-       Search user books first, then core system books, then specialized books,
-       and only later use reference/supporting material when needed.
-    3. For exact quotation / page / paragraph lookups, you may use narrower
+       Inside one layer, prefer passing multiple relevant `doc_ids` together for
+       a first-pass batch search, instead of reading only one book first.
+    3. After the batch pass, continue with narrower per-book queries and
+       `knowledge_locate` on the books/locations that look promising.
+    4. For exact quotation / page / paragraph lookups, you may use narrower
        scopes or doc filters and then call `knowledge_locate` for nearby context.
 
     This tool searches through curated internal documents and returns relevant

@@ -20,6 +20,8 @@ from src.community.knowledge_base.user_store import list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
+LEXICAL_SCORE_THRESHOLD = 0.18
+
 def _iter_global_documents(doc_ids: set[str] | None = None) -> Iterator[dict[str, Any]]:
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
     ingestion_dir = docs_root / ".ingestion"
@@ -127,9 +129,9 @@ def _iter_candidate_documents(
     enabled_scopes = set(scopes or ["user", "thread", "global"])
     doc_id_set = set(doc_ids or []) or None
     if user_id and "user" in enabled_scopes:
-        yield from _iter_user_documents(user_id, doc_ids=None)
+        yield from _iter_user_documents(user_id, doc_ids=doc_id_set)
     if thread_id and "thread" in enabled_scopes:
-        yield from _iter_thread_documents(thread_id, doc_ids=None)
+        yield from _iter_thread_documents(thread_id, doc_ids=doc_id_set)
     if "global" in enabled_scopes:
         yield from _iter_global_documents(doc_ids=doc_id_set)
 
@@ -184,7 +186,7 @@ def lexical_search_documents(
             for paragraph in page.get("paragraphs") or []:
                 content = str(paragraph.get("text") or "").strip()
                 score = _score_paragraph(query, content)
-                if score < 0.25:
+                if score < LEXICAL_SCORE_THRESHOLD:
                     continue
                 metadata = {
                     "title": document["title"],

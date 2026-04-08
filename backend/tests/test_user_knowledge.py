@@ -312,7 +312,7 @@ def test_retriever_expands_broad_historical_query_and_merges_matched_queries(mon
     assert any(label.startswith("民国分期:") for label in global_result["matched_queries"])
 
 
-def test_retriever_keeps_only_original_query_when_doc_ids_are_provided(monkeypatch) -> None:
+def test_retriever_keeps_doc_id_queries_anchored_but_adds_alias_and_facet_retries(monkeypatch) -> None:
     monkeypatch.setattr(
         retriever_module,
         "get_knowledge_base_config",
@@ -344,9 +344,15 @@ def test_retriever_keeps_only_original_query_when_doc_ids_are_provided(monkeypat
 
     monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
 
-    retriever.search("民国时期财政有什么变化", user_id="user-1", doc_ids=["global-doc"], scopes=["global"])
+    retriever.search("清代末期财政情况", user_id="user-1", doc_ids=["global-doc"], scopes=["global"])
 
-    assert seen_calls == [("knowledge_base", "民国时期财政有什么变化", ["global-doc"])]
+    executed_queries = [query for _, query, _ in seen_calls]
+    assert executed_queries[0] == "清代末期财政情况"
+    assert "晚清财政情况" in executed_queries
+    assert "晚清财政收入结构" in executed_queries
+    assert "晚清财政支出结构" in executed_queries
+    assert all(doc_ids == ["global-doc"] for _, _, doc_ids in seen_calls)
+    assert all("史料记载" not in query for query in executed_queries)
 
 
 def test_retriever_applies_doc_ids_filter_to_each_collection(monkeypatch) -> None:
@@ -363,10 +369,10 @@ def test_retriever_applies_doc_ids_filter_to_each_collection(monkeypatch) -> Non
     monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
 
     retriever = retriever_module.KnowledgeBaseRetriever()
-    seen_calls: list[tuple[str, list[str] | None]] = []
+    seen_calls: list[tuple[str, str, list[str] | None]] = []
 
     def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
-        seen_calls.append((collection_name, doc_ids))
+        seen_calls.append((collection_name, query, doc_ids))
         return []
 
     monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
@@ -379,11 +385,12 @@ def test_retriever_applies_doc_ids_filter_to_each_collection(monkeypatch) -> Non
         scopes=["user", "thread", "global"],
     )
 
-    assert seen_calls == [
-        ("knowledge_base__user__user-1", ["uk-1", "thread-book.pdf", "global/book.md"]),
-        ("knowledge_base__thread__thread-1", ["uk-1", "thread-book.pdf", "global/book.md"]),
-        ("knowledge_base", ["uk-1", "thread-book.pdf", "global/book.md"]),
-    ]
+    assert {collection_name for collection_name, _, _ in seen_calls} == {
+        "knowledge_base__user__user-1",
+        "knowledge_base__thread__thread-1",
+        "knowledge_base",
+    }
+    assert all(doc_ids == ["uk-1", "thread-book.pdf", "global/book.md"] for _, _, doc_ids in seen_calls)
 
 
 def test_retriever_returns_at_least_minimum_results_when_doc_ids_are_provided(monkeypatch) -> None:

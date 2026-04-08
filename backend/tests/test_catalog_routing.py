@@ -393,3 +393,28 @@ def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) 
     assert "不要随手改成更空泛的短词" in output
     assert "`scopes` 是硬过滤" in output
     assert "只有在你已经尝试了合理的换 query / 换书层 / `knowledge_locate` 展开后" in output
+
+
+def test_knowledge_search_tool_no_result_guides_grounded_retries_before_web(monkeypatch) -> None:
+    class _DummyRetriever:
+        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None):
+            return []
+
+    retriever_stub = ModuleType("src.community.knowledge_base.retriever")
+    retriever_stub.get_retriever = lambda: _DummyRetriever()
+    monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
+
+    output = tools_module.knowledge_search_tool.func(
+        SimpleNamespace(context={}),
+        "清代末期财政情况",
+        doc_ids="core-doc",
+        scopes="global",
+    )
+
+    assert "不要因为这一轮空结果就直接换到别的书层" in output
+    assert "不要立刻跳到 `web_search`" in output
+    assert "句子型专业 query" in output
+    assert "关键词堆砌" in output
+    assert "`晚清财政情况如何`" in output
+    assert "`晚清财政收入结构发生了哪些变化`" in output
+    assert "只有在同一批最相关书里做过这些 grounded retries" in output

@@ -37,6 +37,15 @@ KNOWLEDGE_RESULT_MAX_CHARS = 900
 KNOWLEDGE_RESULT_MAX_LINES = 24
 ALLOWED_SEARCH_SCOPES = {"user", "thread", "global"}
 SEARCH_SCOPE_ORDER = ("user", "thread", "global")
+HISTORICAL_PERIOD_ALIASES = {
+    "清代末期": ("晚清", "清末"),
+    "晚清": ("清代末期", "清末"),
+    "清末": ("晚清", "清代末期"),
+    "民国时期": ("民国",),
+    "民国": ("民国时期",),
+}
+HISTORICAL_TOPIC_RETRY_HINTS = ("情况", "概况", "变化", "变迁", "问题", "状况")
+FINANCE_RETRY_FACETS = ("财政收入结构", "财政支出结构", "财政政策")
 
 
 def _parse_doc_ids(doc_ids: str | None) -> list[str] | None:
@@ -58,6 +67,82 @@ def _parse_scopes(scopes: str | None) -> list[str] | None:
         seen.add(normalized)
         parsed.append(normalized)
     return parsed or None
+
+
+def _normalize_retry_query(query: str) -> str:
+    return " ".join(query.split()).strip()
+
+
+def _expand_period_alias_queries(query: str) -> list[str]:
+    aliases: list[str] = []
+    for period, replacements in HISTORICAL_PERIOD_ALIASES.items():
+        if period not in query:
+            continue
+        for replacement in replacements:
+            candidate = _normalize_retry_query(query.replace(period, replacement, 1))
+            if candidate and candidate not in aliases:
+                aliases.append(candidate)
+    return aliases
+
+
+def _rewrite_finance_retry_query(query: str, facet: str) -> str:
+    import re
+
+    return _normalize_retry_query(
+        re.sub(
+            r"财政(?:情况|概况|变化|变迁|问题|状况|体制|制度)?",
+            facet,
+            query,
+            count=1,
+        )
+    )
+
+
+def _build_retry_query_suggestions(query: str) -> list[str]:
+    normalized = _normalize_retry_query(query)
+    if not normalized:
+        return []
+
+    suggestions: list[str] = []
+
+    def add_suggestion(candidate: str) -> None:
+        if candidate and candidate not in suggestions:
+            suggestions.append(candidate)
+
+    alias_queries = _expand_period_alias_queries(normalized)
+    for alias_query in alias_queries:
+        add_suggestion(f"{alias_query}如何")
+
+    base_query = alias_queries[0] if alias_queries else normalized
+    if "财政" in normalized and any(hint in normalized for hint in HISTORICAL_TOPIC_RETRY_HINTS):
+        for facet in FINANCE_RETRY_FACETS:
+            add_suggestion(f"{_rewrite_finance_retry_query(base_query, facet)}发生了哪些变化")
+
+    return suggestions[:4]
+
+
+def _build_no_result_guidance(query: str, doc_ids: list[str] | None) -> str:
+    lines = ["## 检索结果", "", "本轮没有命中到可直接使用的内部知识片段。", "", "---"]
+    if doc_ids:
+        lines.append("先不要因为这一轮空结果就直接换到别的书层，更不要立刻跳到 `web_search`。")
+        lines.append("如果这些 `doc_ids` 已经来自 `book_search` 里最匹配的书，先保持同一批相关 `doc_ids`，只改一个变量继续重试。")
+    else:
+        lines.append("先不要立刻跳到 `web_search`；优先回到 `book_search` 找到更匹配的书，再在那一层继续检索。")
+
+    lines.append("优先重试顺序：")
+    lines.append("1. 保留原时期/制度/人物锚点，只把 query 缩窄成一个更小的专题分面。")
+    lines.append("2. 把时期词换成正文里更常见的同义叫法，例如 `清代末期` → `晚清` / `清末`。")
+    lines.append("3. 像“某时期财政情况”这种宽问题，先拆成 `财政收入结构`、`财政支出结构`、`财政政策` 之类的小问题。")
+    lines.append("4. 由于库里大多是长段正文，优先改写成带锚点的句子型专业 query，不要写成关键词堆砌。")
+
+    suggestions = _build_retry_query_suggestions(query)
+    if suggestions:
+        lines.append("建议下一轮 query：")
+        for suggestion in suggestions:
+            lines.append(f"- `{suggestion}`")
+
+    lines.append("只有在同一批最相关书里做过这些 grounded retries 仍然没有证据时，才考虑换书层；`web_search` 放在更后面。")
+    return "\n".join(lines)
 
 
 def _merge_scopes(*scope_groups: list[str] | None) -> list[str] | None:
@@ -306,6 +391,8 @@ def knowledge_search_tool(
        omit `scopes` and let the `doc_ids` control the search.
     6. Keep `query` close to the user's wording and key anchors. Preserve
        book names, people, periods, institutions, years, and policy terms.
+       Prefer a sentence-like professional query over a keyword pile-up.
+       Do not write a bag of terms like `清代末期财政情况 财政收支结构 财政政策 财政危机`.
        Do not turn the query into a long meta sentence like “I need to search
        for ...”, and do not over-shorten it into something vaguer than the
        user's actual question.
@@ -314,8 +401,9 @@ def knowledge_search_tool(
     knowledge snippets with source document references.
 
     Args:
-        query: Search terms describing what evidence you need. Prefer concise,
-            source-anchored phrasing over meta narration.
+        query: Search terms describing what evidence you need. Prefer
+            sentence-like, source-anchored phrasing over keyword pile-ups or
+            meta narration.
         doc_ids: Optional comma-separated candidate book IDs from `book_search`.
             Prefer this for narrowing to known relevant books.
         scopes: Optional comma-separated hard filters: `user`, `thread`, `global`.
@@ -346,7 +434,7 @@ def knowledge_search_tool(
         return f"Error searching knowledge base: {e}"
 
     if not results:
-        return "No relevant information found in the knowledge base."
+        return _build_no_result_guidance(query, parsed_doc_ids)
 
     formatted_output = "## 检索结果\n\n"
 
@@ -413,6 +501,7 @@ def knowledge_search_tool(
     formatted_output += "---\n"
     formatted_output += "这些结果已经做过联合检索与分面扩展；回答前先归并不同来源里的分散证据，不要只摘取单个综述段落。\n"
     formatted_output += "如果你已经从 `book_search` 拿到了 `doc_ids`，优先继续围绕这些书换一个更贴近用户原问题的查询，不要随手改成更空泛的短词。\n"
+    formatted_output += "本库大多是长段正文，优先使用带锚点的句子型专业 query，不要把多个专题词机械并列成关键词串。\n"
     formatted_output += "只有在你明确想排除某个范围时才传 `scopes`；`scopes` 是硬过滤，和 `doc_ids` 会取交集，传错会把本该能搜到的书直接滤掉。\n"
     formatted_output += "如果某条结果看起来像目录、标题、页眉页脚、边栏、图表标题或过短片段，把它当作导航线索，不要直接拿来支撑最终结论。\n"
     formatted_output += "遇到这类线索时，继续搜索对应的目录词、章节名、阶段名、制度名，再调用 `knowledge_locate` 展开附近正文。\n"

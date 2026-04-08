@@ -20,6 +20,7 @@ DEFAULT_SEARCH_SCOPES = ("user", "thread", "global")
 MIN_RESULT_LIMIT = 6
 MIN_PER_QUERY_TOP_K = 4
 MAX_QUERY_VARIANTS = 8
+MAX_DOC_ID_QUERY_VARIANTS = 5
 EXACT_LOOKUP_HINTS = (
     "原文",
     "原句",
@@ -68,6 +69,26 @@ HISTORICAL_PERIOD_FACETS = {
     "清末": ["同治时期", "光绪时期", "清末新政", "宣统时期", "预备立宪"],
     "北洋时期": ["袁世凯时期", "皖系时期", "直系时期", "奉系时期"],
 }
+HISTORICAL_PERIOD_ALIASES = {
+    "清代末期": ["晚清", "清末"],
+    "晚清": ["清代末期", "清末"],
+    "清末": ["晚清", "清代末期"],
+    "民国时期": ["民国"],
+    "民国": ["民国时期"],
+}
+HISTORICAL_TOPIC_RETRY_HINTS = (
+    "情况",
+    "概况",
+    "变化",
+    "变迁",
+    "问题",
+    "状况",
+)
+FINANCE_FACET_QUERIES = (
+    "财政收入结构",
+    "财政支出结构",
+    "财政政策",
+)
 SCOPE_BOOSTS = {
     "user": 1.05,
     "thread": 1.0,
@@ -137,13 +158,73 @@ def _build_query_variants(query: str) -> list[dict[str, str | float]]:
     return variants
 
 
+def _expand_period_aliases(query: str) -> list[str]:
+    aliases: list[str] = []
+    for period, replacements in HISTORICAL_PERIOD_ALIASES.items():
+        if period not in query:
+            continue
+        for replacement in replacements:
+            candidate = _normalize_query_text(query.replace(period, replacement, 1))
+            if candidate and candidate not in aliases:
+                aliases.append(candidate)
+    return aliases
+
+
+def _identify_alias_term(query: str) -> str:
+    for replacements in HISTORICAL_PERIOD_ALIASES.values():
+        for replacement in replacements:
+            if replacement in query:
+                return replacement
+    return query
+
+
+def _rewrite_finance_facet(query: str, facet: str) -> str:
+    return _normalize_query_text(
+        re.sub(
+            r"财政(?:情况|概况|变化|变迁|问题|状况|体制|制度)?",
+            facet,
+            query,
+            count=1,
+        )
+    )
+
+
+def _build_doc_id_query_variants(query: str) -> list[dict[str, str | float]]:
+    normalized = _normalize_query_text(query)
+    if not normalized:
+        return [{"query": query, "label": "原始问题", "weight": 1.0}]
+
+    variants: list[dict[str, str | float]] = [
+        {"query": normalized, "label": "原始问题", "weight": 1.0},
+    ]
+    seen = {normalized}
+
+    def add_variant(text: str, label: str, weight: float) -> None:
+        candidate = _normalize_query_text(text)
+        if not candidate or candidate in seen or len(variants) >= MAX_DOC_ID_QUERY_VARIANTS:
+            return
+        seen.add(candidate)
+        variants.append({"query": candidate, "label": label, "weight": weight})
+
+    alias_variants = _expand_period_aliases(normalized)
+    for alias_query in alias_variants:
+        add_variant(alias_query, f"同书别名:{_identify_alias_term(alias_query)}", 0.99)
+
+    base_query = alias_variants[0] if alias_variants else normalized
+    if "财政" in normalized and any(hint in normalized for hint in HISTORICAL_TOPIC_RETRY_HINTS):
+        for facet in FINANCE_FACET_QUERIES:
+            add_variant(_rewrite_finance_facet(base_query, facet), f"同书聚焦:{facet}", 0.98)
+
+    return variants
+
+
 def _select_query_variants(query: str, doc_ids: list[str] | None = None) -> list[dict[str, str | float]]:
-    variants = _build_query_variants(query)
     if not doc_ids:
-        return variants
+        return _build_query_variants(query)
     # When the search is already narrowed to specific books, keep the query
-    # anchored so the retriever does not dilute recall inside those documents.
-    return variants[:1]
+    # anchored to the same books, but still allow a few nearby retries such as
+    # period aliases and narrower topic facets.
+    return _build_doc_id_query_variants(query)
 
 
 SOURCE_KIND_BOOSTS = {

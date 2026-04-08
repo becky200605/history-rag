@@ -1,4 +1,5 @@
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import src.community.knowledge_base.catalog as catalog_module
 import src.community.knowledge_base.tools as tools_module
@@ -284,3 +285,111 @@ def test_book_search_tool_uses_larger_top_k(monkeypatch) -> None:
     tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
 
     assert captured["top_k"] == 20
+
+
+def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _DummyRetriever:
+        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None):
+            captured["query"] = query
+            captured["thread_id"] = thread_id
+            captured["user_id"] = user_id
+            captured["doc_ids"] = doc_ids
+            captured["scopes"] = scopes
+            return []
+
+    retriever_stub = ModuleType("src.community.knowledge_base.retriever")
+    retriever_stub.get_retriever = lambda: _DummyRetriever()
+    monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="user-doc",
+                title="User Book",
+                filename="user.md",
+                scope="user",
+                source_path="/tmp/user.md",
+                source_url="/api/secure-knowledge/users/me/knowledge/docs/user.md",
+                original_url=None,
+                preview="",
+                search_text="user",
+                search_tokens=["user"],
+            ),
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="global.md",
+                scope="global",
+                source_path="/tmp/global.md",
+                source_url="/api/knowledge/docs/global.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+            ),
+        ],
+    )
+
+    tools_module.knowledge_search_tool.func(
+        SimpleNamespace(context={"thread_id": "thread-1", "user_id": "user-1"}),
+        "民国时期财政情况",
+        doc_ids="user-doc,global-doc",
+        scopes="global",
+    )
+
+    assert captured["doc_ids"] == ["user-doc", "global-doc"]
+    assert captured["scopes"] == ["user", "global"]
+
+
+def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) -> None:
+    class _DummyRetriever:
+        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None):
+            return [
+                {
+                    "content": "民国财政以税收、公债与币制调整为主要线索。",
+                    "score": 0.91,
+                    "filename": "finance.md",
+                    "metadata": {
+                        "title": "财政史",
+                        "doc_id": "global-doc",
+                        "scope": "global",
+                        "page_no": 12,
+                        "pdf_page_no": 12,
+                        "paragraph_no": 3,
+                    },
+                }
+            ]
+
+    retriever_stub = ModuleType("src.community.knowledge_base.retriever")
+    retriever_stub.get_retriever = lambda: _DummyRetriever()
+    monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
+    monkeypatch.setattr(
+        tools_module,
+        "resolve_result_citation_context",
+        lambda result, thread_id=None, user_id=None: {
+            "source_url": "/api/knowledge/docs/finance.md",
+            "citation_url": "/api/knowledge/docs/finance.md?citation=1",
+            "citation_title": "财政史",
+            "citation_page_no": 12,
+            "citation_pdf_page_no": 12,
+            "citation_paragraph_no": 3,
+            "citation_page": None,
+            "source_label": None,
+            "source_scope": "global",
+            "original_title": None,
+        },
+    )
+
+    output = tools_module.knowledge_search_tool.func(
+        SimpleNamespace(context={}),
+        "民国时期财政情况",
+        doc_ids="global-doc",
+        scopes="global",
+    )
+
+    assert "不要随手改成更空泛的短词" in output
+    assert "`scopes` 是硬过滤" in output
+    assert "只有在你已经尝试了合理的换 query / 换书层 / `knowledge_locate` 展开后" in output

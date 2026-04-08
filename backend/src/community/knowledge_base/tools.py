@@ -25,6 +25,7 @@ from src.community.knowledge_base.catalog import (
     REFERENCE_TYPE,
     SPECIALIZED_TYPE,
     BookCatalogEntry,
+    list_book_catalog,
     search_book_catalog,
 )
 from src.community.knowledge_base.citations import resolve_result_citation_context
@@ -35,6 +36,7 @@ KNOWLEDGE_SEARCH_TOP_K = 6
 KNOWLEDGE_RESULT_MAX_CHARS = 900
 KNOWLEDGE_RESULT_MAX_LINES = 24
 ALLOWED_SEARCH_SCOPES = {"user", "thread", "global"}
+SEARCH_SCOPE_ORDER = ("user", "thread", "global")
 
 
 def _parse_doc_ids(doc_ids: str | None) -> list[str] | None:
@@ -56,6 +58,40 @@ def _parse_scopes(scopes: str | None) -> list[str] | None:
         seen.add(normalized)
         parsed.append(normalized)
     return parsed or None
+
+
+def _merge_scopes(*scope_groups: list[str] | None) -> list[str] | None:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for scope in SEARCH_SCOPE_ORDER:
+        for group in scope_groups:
+            if not group or scope not in group or scope in seen:
+                continue
+            seen.add(scope)
+            merged.append(scope)
+    return merged or None
+
+
+def _infer_scopes_from_doc_ids(
+    doc_ids: list[str] | None,
+    *,
+    thread_id: str | None,
+    user_id: str | None,
+) -> list[str] | None:
+    if not doc_ids:
+        return None
+
+    candidate_map = {
+        candidate.doc_id: candidate.scope
+        for candidate in list_book_catalog(thread_id=thread_id, user_id=user_id)
+        if candidate.scope in ALLOWED_SEARCH_SCOPES
+    }
+    inferred: list[str] = []
+    for doc_id in doc_ids:
+        scope = candidate_map.get(doc_id)
+        if scope and scope not in inferred:
+            inferred.append(scope)
+    return inferred or None
 
 
 def _build_location_text(
@@ -265,27 +301,46 @@ def knowledge_search_tool(
        `knowledge_locate` on the books/locations that look promising.
     4. For exact quotation / page / paragraph lookups, you may use narrower
        scopes or doc filters and then call `knowledge_locate` for nearby context.
+    5. `scopes` is a hard filter. If you already pass `doc_ids` from
+       `book_search`, do not also force an incompatible scope. When in doubt,
+       omit `scopes` and let the `doc_ids` control the search.
+    6. Keep `query` close to the user's wording and key anchors. Preserve
+       book names, people, periods, institutions, years, and policy terms.
+       Do not turn the query into a long meta sentence like “I need to search
+       for ...”, and do not over-shorten it into something vaguer than the
+       user's actual question.
 
     This tool searches through curated internal documents and returns relevant
     knowledge snippets with source document references.
 
     Args:
-        query: The search query describing what information you need.
+        query: Search terms describing what evidence you need. Prefer concise,
+            source-anchored phrasing over meta narration.
         doc_ids: Optional comma-separated candidate book IDs from `book_search`.
-        scopes: Optional comma-separated scopes: `user`, `thread`, `global`.
+            Prefer this for narrowing to known relevant books.
+        scopes: Optional comma-separated hard filters: `user`, `thread`, `global`.
+            Only set this when you intentionally want to exclude other scopes.
     """
     try:
         from src.community.knowledge_base.retriever import get_retriever
 
         retriever = get_retriever()
+        thread_id = runtime.context.get("thread_id")
+        user_id = runtime.context.get("user_id")
         parsed_doc_ids = _parse_doc_ids(doc_ids)
         parsed_scopes = _parse_scopes(scopes)
+        inferred_scopes = _infer_scopes_from_doc_ids(
+            parsed_doc_ids,
+            thread_id=thread_id,
+            user_id=user_id,
+        )
+        effective_scopes = _merge_scopes(parsed_scopes, inferred_scopes)
         results = retriever.search(
             query,
-            thread_id=runtime.context.get("thread_id"),
-            user_id=runtime.context.get("user_id"),
+            thread_id=thread_id,
+            user_id=user_id,
             doc_ids=parsed_doc_ids,
-            scopes=parsed_scopes,
+            scopes=effective_scopes,
         )
     except Exception as e:
         return f"Error searching knowledge base: {e}"
@@ -357,11 +412,13 @@ def knowledge_search_tool(
 
     formatted_output += "---\n"
     formatted_output += "这些结果已经做过联合检索与分面扩展；回答前先归并不同来源里的分散证据，不要只摘取单个综述段落。\n"
+    formatted_output += "如果你已经从 `book_search` 拿到了 `doc_ids`，优先继续围绕这些书换一个更贴近用户原问题的查询，不要随手改成更空泛的短词。\n"
+    formatted_output += "只有在你明确想排除某个范围时才传 `scopes`；`scopes` 是硬过滤，和 `doc_ids` 会取交集，传错会把本该能搜到的书直接滤掉。\n"
     formatted_output += "如果某条结果看起来像目录、标题、页眉页脚、边栏、图表标题或过短片段，把它当作导航线索，不要直接拿来支撑最终结论。\n"
     formatted_output += "遇到这类线索时，继续搜索对应的目录词、章节名、阶段名、制度名，再调用 `knowledge_locate` 展开附近正文。\n"
     formatted_output += "使用答案时，直接复制上面的 `citation:` 行，不要自己重写。\n"
     formatted_output += "如果需要更多上下文，调用 `knowledge_locate`；不要去读原始 PDF 或 `.structured.json`。\n"
-    formatted_output += "如果证据不足，使用 `【无法回答】` 开头直接拒答，并简要说明当前资料范围内没有足够依据。"
+    formatted_output += "只有在你已经尝试了合理的换 query / 换书层 / `knowledge_locate` 展开后仍然没有足够证据时，才使用 `【无法回答】` 开头拒答。"
 
     return formatted_output
 

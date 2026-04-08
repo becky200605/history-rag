@@ -35,3 +35,8 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "建议问题" in prompt
     assert "Noise Filtering Rule" in prompt
     assert "Catalog Rescue Rule" in prompt
+    assert "Query Anchoring Rule" in prompt
+    assert "Scope Is Hard Filter Rule" in prompt
+    assert "Doc-ID Scope Alignment Rule" in prompt
+    assert "Retry Discipline Rule" in prompt
+    assert "Do not refuse after the first weak retrieval pass." in prompt

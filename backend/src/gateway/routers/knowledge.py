@@ -249,6 +249,9 @@ class KnowledgeMetadataUpdateRequest(BaseModel):
     regions: list[str] | None = None
     keywords: list[str] | None = None
     summary: str | None = None
+    language_hint: str | None = None
+    layout_hint: str | None = None
+    document_type_hint: str | None = None
 
 
 class TranslationBlockRequest(BaseModel):
@@ -428,6 +431,7 @@ def _manual_metadata_fields(values: list[str] | None) -> list[MetadataField]:
 
 def _load_global_book_metadata(filename: str) -> dict[str, Any]:
     record = load_book_metadata_for_source(get_global_docs_dir(), filename)
+    ingestion_record = _find_global_record(filename)
     suggestion = record.suggestion if record else None
     book_type = _metadata_value(suggestion.type) if suggestion else None
     categories = _metadata_values(suggestion.categories) if suggestion else []
@@ -447,6 +451,9 @@ def _load_global_book_metadata(filename: str) -> dict[str, Any]:
         "keywords": keywords,
         "summary": summary,
         "tags": tags,
+        "language_hint": (ingestion_record or {}).get("hints", {}).get("language_hint"),
+        "layout_hint": (ingestion_record or {}).get("hints", {}).get("layout_hint"),
+        "document_type_hint": (ingestion_record or {}).get("hints", {}).get("document_type_hint"),
     }
 
 
@@ -1200,6 +1207,25 @@ async def update_global_knowledge_metadata(
         model_name=(existing.model_name if existing else (config.book_metadata.model_name if config.book_metadata else None)),
     )
     save_book_metadata(docs_dir, filename, book_metadata_record)
+    if record is not None:
+        next_hints = dict(record.get("hints") or {})
+        if "language_hint" in provided_fields:
+            if payload.language_hint:
+                next_hints["language_hint"] = payload.language_hint
+            else:
+                next_hints.pop("language_hint", None)
+        if "layout_hint" in provided_fields:
+            if payload.layout_hint:
+                next_hints["layout_hint"] = payload.layout_hint
+            else:
+                next_hints.pop("layout_hint", None)
+        if "document_type_hint" in provided_fields:
+            if payload.document_type_hint:
+                next_hints["document_type_hint"] = payload.document_type_hint
+            else:
+                next_hints.pop("document_type_hint", None)
+        record["hints"] = next_hints
+        _save_global_record(filename, record)
     return {
         "success": True,
         "message": f"Updated metadata for {filename}",

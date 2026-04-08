@@ -322,3 +322,85 @@ def test_retry_global_knowledge_file_requeues_indexed_document_for_embedding(mon
     assert "重新加入入库队列" in result["message"]
     assert records["indexed.pdf"]["parse_status"] == "queued_embedding"
     assert enqueued == ["indexed.pdf"]
+
+
+def test_update_global_knowledge_metadata_updates_hints(monkeypatch) -> None:
+    record = {
+        "source_filename": "demo.pdf",
+        "display_title": "演示文档",
+        "hints": {
+            "language_hint": "unknown",
+            "layout_hint": "horizontal",
+            "document_type_hint": "book",
+        },
+    }
+    saved_records: list[dict] = []
+
+    monkeypatch.setattr(
+        knowledge_router,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            enabled=True,
+            book_metadata=SimpleNamespace(model_name="demo-model", front_page_limit=10, max_excerpt_chars=1200),
+        ),
+    )
+    monkeypatch.setattr(
+        knowledge_router,
+        "_load_structured_payload_for_metadata",
+        lambda filename: (
+            {"pages": [{"paragraphs": []}]},
+            record,
+            Path("/tmp"),
+        ),
+    )
+    monkeypatch.setattr(knowledge_router, "load_book_metadata_for_source", lambda docs_dir, filename: None)
+    monkeypatch.setattr(
+        knowledge_router,
+        "build_book_metadata_prompt_input",
+        lambda *args, **kwargs: {"title": "demo"},
+    )
+    monkeypatch.setattr(
+        knowledge_router,
+        "build_book_metadata_record",
+        lambda **kwargs: SimpleNamespace(suggestion=None, prompt_input=kwargs.get("prompt_input"), model_name=kwargs.get("model_name")),
+    )
+    monkeypatch.setattr(knowledge_router, "save_book_metadata", lambda docs_dir, filename, book_metadata_record: None)
+    monkeypatch.setattr(
+        knowledge_router,
+        "_save_global_record",
+        lambda filename, payload: saved_records.append(dict(payload)),
+    )
+    monkeypatch.setattr(
+        knowledge_router,
+        "_load_global_book_metadata",
+        lambda filename: {
+            "type": None,
+            "categories": [],
+            "eras": [],
+            "regions": [],
+            "keywords": [],
+            "summary": None,
+            "tags": [],
+            "language_hint": "zh-Hant",
+            "layout_hint": "vertical",
+            "document_type_hint": "ancient_book",
+        },
+    )
+
+    import asyncio
+
+    result = asyncio.run(
+        knowledge_router.update_global_knowledge_metadata(
+            "demo.pdf",
+            knowledge_router.KnowledgeMetadataUpdateRequest(
+                layout_hint="vertical",
+                language_hint="zh-Hant",
+                document_type_hint="ancient_book",
+            ),
+        )
+    )
+
+    assert result["metadata"]["layout_hint"] == "vertical"
+    assert saved_records[-1]["hints"]["layout_hint"] == "vertical"
+    assert saved_records[-1]["hints"]["language_hint"] == "zh-Hant"
+    assert saved_records[-1]["hints"]["document_type_hint"] == "ancient_book"

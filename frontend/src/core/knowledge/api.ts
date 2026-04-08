@@ -49,6 +49,9 @@ export interface KnowledgeMetadataUpdateInput {
   regions?: string[];
   keywords?: string[];
   summary?: string | null;
+  language_hint?: string | null;
+  layout_hint?: string | null;
+  document_type_hint?: string | null;
 }
 
 export interface KnowledgeUploadOptions {

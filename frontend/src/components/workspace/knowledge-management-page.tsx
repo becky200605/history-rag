@@ -336,6 +336,10 @@ export default function KnowledgeManagementPage() {
   const [regionsInput, setRegionsInput] = useState("");
   const [keywordsInput, setKeywordsInput] = useState("");
   const [summaryInput, setSummaryInput] = useState("");
+  const [languageHintInput, setLanguageHintInput] = useState<LanguageHint>("unknown");
+  const [layoutHintInput, setLayoutHintInput] = useState<LayoutHint>("unknown");
+  const [documentTypeHintInput, setDocumentTypeHintInput] =
+    useState<DocumentTypeHint>("unknown");
   const [selectedFilenames, setSelectedFilenames] = useState<string[]>([]);
 
   const { data, isLoading, error, refetch, isFetching } = useKnowledgeFiles();
@@ -566,6 +570,11 @@ export default function KnowledgeManagementPage() {
     setRegionsInput(joinTagInput(file.regions));
     setKeywordsInput(joinTagInput(file.keywords));
     setSummaryInput(file.summary ?? "");
+    setLanguageHintInput((file.hints?.language_hint as LanguageHint) ?? "unknown");
+    setLayoutHintInput((file.hints?.layout_hint as LayoutHint) ?? "unknown");
+    setDocumentTypeHintInput(
+      (file.hints?.document_type_hint as DocumentTypeHint) ?? "unknown",
+    );
   };
 
   const closeEditDialog = () => {
@@ -576,6 +585,9 @@ export default function KnowledgeManagementPage() {
     setRegionsInput("");
     setKeywordsInput("");
     setSummaryInput("");
+    setLanguageHintInput("unknown");
+    setLayoutHintInput("unknown");
+    setDocumentTypeHintInput("unknown");
   };
 
   const applyMetadataToForm = (metadata: {
@@ -585,6 +597,9 @@ export default function KnowledgeManagementPage() {
     regions?: string[];
     keywords?: string[];
     summary?: string | null;
+    language_hint?: string | null;
+    layout_hint?: string | null;
+    document_type_hint?: string | null;
   }) => {
     setTypeInput(
       KNOWLEDGE_TYPES.has(String(metadata.type ?? "").toLowerCase())
@@ -596,6 +611,11 @@ export default function KnowledgeManagementPage() {
     setRegionsInput(joinTagInput(metadata.regions));
     setKeywordsInput(joinTagInput(metadata.keywords));
     setSummaryInput(metadata.summary ?? "");
+    setLanguageHintInput((metadata.language_hint as LanguageHint) ?? "unknown");
+    setLayoutHintInput((metadata.layout_hint as LayoutHint) ?? "unknown");
+    setDocumentTypeHintInput(
+      (metadata.document_type_hint as DocumentTypeHint) ?? "unknown",
+    );
   };
 
   const handleSaveMetadata = async () => {
@@ -613,6 +633,11 @@ export default function KnowledgeManagementPage() {
           regions: splitTagInput(regionsInput),
           keywords: splitTagInput(keywordsInput),
           summary: summaryInput.trim() || null,
+          language_hint:
+            languageHintInput === "unknown" ? null : languageHintInput,
+          layout_hint: layoutHintInput === "unknown" ? null : layoutHintInput,
+          document_type_hint:
+            documentTypeHintInput === "unknown" ? null : documentTypeHintInput,
         },
       });
       toast.success(result.message || "标签已更新");
@@ -1226,6 +1251,69 @@ export default function KnowledgeManagementPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-slate-800">语言线索</label>
+                  <Select
+                    value={languageHintInput}
+                    onValueChange={(value) => setLanguageHintInput(value as LanguageHint)}
+                  >
+                    <SelectTrigger className="bg-white text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {languageOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-slate-800">版式线索</label>
+                  <Select
+                    value={layoutHintInput}
+                    onValueChange={(value) => setLayoutHintInput(value as LayoutHint)}
+                  >
+                    <SelectTrigger className="bg-white text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {layoutOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-slate-800">文档类型线索</label>
+                <Select
+                  value={documentTypeHintInput}
+                  onValueChange={(value) =>
+                    setDocumentTypeHintInput(value as DocumentTypeHint)
+                  }
+                >
+                  <SelectTrigger className="bg-white text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {documentTypeOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-slate-500">
+                  修改线索后不会自动重跑 OCR；保存后可直接点击“重新入库”验证召回效果。
+                </p>
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">

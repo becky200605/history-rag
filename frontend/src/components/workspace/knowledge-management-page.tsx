@@ -1589,11 +1589,8 @@ export default function KnowledgeManagementPage() {
                    className="h-7 w-7 text-slate-500 hover:bg-slate-200" 
                    disabled={selectedFolderPath === "all"}
                    onClick={() => {
-                     if (breadcrumbs.length > 1) {
-                       setSelectedFolderPath(breadcrumbs[breadcrumbs.length - 2].path);
-                     } else {
-                       setSelectedFolderPath("all");
-                     }
+                     const parentBreadcrumb = breadcrumbs.at(-2);
+                     setSelectedFolderPath(parentBreadcrumb?.path ?? "all");
                    }}
                  >
                    <ArrowLeftIcon className="size-4" />

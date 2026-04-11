@@ -2,8 +2,9 @@
 
 import {
   ArchiveIcon,  
-  BookOpenIcon,
+  ArrowRightIcon,
   BookmarkPlusIcon,
+  BookOpenIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CheckSquareIcon,
@@ -15,6 +16,7 @@ import {
   Loader2Icon,
   MusicIcon,
   PencilIcon,
+  PlusIcon,
   RefreshCwIcon,
   SearchIcon,
   SquareIcon,
@@ -58,7 +60,10 @@ import {
   WorkspaceContainer,
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
-import type { KnowledgeFileInfo } from "@/core/knowledge/api";
+import {
+  buildKnowledgeDocumentUrl,
+  type KnowledgeFileInfo,
+} from "@/core/knowledge/api";
 import {
   useDeleteKnowledgeFile,
   useKnowledgeFiles,
@@ -67,8 +72,16 @@ import {
   useUploadKnowledgeFiles,
   useUpdateKnowledgeFileMetadata,
 } from "@/core/knowledge/hooks";
-import { useImportGlobalKnowledgeToPersonal } from "@/core/knowledge/user-hooks";
-import { env } from "@/env";
+import type { UserKnowledgeSpace } from "@/core/knowledge/user-api";
+import {
+  useCreateUserKnowledgeSpace,
+  useDeleteUserKnowledgeRecord,
+  useDeleteUserKnowledgeSpace,
+  useMoveUserKnowledgeRecord,
+  useUploadUserKnowledgeFiles,
+  useUserKnowledgeRecords,
+  useUserKnowledgeSpaces,
+} from "@/core/knowledge/user-hooks";
 import { cn } from "@/lib/utils";
 
 type LanguageHint = "unknown" | "zh-Hans" | "zh-Hant" | "en" | "mixed";
@@ -83,6 +96,42 @@ type FolderTreeNode = {
   path: string;
   fileCount: number;
   children: FolderTreeNode[];
+  source: "global" | "personal" | "mixed";
+  spaceId?: string;
+  deletable?: boolean;
+};
+
+type ManagedKnowledgeFile = {
+  rowId: string;
+  source: "global" | "personal";
+  scope: "global" | "user";
+  docId?: string | null;
+  filename: string;
+  title: string;
+  folderPath: string;
+  folderDisplay: string;
+  size: number;
+  modified?: number;
+  parseMethod?: string;
+  parseStatus?: string;
+  indexable?: boolean;
+  documentUrl?: string | null;
+  artifactUrl?: string | null;
+  extension?: string | null;
+  previewFilename?: string | null;
+  previewArtifactUrl?: string | null;
+  structuredFilename?: string | null;
+  type?: string | null;
+  categories?: string[];
+  eras?: string[];
+  regions?: string[];
+  keywords?: string[];
+  summary?: string | null;
+  tags?: string[];
+  hints?: Record<string, string>;
+  knowledgeSpaceId?: string | null;
+  knowledgeSpaceName?: string | null;
+  userRecordId?: string | null;
 };
 
 function buildFileTags(file: {
@@ -129,7 +178,7 @@ function getFileFolderPath(file: { folder?: string | null; tags?: string[] }) {
   return normalizeFolderPath(firstTag ?? null);
 }
 
-function buildFolderTree(files: KnowledgeFileInfo[]): FolderTreeNode[] {
+function buildFolderTree(files: Array<{ folder?: string | null; tags?: string[] }>): FolderTreeNode[] {
   type MutableNode = { children: Map<string, MutableNode>; fileCount: number };
 
   const ensureNode = (map: Map<string, MutableNode>, key: string): MutableNode => {
@@ -163,10 +212,37 @@ function buildFolderTree(files: KnowledgeFileInfo[]): FolderTreeNode[] {
           path,
           fileCount: node.fileCount,
           children: toTree(node.children, path),
+          source: "global",
         };
       });
 
   return toTree(mutableRoot);
+}
+
+function buildPersonalFolderTree(
+  spaces: UserKnowledgeSpace[],
+  files: ManagedKnowledgeFile[],
+): FolderTreeNode[] {
+  return [...spaces]
+    .filter((space) => space.type === "personal")
+    .sort((left, right) => {
+      if (left.is_default && !right.is_default) {
+        return -1;
+      }
+      if (!left.is_default && right.is_default) {
+        return 1;
+      }
+      return left.name.localeCompare(right.name, "zh-CN");
+    })
+    .map((space) => ({
+      name: space.name,
+      path: `personal:${space.id}`,
+      fileCount: files.filter((file) => file.source === "personal" && file.knowledgeSpaceId === space.id).length,
+      children: [],
+      source: "personal",
+      spaceId: space.id,
+      deletable: !space.is_default && !space.readonly,
+    }));
 }
 
 function knowledgeTypeLabel(value?: string | null) {
@@ -289,7 +365,8 @@ function joinTagInput(values?: string[]) {
 
 function formatCompactTime(value?: number) {
   if (!value) return "未知";
-  return new Date(value * 1000).toLocaleString("zh-CN", {
+  const normalized = value < 1_000_000_000_000 ? value * 1000 : value;
+  return new Date(normalized).toLocaleString("zh-CN", {
     month: "numeric",
     day: "numeric",
     hour: "2-digit",
@@ -355,10 +432,14 @@ function parseMethodLabel(value?: string) {
 
 function fileStatusHint(file: {
   parse_status?: string;
+  parseStatus?: string;
   parse_method?: string;
+  parseMethod?: string;
   indexable?: boolean;
 }) {
-  switch (file.parse_status) {
+  const status = file.parseStatus ?? file.parse_status;
+  const method = file.parseMethod ?? file.parse_method;
+  switch (status) {
     case "queued":
       return "等待开始处理";
     case "parsing":
@@ -370,7 +451,7 @@ function fileStatusHint(file: {
     case "index_failed":
       return "入库失败，请稍后重试";
     case "failed":
-      return file.parse_method?.includes("ocr")
+      return method?.includes("ocr")
         ? "解析失败，请检查解析服务后重试"
         : "处理失败，请稍后重试";
     case "uploaded":
@@ -391,6 +472,36 @@ function retryActionLabel(status?: string) {
     default:
       return "重试";
   }
+}
+
+function buildManagedFileReaderHref(file: ManagedKnowledgeFile) {
+  const documentUrl =
+    file.documentUrl
+    ?? file.artifactUrl
+    ?? (file.scope === "user"
+      ? buildKnowledgeDocumentUrl("user", file.filename)
+      : buildKnowledgeDocumentUrl("global", file.filename));
+
+  if (!documentUrl) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    mode: "reader",
+    filename: file.filename,
+    scope: file.scope,
+    document_url: documentUrl,
+    origin_title: file.title,
+    origin_filename: file.filename,
+    back_href: "/workspace/knowledge-manage",
+    back_label: "知识库管理",
+  });
+
+  if (file.knowledgeSpaceId) {
+    params.set("knowledge_space_id", file.knowledgeSpaceId);
+  }
+
+  return `/workspace/knowledge/view?${params.toString()}`;
 }
 
 function FolderTreeBranch({
@@ -468,6 +579,7 @@ export default function KnowledgeManagementPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [isCreateFolderDialogOpen, setIsCreateFolderDialogOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [uploadLanguageHint, setUploadLanguageHint] = useState<LanguageHint>("unknown");
   const [uploadLayoutHint, setUploadLayoutHint] = useState<LayoutHint>("unknown");
@@ -475,9 +587,13 @@ export default function KnowledgeManagementPage() {
     useState<DocumentTypeHint>("unknown");
   const [statusFilter, setStatusFilter] = useState<FileStatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedFilenames, setSelectedFilenames] = useState<string[]>([]);
+  const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
+  const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [retryingFilename, setRetryingFilename] = useState<string | null>(null);
+  const [movingRecord, setMovingRecord] = useState<ManagedKnowledgeFile | null>(null);
+  const [moveTargetSpaceId, setMoveTargetSpaceId] = useState<string>("");
+  const [newFolderName, setNewFolderName] = useState("");
   const [editingFile, setEditingFile] = useState<KnowledgeFileInfo | null>(null);
   const [typeInput, setTypeInput] = useState<KnowledgeType>("unknown");
   const [folderInput, setFolderInput] = useState("");
@@ -525,10 +641,16 @@ export default function KnowledgeManagementPage() {
   const BOTTOM_BUTTONS = CATEGORY_OPTIONS.filter(opt => opt.icon);
 
   const { data, isLoading, error, refetch, isFetching } = useKnowledgeFiles();
+  const personalSpacesQuery = useUserKnowledgeSpaces();
+  const personalRecordsQuery = useUserKnowledgeRecords();
   const uploadMutation = useUploadKnowledgeFiles();
+  const uploadUserMutation = useUploadUserKnowledgeFiles();
   const deleteMutation = useDeleteKnowledgeFile();
+  const deleteUserRecordMutation = useDeleteUserKnowledgeRecord();
   const retryMutation = useRetryKnowledgeFileIndexing();
-  const importMutation = useImportGlobalKnowledgeToPersonal();
+  const createSpaceMutation = useCreateUserKnowledgeSpace();
+  const deleteSpaceMutation = useDeleteUserKnowledgeSpace();
+  const moveUserRecordMutation = useMoveUserKnowledgeRecord();
   const updateMetadataMutation = useUpdateKnowledgeFileMetadata();
   const regenerateMetadataMutation = useRegenerateKnowledgeFileMetadata();
   const metadataDialogError =
@@ -539,25 +661,36 @@ export default function KnowledgeManagementPage() {
   }, []);
 
   const summary = useMemo(() => {
-    const files = data?.files ?? [];
+    const globalFiles = data?.files ?? [];
+    const personalRecords = (personalRecordsQuery.data?.records ?? []).filter(
+      (record) => ["upload", "import_ref"].includes(record.source_kind),
+    );
     const activeStatuses = new Set(["queued", "parsing", "indexing"]);
-    const activeFiles = files.filter((file) =>
+    const activeFiles = [
+      ...globalFiles,
+      ...personalRecords.map((record) => ({
+        parse_status: record.parse_status,
+      })),
+    ].filter((file) =>
       activeStatuses.has(file.parse_status ?? ""),
     );
-    const indexed = files.filter((file) => file.parse_status === "indexed").length;
-    const failed = files.filter((file) =>
-      ["failed", "index_failed"].includes(file.parse_status ?? ""),
-    ).length;
+    const indexed =
+      globalFiles.filter((file) => file.parse_status === "indexed").length +
+      personalRecords.filter((record) => record.parse_status === "indexed").length;
+    const failed =
+      globalFiles.filter((file) => ["failed", "index_failed"].includes(file.parse_status ?? "")).length +
+      personalRecords.filter((record) => ["failed", "index_failed"].includes(record.parse_status ?? "")).length;
+    const total = globalFiles.length + personalRecords.length;
     return {
-      total: files.length,
+      total,
       indexed,
       failed,
       active: activeFiles.length,
-      progress: files.length > 0 ? Math.round((indexed / files.length) * 100) : 0,
+      progress: total > 0 ? Math.round((indexed / total) * 100) : 0,
     };
-  }, [data?.files]);
+  }, [data?.files, personalRecordsQuery.data?.records]);
 
-  const sortedFiles = useMemo(() => {
+  const sortedGlobalFiles = useMemo(() => {
     const files = [...(data?.files ?? [])];
     files.sort((a, b) => {
       const timeDelta = (b.modified ?? 0) - (a.modified ?? 0);
@@ -569,18 +702,101 @@ export default function KnowledgeManagementPage() {
     return files;
   }, [data?.files]);
 
+  const personalSpaces = useMemo(
+    () => (personalSpacesQuery.data?.spaces ?? []).filter((space) => space.type === "personal"),
+    [personalSpacesQuery.data?.spaces],
+  );
+  const defaultPersonalSpace = useMemo(
+    () => personalSpaces.find((space) => space.is_default) ?? personalSpaces[0] ?? null,
+    [personalSpaces],
+  );
+
+  const managedFiles = useMemo<ManagedKnowledgeFile[]>(() => {
+    const globalRows = sortedGlobalFiles.map<ManagedKnowledgeFile>((file) => ({
+      rowId: `global:${file.filename}`,
+      source: "global",
+      scope: "global",
+      docId: file.doc_id ?? null,
+      filename: file.filename,
+      title: file.filename.replace(/\.[^.]+$/, ""),
+      folderPath: `system:${getFileFolderPath(file)}`,
+      folderDisplay: getFileFolderPath(file),
+      size: file.size,
+      modified: file.modified,
+      parseMethod: file.parse_method,
+      parseStatus: file.parse_status,
+      indexable: file.indexable,
+      documentUrl: buildKnowledgeDocumentUrl("global", file.filename),
+      artifactUrl: file.artifact_url,
+      extension: file.extension,
+      previewFilename: file.preview_filename,
+      previewArtifactUrl: file.preview_artifact_url,
+      structuredFilename: file.structured_filename,
+      type: file.type,
+      categories: file.categories,
+      eras: file.eras,
+      regions: file.regions,
+      keywords: file.keywords,
+      summary: file.summary,
+      tags: file.tags,
+      hints: file.hints,
+    }));
+
+    const personalRows = (personalRecordsQuery.data?.records ?? [])
+      .filter((record) => ["upload", "import_ref"].includes(record.source_kind))
+      .map<ManagedKnowledgeFile>((record) => {
+        const sourceFilename = record.filename ?? record.origin_filename ?? `${record.id}.md`;
+        const documentUrl =
+          record.artifact_url
+          ?? (record.origin_scope === "global" && record.origin_filename
+            ? buildKnowledgeDocumentUrl("global", record.origin_filename)
+            : buildKnowledgeDocumentUrl("user", sourceFilename));
+        const artifactUrl =
+          documentUrl;
+        const previewArtifactUrl =
+          record.preview_artifact_url
+          ?? artifactUrl;
+        return {
+          rowId: `personal:${record.id}`,
+          source: "personal",
+          scope: "user",
+          docId: record.id,
+          filename: sourceFilename,
+          title: record.display_title ?? record.title ?? sourceFilename.replace(/\.[^.]+$/, ""),
+          folderPath: `personal:${record.knowledge_space_id ?? defaultPersonalSpace?.id ?? ""}`,
+          folderDisplay: record.knowledge_space_name ?? "默认个人知识库",
+          size: record.size,
+          modified: record.updated_at ? new Date(record.updated_at).getTime() : undefined,
+          parseMethod: record.parse_method ?? undefined,
+          parseStatus: record.parse_status ?? undefined,
+          indexable: record.indexable,
+          documentUrl,
+          artifactUrl,
+          extension: record.extension ?? undefined,
+          previewFilename: record.preview_filename ?? undefined,
+          previewArtifactUrl,
+          structuredFilename: record.structured_filename ?? undefined,
+          hints: record.hints ?? undefined,
+          knowledgeSpaceId: record.knowledge_space_id ?? undefined,
+          knowledgeSpaceName: record.knowledge_space_name ?? undefined,
+          userRecordId: record.id,
+        };
+      });
+    return [...personalRows, ...globalRows];
+  }, [defaultPersonalSpace?.id, personalRecordsQuery.data?.records, sortedGlobalFiles]);
+
   const filteredFiles = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
 
-    return sortedFiles.filter((file) => {
+    return managedFiles.filter((file) => {
       const matchesStatus =
         statusFilter === "all"
           ? true
           : statusFilter === "active"
-            ? ["queued", "parsing", "indexing"].includes(file.parse_status ?? "")
+            ? ["queued", "parsing", "indexing"].includes(file.parseStatus ?? "")
             : statusFilter === "failed"
-              ? ["failed", "index_failed"].includes(file.parse_status ?? "")
-              : file.parse_status === statusFilter;
+              ? ["failed", "index_failed"].includes(file.parseStatus ?? "")
+              : file.parseStatus === statusFilter;
 
       if (!matchesStatus) {
         return false;
@@ -591,8 +807,9 @@ export default function KnowledgeManagementPage() {
       }
 
       const haystack = [
+        file.title,
         file.filename,
-        file.folder,
+        file.folderDisplay,
         file.type,
         ...(file.tags ?? []),
         ...(file.categories ?? []),
@@ -600,14 +817,16 @@ export default function KnowledgeManagementPage() {
         ...(file.regions ?? []),
         ...(file.keywords ?? []),
         file.summary,
-        file.parse_method,
+        file.parseMethod,
         file.extension,
-        file.parse_status,
+        file.parseStatus,
         file.hints?.document_type_hint,
         file.hints?.language_hint,
         file.hints?.layout_hint,
-        file.preview_filename,
-        file.structured_filename,
+        file.previewFilename,
+        file.structuredFilename,
+        file.knowledgeSpaceName,
+        file.source === "global" ? "系统" : "个人",
       ]
         .filter(Boolean)
         .join(" ")
@@ -615,16 +834,62 @@ export default function KnowledgeManagementPage() {
 
       return haystack.includes(keyword);
     });
-  }, [searchQuery, sortedFiles, statusFilter]);
+  }, [managedFiles, searchQuery, statusFilter]);
 
-  const folderTree = useMemo(() => buildFolderTree(sortedFiles), [sortedFiles]);
+  const systemFolderTree = useMemo(() => {
+    const tree = buildFolderTree(sortedGlobalFiles).map((node) => ({
+      ...node,
+      path: `system:${node.path}`,
+      source: "global" as const,
+      children: node.children.map(function relabel(child): FolderTreeNode {
+        return {
+          ...child,
+          path: `system:${child.path}`,
+          source: "global",
+          children: child.children.map(relabel),
+        };
+      }),
+    }));
+    return tree;
+  }, [sortedGlobalFiles]);
+  const personalFolderTree = useMemo(
+    () => buildPersonalFolderTree(personalSpaces, managedFiles),
+    [managedFiles, personalSpaces],
+  );
+  const folderTree = useMemo<FolderTreeNode[]>(
+    () => [
+      {
+        name: "个人",
+        path: "personal-root",
+        fileCount: managedFiles.filter((file) => file.source === "personal").length,
+        children: personalFolderTree,
+        source: "personal",
+      },
+      {
+        name: "系统",
+        path: "system-root",
+        fileCount: managedFiles.filter((file) => file.source === "global").length,
+        children: systemFolderTree,
+        source: "global",
+      },
+    ],
+    [managedFiles, personalFolderTree, systemFolderTree],
+  );
 
   useEffect(() => {
     setExpandedFolderPaths((current) => {
       if (current.length > 0) {
         return current;
       }
-      return folderTree.map((node) => node.path);
+      const paths: string[] = [];
+      const visit = (nodes: FolderTreeNode[]) => {
+        for (const node of nodes) {
+          paths.push(node.path);
+          visit(node.children);
+        }
+      };
+      visit(folderTree);
+      return paths;
     });
   }, [folderTree]);
 
@@ -649,27 +914,35 @@ export default function KnowledgeManagementPage() {
     if (selectedFolderPath === "all") {
       return filteredFiles;
     }
+    if (selectedFolderPath === "personal-root") {
+      return filteredFiles.filter((file) => file.source === "personal");
+    }
+    if (selectedFolderPath === "system-root") {
+      return filteredFiles.filter((file) => file.source === "global");
+    }
+    if (selectedFolderPath.startsWith("personal:")) {
+      return filteredFiles.filter((file) => file.folderPath === selectedFolderPath);
+    }
     return filteredFiles.filter((file) => {
-      const folderPath = getFileFolderPath(file);
-      return folderPath === selectedFolderPath || folderPath.startsWith(`${selectedFolderPath}/`);
+      return file.folderPath === selectedFolderPath || file.folderPath.startsWith(`${selectedFolderPath}/`);
     });
   }, [filteredFiles, selectedFolderPath]);
 
   useEffect(() => {
-    const visibleFilenames = new Set(folderFilteredFiles.map((file) => file.filename));
-    setSelectedFilenames((current) =>
-      current.filter((filename) => visibleFilenames.has(filename)),
+    const visibleRowIds = new Set(folderFilteredFiles.map((file) => file.rowId));
+    setSelectedRowIds((current) =>
+      current.filter((rowId) => visibleRowIds.has(rowId)),
     );
   }, [folderFilteredFiles]);
 
   const selectedFiles = useMemo(
-    () => folderFilteredFiles.filter((file) => selectedFilenames.includes(file.filename)),
-    [folderFilteredFiles, selectedFilenames],
+    () => folderFilteredFiles.filter((file) => selectedRowIds.includes(file.rowId)),
+    [folderFilteredFiles, selectedRowIds],
   );
   const selectableVisibleFiles = useMemo(
     () =>
       folderFilteredFiles.filter(
-        (file) => Boolean(file.doc_id) && file.parse_status === "indexed",
+        (file) => Boolean(file.docId) && file.parseStatus === "indexed",
       ),
     [folderFilteredFiles],
   );
@@ -681,15 +954,43 @@ export default function KnowledgeManagementPage() {
   const selectedMaterialsPayload = useMemo(
     () =>
       selectedFiles
-        .filter((file) => Boolean(file.doc_id) && file.parse_status === "indexed")
+        .filter((file) => Boolean(file.docId) && file.parseStatus === "indexed")
         .map((file) => ({
-          doc_id: String(file.doc_id),
-          title: file.filename.replace(/\.[^.]+$/, ""),
+          doc_id: String(file.docId),
+          title: file.title,
           filename: file.filename,
-          scope: file.scope ?? "global",
+          scope: file.scope,
         })),
     [selectedFiles],
   );
+
+  const selectedPersonalSpace = useMemo(
+    () =>
+      selectedFolderPath.startsWith("personal:")
+        ? personalSpaces.find((space) => `personal:${space.id}` === selectedFolderPath) ?? null
+        : null,
+    [personalSpaces, selectedFolderPath],
+  );
+  const uploadTargetMode =
+    selectedFolderPath === "system-root" || selectedFolderPath.startsWith("system:")
+      ? "global"
+      : "personal";
+  const uploadTargetPersonalSpace = selectedPersonalSpace ?? defaultPersonalSpace;
+  const selectedFolderNode = useMemo(() => {
+    const visit = (nodes: FolderTreeNode[]): FolderTreeNode | null => {
+      for (const node of nodes) {
+        if (node.path === selectedFolderPath) {
+          return node;
+        }
+        const nested = visit(node.children);
+        if (nested) {
+          return nested;
+        }
+      }
+      return null;
+    };
+    return visit(folderTree);
+  }, [folderTree, selectedFolderPath]);
 
   const resetUploadDialog = () => {
     setPendingFiles([]);
@@ -725,15 +1026,25 @@ export default function KnowledgeManagementPage() {
     }
 
     try {
-      const result = await uploadMutation.mutateAsync({
-        files: pendingFiles,
-        options: {
-          languageHint: uploadLanguageHint === "unknown" ? undefined : uploadLanguageHint,
-          layoutHint: uploadLayoutHint === "unknown" ? undefined : uploadLayoutHint,
-          documentTypeHint:
-            uploadDocumentTypeHint === "unknown" ? undefined : uploadDocumentTypeHint,
-        },
-      });
+      const uploadOptions = {
+        languageHint: uploadLanguageHint === "unknown" ? undefined : uploadLanguageHint,
+        layoutHint: uploadLayoutHint === "unknown" ? undefined : uploadLayoutHint,
+        documentTypeHint:
+          uploadDocumentTypeHint === "unknown" ? undefined : uploadDocumentTypeHint,
+      };
+      const result =
+        uploadTargetMode === "global"
+          ? await uploadMutation.mutateAsync({
+              files: pendingFiles,
+              options: uploadOptions,
+            })
+          : await uploadUserMutation.mutateAsync({
+              files: pendingFiles,
+              options: {
+                ...uploadOptions,
+                knowledgeSpaceId: uploadTargetPersonalSpace?.id,
+              },
+            });
       toast.success(result.message);
       resetUploadDialog();
       void refetch();
@@ -758,12 +1069,17 @@ export default function KnowledgeManagementPage() {
     }
   };
 
-  const handleImportToPersonal = async (filename: string) => {
+  const handleDeletePersonalRecord = async (recordId: string) => {
+    setDeletingRecordId(recordId);
     try {
-      const result = await importMutation.mutateAsync({ filename });
+      const result = await deleteUserRecordMutation.mutateAsync(recordId);
       toast.success(result.message);
-    } catch (importError) {
-      toast.error((importError as Error).message || "加入知识库失败");
+    } catch (deleteError) {
+      const message =
+        deleteError instanceof Error ? deleteError.message : "删除失败";
+      toast.error(message);
+    } finally {
+      setDeletingRecordId(null);
     }
   };
 
@@ -778,6 +1094,54 @@ export default function KnowledgeManagementPage() {
       toast.error(message);
     } finally {
       setRetryingFilename(null);
+    }
+  };
+
+  const handleCreateFolder = async () => {
+    const trimmedName = newFolderName.trim();
+    if (!trimmedName) {
+      toast.error("请输入文件夹名称");
+      return;
+    }
+    try {
+      const result = await createSpaceMutation.mutateAsync({ name: trimmedName });
+      toast.success(result.message);
+      setNewFolderName("");
+      setIsCreateFolderDialogOpen(false);
+      setSelectedFolderPath(`personal:${result.space.id}`);
+    } catch (createError) {
+      const message =
+        createError instanceof Error ? createError.message : "创建文件夹失败";
+      toast.error(message);
+    }
+  };
+
+  const handleDeleteFolder = async () => {
+    if (!selectedFolderNode?.spaceId || !selectedFolderNode.deletable) {
+      return;
+    }
+    try {
+      const result = await deleteSpaceMutation.mutateAsync(selectedFolderNode.spaceId);
+      toast.success(result.message);
+      setSelectedFolderPath(`personal:${result.fallback_space_id}`);
+    } catch (deleteError) {
+      toast.error((deleteError as Error).message ?? "删除文件夹失败");
+    }
+  };
+
+  const handleMoveFile = async () => {
+    if (!movingRecord?.userRecordId || !moveTargetSpaceId) {
+      return;
+    }
+    try {
+      const result = await moveUserRecordMutation.mutateAsync({
+        recordId: movingRecord.userRecordId,
+        knowledgeSpaceId: moveTargetSpaceId,
+      });
+      toast.success(result.message);
+      setMovingRecord(null);
+    } catch (moveError) {
+      toast.error((moveError as Error).message ?? "移动失败");
     }
   };
 
@@ -889,23 +1253,23 @@ export default function KnowledgeManagementPage() {
     }
   };
 
-  const toggleFileSelection = (filename: string) => {
-    setSelectedFilenames((current) =>
-      current.includes(filename)
-        ? current.filter((item) => item !== filename)
-        : [...current, filename],
+  const toggleFileSelection = (rowId: string) => {
+    setSelectedRowIds((current) =>
+      current.includes(rowId)
+        ? current.filter((item) => item !== rowId)
+        : [...current, rowId],
     );
   };
 
   const handleToggleAllVisible = () => {
     if (allVisibleSelected) {
-      setSelectedFilenames([]);
+      setSelectedRowIds([]);
       return;
     }
-    setSelectedFilenames(
+    setSelectedRowIds(
       folderFilteredFiles
-        .filter((file) => file.parse_status === "indexed" && file.doc_id)
-        .map((file) => file.filename),
+        .filter((file) => file.parseStatus === "indexed" && file.docId)
+        .map((file) => file.rowId),
     );
   };
 
@@ -946,7 +1310,7 @@ export default function KnowledgeManagementPage() {
             <Dialog
               open={isUploadDialogOpen}
               onOpenChange={(open) => {
-                if (!open && !uploadMutation.isPending) {
+                if (!open && !uploadMutation.isPending && !uploadUserMutation.isPending) {
                   resetUploadDialog();
                   return;
                 }
@@ -955,9 +1319,15 @@ export default function KnowledgeManagementPage() {
             >
               <DialogContent className="max-w-2xl border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)]/95">
                 <DialogHeader>
-                  <DialogTitle className="text-slate-900">上传知识库文件</DialogTitle>
+                  <DialogTitle className="text-slate-900">
+                    上传到{uploadTargetMode === "global"
+                      ? "系统目录"
+                      : (uploadTargetPersonalSpace?.name ?? "个人文件夹")}
+                  </DialogTitle>
                   <DialogDescription className="text-slate-600">
-                    上传前补充 OCR 线索，系统会默认从 PDF 第 1 页开始编号。
+                    {uploadTargetMode === "global"
+                      ? "当前选择的是系统目录，文件会进入系统知识库。"
+                      : "当前选择的是个人目录，文件会进入对应个人文件夹。"}
                   </DialogDescription>
                 </DialogHeader>
 
@@ -977,7 +1347,7 @@ export default function KnowledgeManagementPage() {
                         variant="outline"
                         className="border-[rgba(57,130,152,0.18)] bg-white text-[rgb(23,89,108)]"
                         onClick={handlePickFiles}
-                        disabled={uploadMutation.isPending}
+                        disabled={uploadMutation.isPending || uploadUserMutation.isPending}
                       >
                         选择文件
                       </Button>
@@ -1072,7 +1442,7 @@ export default function KnowledgeManagementPage() {
                     variant="outline"
                     className="border-[rgba(57,130,152,0.18)] bg-white text-[rgb(23,89,108)]"
                     onClick={resetUploadDialog}
-                    disabled={uploadMutation.isPending}
+                    disabled={uploadMutation.isPending || uploadUserMutation.isPending}
                   >
                     取消
                   </Button>
@@ -1080,14 +1450,102 @@ export default function KnowledgeManagementPage() {
                     type="button"
                     className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
                     onClick={() => void handleUploadSubmit()}
-                    disabled={uploadMutation.isPending || pendingFiles.length === 0}
+                    disabled={
+                      uploadMutation.isPending ||
+                      uploadUserMutation.isPending ||
+                      pendingFiles.length === 0
+                    }
                   >
-                    {uploadMutation.isPending ? (
+                    {uploadMutation.isPending || uploadUserMutation.isPending ? (
                       <Loader2Icon className="size-4 animate-spin" />
                     ) : (
                       <UploadIcon className="size-4" />
                     )}
                     开始上传
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={isCreateFolderDialogOpen} onOpenChange={setIsCreateFolderDialogOpen}>
+              <DialogContent className="max-w-md border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)]/95">
+                <DialogHeader>
+                  <DialogTitle className="text-slate-900">新建个人文件夹</DialogTitle>
+                  <DialogDescription className="text-slate-600">
+                    新文件夹会出现在“个人”顶层目录下。
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-slate-800">文件夹名称</label>
+                  <Input
+                    value={newFolderName}
+                    onChange={(event) => setNewFolderName(event.target.value)}
+                    placeholder="例如：晚清财政"
+                    className="bg-white"
+                  />
+                </div>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setIsCreateFolderDialogOpen(false)}
+                    disabled={createSpaceMutation.isPending}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    type="button"
+                    className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
+                    onClick={() => void handleCreateFolder()}
+                    disabled={createSpaceMutation.isPending}
+                  >
+                    {createSpaceMutation.isPending ? <Loader2Icon className="size-4 animate-spin" /> : <PlusIcon className="size-4" />}
+                    创建
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={Boolean(movingRecord)} onOpenChange={(open) => !open && setMovingRecord(null)}>
+              <DialogContent className="max-w-md border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)]/95">
+                <DialogHeader>
+                  <DialogTitle className="text-slate-900">移动文件</DialogTitle>
+                  <DialogDescription className="text-slate-600">
+                    将个人文件移动到另一个个人文件夹。
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-slate-800">目标文件夹</label>
+                  <Select value={moveTargetSpaceId} onValueChange={setMoveTargetSpaceId}>
+                    <SelectTrigger className="bg-white text-sm">
+                      <SelectValue placeholder="选择文件夹" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {personalSpaces.map((space) => (
+                        <SelectItem key={space.id} value={space.id}>
+                          {space.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setMovingRecord(null)}
+                    disabled={moveUserRecordMutation.isPending}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    type="button"
+                    className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
+                    onClick={() => void handleMoveFile()}
+                    disabled={moveUserRecordMutation.isPending || !moveTargetSpaceId}
+                  >
+                    {moveUserRecordMutation.isPending ? <Loader2Icon className="size-4 animate-spin" /> : <ArrowRightIcon className="size-4" />}
+                    移动
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -1138,12 +1596,32 @@ export default function KnowledgeManagementPage() {
                   />
                 </Button>
                 <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-[rgba(57,130,152,0.18)] bg-white px-3 text-[rgb(23,89,108)]"
+                  onClick={() => setIsCreateFolderDialogOpen(true)}
+                  disabled={createSpaceMutation.isPending}
+                >
+                  <PlusIcon className="size-4" />
+                  新建个人文件夹
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-[rgba(57,130,152,0.18)] bg-white px-3 text-[rgb(23,89,108)]"
+                  onClick={() => void handleDeleteFolder()}
+                  disabled={!selectedFolderNode?.deletable || deleteSpaceMutation.isPending}
+                >
+                  <Trash2Icon className="size-4" />
+                  删除当前文件夹
+                </Button>
+                <Button
                   size="sm"
                   className="h-8 rounded-md bg-[rgb(57,130,152)] px-3 text-white hover:bg-[rgb(49,113,132)]"
                   onClick={handleOpenUploadDialog}
-                  disabled={uploadMutation.isPending}
+                  disabled={uploadMutation.isPending || uploadUserMutation.isPending}
                 >
-                  {uploadMutation.isPending ? (
+                  {uploadMutation.isPending || uploadUserMutation.isPending ? (
                     <Loader2Icon className="size-4 animate-spin" />
                   ) : (
                     <UploadIcon className="size-4" />
@@ -1248,26 +1726,26 @@ export default function KnowledgeManagementPage() {
               </div>
             </div>
 
-            {isLoading ? (
+            {isLoading || personalRecordsQuery.isLoading || personalSpacesQuery.isLoading ? (
               <div className="text-muted-foreground flex flex-1 items-center justify-center gap-2 text-sm">
                 <Loader2Icon className="size-4 animate-spin" />
                 正在加载知识库文件列表
               </div>
-            ) : error ? (
+            ) : error || personalRecordsQuery.error || personalSpacesQuery.error ? (
               <div className="m-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                {error.message}
+                {(error ?? personalRecordsQuery.error ?? personalSpacesQuery.error)?.message}
               </div>
-            ) : sortedFiles.length === 0 ? (
+            ) : managedFiles.length === 0 ? (
               <div className="text-muted-foreground flex flex-1 items-center justify-center px-6 text-sm">
-                还没有全局知识库文档。
+                还没有知识库文件。
               </div>
             ) : (
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <aside className="hidden w-[260px] shrink-0 border-r border-[rgba(57,130,152,0.14)] bg-[rgb(252,253,253)] lg:block">
                   <div className="border-b border-[rgba(57,130,152,0.14)] px-3 py-2">
-                    <div className="text-sm font-medium text-slate-900">系统目录</div>
+                    <div className="text-sm font-medium text-slate-900">文件目录</div>
                     <div className="mt-1 text-xs text-slate-500">
-                      旧数据按首个标签归档，新数据优先使用 AI 生成目录。
+                      顶层包含系统和个人两套目录，个人文件可自由换文件夹。
                     </div>
                   </div>
                   <div className="h-full overflow-auto px-2 py-2">
@@ -1303,13 +1781,11 @@ export default function KnowledgeManagementPage() {
                   <div className="flex items-center justify-between border-b border-[rgba(57,130,152,0.14)] px-4 py-2 text-sm">
                     <div className="flex items-center gap-2 text-slate-700">
                       <FolderIcon className="size-4 text-[rgb(57,130,152)]" />
-                      <span className="font-medium text-slate-900">
-                        {selectedFolderPath === "all" ? "全部目录" : selectedFolderPath}
-                      </span>
+                      <span className="font-medium text-slate-900">{selectedFolderNode?.name ?? (selectedFolderPath === "all" ? "全部目录" : selectedFolderPath)}</span>
                       <span className="text-slate-400">{folderFilteredFiles.length} 项</span>
                     </div>
                     <div className="text-xs text-slate-500 lg:hidden">
-                      当前目录：{selectedFolderPath === "all" ? "全部文件" : selectedFolderPath}
+                      当前目录：{selectedFolderNode?.name ?? (selectedFolderPath === "all" ? "全部文件" : selectedFolderPath)}
                     </div>
                   </div>
 
@@ -1319,7 +1795,7 @@ export default function KnowledgeManagementPage() {
                     </div>
                   ) : (
                     <div className="min-h-0 h-full overflow-auto">
-                      <Table className="w-[1720px] table-fixed text-xs">
+                      <Table className="w-[1820px] table-fixed text-xs">
                   <TableHeader className="sticky top-0 z-10 bg-[rgb(247,251,252)]/95 backdrop-blur">
                     <TableRow className="hover:bg-[rgb(247,251,252)]/95">
                       <TableHead className="w-[60px] min-w-[60px]">
@@ -1337,6 +1813,7 @@ export default function KnowledgeManagementPage() {
                         </button>
                       </TableHead>
                       <TableHead className="w-[320px] min-w-[320px]">文件</TableHead>
+                      <TableHead className="w-[100px] min-w-[100px]">来源</TableHead>
                       <TableHead className="w-[180px] min-w-[180px]">目录</TableHead>
                       <TableHead className="w-[120px] min-w-[120px]">文档类型</TableHead>
                       <TableHead className="w-[120px] min-w-[120px]">检索类型</TableHead>
@@ -1351,40 +1828,51 @@ export default function KnowledgeManagementPage() {
                   </TableHeader>
                   <TableBody>
                     {folderFilteredFiles.map((file) => {
-                      const isSelected = selectedFilenames.includes(file.filename);
+                      const isSelected = selectedRowIds.includes(file.rowId);
                       const canSelectForChat =
-                        Boolean(file.doc_id) && file.parse_status === "indexed";
+                        Boolean(file.docId) && file.parseStatus === "indexed";
+                      const readerHref = buildManagedFileReaderHref(file);
+                      const canOpenReader =
+                        Boolean(readerHref) &&
+                        Boolean(file.documentUrl) &&
+                        ["indexed", "parsed"].includes(file.parseStatus ?? "");
                       const isDeleting =
-                        deleteMutation.isPending &&
-                        deletingFilename === file.filename;
+                        (file.source === "global" &&
+                          deleteMutation.isPending &&
+                          deletingFilename === file.filename) ||
+                        (file.source === "personal" &&
+                          deleteUserRecordMutation.isPending &&
+                          deletingRecordId === file.userRecordId);
                       const isRetrying =
                         retryMutation.isPending &&
                         retryingFilename === file.filename;
-                      const methodLabel = parseMethodLabel(file.parse_method);
+                      const methodLabel = parseMethodLabel(file.parseMethod);
                       const statusHint = fileStatusHint(file);
                       const tags = buildFileTags(file);
                       const typeLabel = knowledgeTypeLabel(file.type);
-                      const folderPath = getFileFolderPath(file);
+                      const folderPath = file.folderDisplay;
                       const canRetry =
+                        file.source === "global" &&
                         file.indexable &&
-                        ["failed", "index_failed", "indexed"].includes(file.parse_status ?? "");
-                      const retryLabel = retryActionLabel(file.parse_status);
+                        ["failed", "index_failed", "indexed"].includes(file.parseStatus ?? "");
+                      const retryLabel = retryActionLabel(file.parseStatus);
                       const hasEditableMetadataSource =
-                        Boolean(file.structured_filename) ||
+                        (file.source === "global" &&
+                        Boolean(file.structuredFilename)) ||
                         [".md", ".markdown", ".txt"].includes(
                           (file.extension ?? "").toLowerCase(),
                         );
                       const editDisabled =
                         !hasEditableMetadataSource ||
-                        ["queued", "queued_ocr", "parsing"].includes(file.parse_status ?? "");
+                        ["queued", "queued_ocr", "parsing"].includes(file.parseStatus ?? "");
 
                       return (
-                        <TableRow key={file.filename} className="h-14">
+                        <TableRow key={file.rowId} className="h-14">
                           <TableCell className="w-[60px] min-w-[60px] py-2.5">
                             <button
                               type="button"
                               className="inline-flex items-center justify-center text-slate-600 hover:text-slate-900"
-                              onClick={() => toggleFileSelection(file.filename)}
+                              onClick={() => toggleFileSelection(file.rowId)}
                               disabled={!canSelectForChat}
                               title={
                                 canSelectForChat
@@ -1405,15 +1893,35 @@ export default function KnowledgeManagementPage() {
                                 <FileIcon className="size-3.5" />
                               </div>
                               <div className="min-w-0">
-                                <div className="truncate font-medium text-[13px] text-slate-900">
-                                  {file.filename}
-                                </div>
+                                {canOpenReader && readerHref ? (
+                                  <a
+                                    href={readerHref}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block truncate font-medium text-[13px] text-[rgb(23,89,108)] underline-offset-4 hover:underline"
+                                    title="新开标签页查看结构化书籍"
+                                  >
+                                    {file.title}
+                                  </a>
+                                ) : (
+                                  <div
+                                    className="truncate font-medium text-[13px] text-slate-900"
+                                    title={file.structuredFilename ? "结构化阅读准备中" : undefined}
+                                  >
+                                    {file.title}
+                                  </div>
+                                )}
                                 <div className="truncate text-[11px] text-slate-500">
                                   {`解析：${methodLabel}`}
                                   {statusHint ? ` · ${statusHint}` : ""}
                                 </div>
                               </div>
                             </div>
+                          </TableCell>
+                          <TableCell className="w-[100px] min-w-[100px] py-2.5 text-[12px] text-slate-700">
+                            <Badge variant="outline" className="rounded-md px-2 py-0.5 text-[11px]">
+                              {file.source === "global" ? "系统" : "个人"}
+                            </Badge>
                           </TableCell>
                           <TableCell className="w-[180px] min-w-[180px] py-2.5 text-[12px] text-slate-700">
                             <div className="truncate" title={folderPath}>
@@ -1433,7 +1941,7 @@ export default function KnowledgeManagementPage() {
                               variant={file.type ? "secondary" : "outline"}
                               className="rounded-md px-2 py-0.5 text-[11px]"
                             >
-                              {typeLabel}
+                              {file.source === "global" ? typeLabel : "个人文件"}
                             </Badge>
                           </TableCell>
                           <TableCell className="w-[360px] min-w-[360px] py-2.5">
@@ -1457,10 +1965,10 @@ export default function KnowledgeManagementPage() {
                           </TableCell>
                           <TableCell className="w-[100px] min-w-[100px] py-2.5">
                             <Badge
-                              variant={statusVariant(file.parse_status)}
+                              variant={statusVariant(file.parseStatus)}
                               className="h-5 rounded-md px-2 text-[11px]"
                             >
-                              {statusLabel(file.parse_status)}
+                              {statusLabel(file.parseStatus)}
                             </Badge>
                           </TableCell>
                           <TableCell className="w-[160px] min-w-[160px] py-2.5 text-[12px] text-slate-600">
@@ -1478,30 +1986,32 @@ export default function KnowledgeManagementPage() {
                           </TableCell>
                           <TableCell className="w-[250px] min-w-[250px] py-2.5 text-[12px]">
                             <div className="flex flex-wrap gap-x-3 gap-y-1">
-                              <a
-                                className="text-[rgb(23,89,108)] underline underline-offset-4 hover:text-[rgb(57,130,152)]"
-                                href={file.artifact_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                原文
-                              </a>
-                              {file.preview_filename &&
-                                file.preview_filename !== file.filename &&
-                                file.preview_artifact_url && (
+                              {file.artifactUrl ? (
+                                <a
+                                  className="text-[rgb(23,89,108)] underline underline-offset-4 hover:text-[rgb(57,130,152)]"
+                                  href={file.artifactUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  原文
+                                </a>
+                              ) : null}
+                              {file.previewFilename &&
+                                file.previewFilename !== file.filename &&
+                                file.previewArtifactUrl && (
                                   <a
                                     className="text-[rgb(23,89,108)] underline underline-offset-4 hover:text-[rgb(57,130,152)]"
-                                    href={file.preview_artifact_url}
+                                    href={file.previewArtifactUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                   >
                                     解析
                                   </a>
                                 )}
-                              {file.structured_filename && (
+                              {file.structuredFilename && (
                                 <span
                                   className="truncate text-slate-600"
-                                  title={file.structured_filename}
+                                  title={file.structuredFilename}
                                 >
                                   结构化
                                 </span>
@@ -1510,17 +2020,38 @@ export default function KnowledgeManagementPage() {
                           </TableCell>
                           <TableCell className="w-[164px] min-w-[164px] py-1.5 text-right">
                             <div className="flex justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="size-7"
-                                disabled={editDisabled || updateMetadataMutation.isPending}
-                                onClick={() => openEditDialog(file)}
-                                title="修改标签"
-                                aria-label="修改标签"
-                              >
-                                <PencilIcon className="size-3.5" />
-                              </Button>
+                              {file.source === "global" ? (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7"
+                                  disabled={editDisabled || updateMetadataMutation.isPending}
+                                  onClick={() =>
+                                    openEditDialog(
+                                      sortedGlobalFiles.find((candidate) => candidate.filename === file.filename)!,
+                                    )
+                                  }
+                                  title="修改标签"
+                                  aria-label="修改标签"
+                                >
+                                  <PencilIcon className="size-3.5" />
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7"
+                                  disabled={personalSpaces.length <= 1}
+                                  onClick={() => {
+                                    setMovingRecord(file);
+                                    setMoveTargetSpaceId(file.knowledgeSpaceId ?? defaultPersonalSpace?.id ?? "");
+                                  }}
+                                  title="移动到其他文件夹"
+                                  aria-label="移动到其他文件夹"
+                                >
+                                  <FolderIcon className="size-3.5" />
+                                </Button>
+                              )}
                               {canRetry && (
                                 <Button
                                   variant="ghost"
@@ -1538,27 +2069,20 @@ export default function KnowledgeManagementPage() {
                                   )}
                                 </Button>
                               )}
-                              {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-7"
-                                  disabled={importMutation.isPending}
-                                  onClick={() => void handleImportToPersonal(file.filename)}
-                                >
-                                  {importMutation.isPending ? (
-                                    <Loader2Icon className="size-3.5 animate-spin" />
-                                  ) : (
-                                    <BookmarkPlusIcon className="size-3.5" />
-                                  )}
-                                </Button>
-                              )}
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 className="size-7"
-                                disabled={deleteMutation.isPending}
-                                onClick={() => void handleDelete(file.filename)}
+                                disabled={
+                                  file.source === "global"
+                                    ? deleteMutation.isPending
+                                    : deleteUserRecordMutation.isPending
+                                }
+                                onClick={() =>
+                                  file.source === "global"
+                                    ? void handleDelete(file.filename)
+                                    : void handleDeletePersonalRecord(file.userRecordId ?? "")
+                                }
                               >
                                 {isDeleting ? (
                                   <Loader2Icon className="size-3.5 animate-spin" />

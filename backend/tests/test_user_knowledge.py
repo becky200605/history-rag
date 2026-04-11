@@ -241,6 +241,72 @@ def test_user_knowledge_spaces_endpoint_returns_default_and_public_spaces(tmp_pa
     assert any(space["id"] == user_spaces_module.PUBLIC_KNOWLEDGE_SPACE_ID for space in payload["spaces"])
 
 
+def test_move_user_knowledge_record_between_spaces(tmp_path, monkeypatch) -> None:
+    paths = Paths(tmp_path)
+    monkeypatch.setattr(paths_module, "_paths", paths)
+    paths.ensure_user_knowledge_dirs("user_1")
+
+    target_space = user_spaces_module.create_user_knowledge_space(
+        "user_1",
+        name="晚清专题",
+        description="用于归档晚清财政资料",
+    )
+    record = user_store_module.build_user_upload_record(
+        user_id="user_1",
+        source_filename="notes.md",
+        size=12,
+        content_type="text/markdown",
+    )
+    user_store_module.save_user_record("user_1", record)
+
+    app = FastAPI()
+    app.include_router(user_knowledge_router.router)
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/users/user_1/knowledge/{record['id']}/move",
+        json={"knowledge_space_id": target_space["id"]},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["record"]["knowledge_space_id"] == target_space["id"]
+    assert payload["record"]["knowledge_space_name"] == "晚清专题"
+
+
+def test_delete_user_knowledge_space_moves_records_to_default(tmp_path, monkeypatch) -> None:
+    paths = Paths(tmp_path)
+    monkeypatch.setattr(paths_module, "_paths", paths)
+    paths.ensure_user_knowledge_dirs("user_1")
+
+    target_space = user_spaces_module.create_user_knowledge_space(
+        "user_1",
+        name="晚清专题",
+        description="用于归档晚清财政资料",
+    )
+    record = user_store_module.build_user_upload_record(
+        user_id="user_1",
+        source_filename="notes.md",
+        size=12,
+        content_type="text/markdown",
+        knowledge_space_id=target_space["id"],
+    )
+    user_store_module.save_user_record("user_1", record)
+
+    app = FastAPI()
+    app.include_router(user_knowledge_router.router)
+    client = TestClient(app)
+
+    response = client.delete(f"/api/users/user_1/knowledge/spaces/{target_space['id']}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["fallback_space_id"] == user_spaces_module.DEFAULT_KNOWLEDGE_SPACE_ID
+    moved = user_store_module.load_user_record("user_1", record["id"])
+    assert moved is not None
+    assert moved["knowledge_space_id"] == user_spaces_module.DEFAULT_KNOWLEDGE_SPACE_ID
+
+
 def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) -> None:
     monkeypatch.setattr(
         retriever_module,

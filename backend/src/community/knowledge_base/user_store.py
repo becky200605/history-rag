@@ -330,6 +330,15 @@ def remove_user_record(user_id: str, record_id: str) -> None:
         path.unlink()
 
 
+def move_user_record_to_space(user_id: str, record_id: str, knowledge_space_id: str) -> dict[str, Any] | None:
+    record = load_user_record(user_id, record_id)
+    if record is None:
+        return None
+    record["knowledge_space_id"] = knowledge_space_id
+    save_user_record(user_id, record)
+    return record
+
+
 def find_user_record_by_source_filename(user_id: str, source_filename: str) -> dict[str, Any] | None:
     for record in list_user_records(user_id):
         if record.get("source_filename") == source_filename:

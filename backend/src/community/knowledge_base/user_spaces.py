@@ -172,3 +172,22 @@ def create_user_knowledge_space(
     spaces.append(new_space)
     _save_personal_spaces(user_id, spaces)
     return new_space
+
+
+def delete_user_knowledge_space(user_id: str, space_id: str) -> dict[str, Any]:
+    normalized_space_id = str(space_id or "").strip()
+    if not normalized_space_id:
+        raise ValueError("space_id is required")
+    if normalized_space_id == DEFAULT_KNOWLEDGE_SPACE_ID:
+        raise ValueError("Default knowledge space cannot be deleted")
+    if normalized_space_id == PUBLIC_KNOWLEDGE_SPACE_ID:
+        raise ValueError("Public knowledge space cannot be deleted")
+
+    spaces = _load_personal_spaces(user_id)
+    target = next((space for space in spaces if str(space.get("id")) == normalized_space_id), None)
+    if target is None:
+        raise ValueError("Knowledge space not found")
+
+    remaining = [space for space in spaces if str(space.get("id")) != normalized_space_id]
+    _save_personal_spaces(user_id, remaining)
+    return target

@@ -20,6 +20,7 @@ from src.community.knowledge_base.translation_grpc import translate_blocks_to_ch
 from src.community.knowledge_base.user_spaces import (
     DEFAULT_KNOWLEDGE_SPACE_ID,
     create_user_knowledge_space,
+    delete_user_knowledge_space,
     get_default_knowledge_space,
     get_user_knowledge_space_map,
     list_user_knowledge_spaces,
@@ -38,6 +39,7 @@ from src.community.knowledge_base.user_store import (
     mark_user_record_failed,
     mark_user_record_parsed,
     mark_user_records_indexed,
+    move_user_record_to_space,
     persist_user_structured_document,
     persist_user_text_document,
     remove_user_record,
@@ -75,6 +77,10 @@ class CreateUserKnowledgeSpaceRequest(BaseModel):
 class UpdateUserKnowledgeContentRequest(BaseModel):
     title: str
     content: str = ""
+
+
+class MoveUserKnowledgeRecordRequest(BaseModel):
+    knowledge_space_id: str
 
 
 class TranslationBlockRequest(BaseModel):
@@ -530,6 +536,46 @@ def create_personal_knowledge_space(
     }
 
 
+@router.delete("/spaces/{space_id}", response_model=dict)
+def delete_personal_knowledge_space(
+    user_id: str,
+    space_id: str,
+) -> dict:
+    normalized_space_id = str(space_id or "").strip()
+    if not normalized_space_id:
+        raise HTTPException(status_code=400, detail="space_id is required")
+
+    target_space = get_user_knowledge_space_map(user_id).get(normalized_space_id)
+    if target_space is None:
+        raise HTTPException(status_code=404, detail="Knowledge space not found")
+    if bool(target_space.get("readonly", False)) or str(target_space.get("type") or "") != "personal":
+        raise HTTPException(status_code=400, detail="Knowledge space is read-only")
+    if normalized_space_id == DEFAULT_KNOWLEDGE_SPACE_ID:
+        raise HTTPException(status_code=400, detail="Default knowledge space cannot be deleted")
+
+    default_space = get_default_knowledge_space(user_id)
+    moved_record_ids: list[str] = []
+    for record in list_user_records(user_id):
+        if str(record.get("knowledge_space_id") or "") != normalized_space_id:
+            continue
+        record["knowledge_space_id"] = default_space["id"]
+        save_user_record(user_id, record)
+        moved_record_ids.append(str(record.get("id") or ""))
+
+    try:
+        deleted_space = delete_user_knowledge_space(user_id, normalized_space_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "success": True,
+        "deleted_space_id": deleted_space["id"],
+        "moved_record_ids": [record_id for record_id in moved_record_ids if record_id],
+        "fallback_space_id": default_space["id"],
+        "message": f"Deleted knowledge space {deleted_space['name']} and moved files to {default_space['name']}",
+    }
+
+
 @router.post("/upload", response_model=dict)
 async def upload_user_knowledge_files(
     user_id: str,
@@ -686,6 +732,26 @@ def delete_user_knowledge_record(user_id: str, record_id: str) -> dict:
     return {
         "success": True,
         "message": f"Deleted personal knowledge record {record_id}",
+    }
+
+
+@router.post("/{record_id}/move", response_model=dict)
+def move_user_knowledge_record(
+    user_id: str,
+    record_id: str,
+    payload: MoveUserKnowledgeRecordRequest,
+) -> dict:
+    resolved_space_id = _resolve_personal_knowledge_space_id(user_id, payload.knowledge_space_id)
+    record = move_user_record_to_space(user_id, record_id, resolved_space_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Personal knowledge record not found")
+    return {
+        "success": True,
+        "record": _serialize_record(
+            record,
+            knowledge_space_map=get_user_knowledge_space_map(user_id),
+        ),
+        "message": "Moved personal knowledge record",
     }
 
 

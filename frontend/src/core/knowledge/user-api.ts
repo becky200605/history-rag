@@ -170,6 +170,29 @@ export async function createUserKnowledgeSpace(payload: {
   return (await response.json()) as { success: boolean; space: UserKnowledgeSpace; message: string };
 }
 
+export async function deleteUserKnowledgeSpace(spaceId: string): Promise<{
+  success: boolean;
+  deleted_space_id: string;
+  moved_record_ids: string[];
+  fallback_space_id: string;
+  message: string;
+}> {
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/spaces/${encodeURIComponent(spaceId)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Failed to delete knowledge space" }));
+    throw new Error(error.message ?? error.detail ?? "Failed to delete knowledge space");
+  }
+  return (await response.json()) as {
+    success: boolean;
+    deleted_space_id: string;
+    moved_record_ids: string[];
+    fallback_space_id: string;
+    message: string;
+  };
+}
+
 export async function importGlobalKnowledgeToPersonal(
   filename: string,
   knowledgeSpaceId?: string | null,
@@ -250,6 +273,35 @@ export async function deleteUserKnowledgeRecord(recordId: string): Promise<{
     throw new Error(error.message ?? error.detail ?? "Failed to delete personal knowledge record");
   }
   return (await response.json()) as { success: boolean; message: string };
+}
+
+
+export async function moveUserKnowledgeRecord(
+  recordId: string,
+  payload: { knowledgeSpaceId: string },
+): Promise<{
+  success: boolean;
+  record: UserKnowledgeRecord;
+  message: string;
+}> {
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/move`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      knowledge_space_id: payload.knowledgeSpaceId,
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Failed to move personal knowledge record" }));
+    throw new Error(error.message ?? error.detail ?? "Failed to move personal knowledge record");
+  }
+  return (await response.json()) as {
+    success: boolean;
+    record: UserKnowledgeRecord;
+    message: string;
+  };
 }
 
 export async function getUserKnowledgeRecordContent(

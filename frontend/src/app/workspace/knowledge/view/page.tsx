@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLinkIcon } from "lucide-react";
+import { ExternalLinkIcon, Loader2Icon } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -13,6 +13,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { KnowledgeStructuredViewer } from "@/components/workspace/artifacts/knowledge-structured-viewer";
 import {
   buildKnowledgeDocumentUrl,
   buildKnowledgePageImageURLForDocumentUrl,
@@ -25,8 +26,9 @@ type LoadState =
   | { status: "error"; message: string }
   | { status: "ready"; data: KnowledgeParagraphLocation };
 
-export default function KnowledgeCitationViewPage() {
+export default function KnowledgeViewPage() {
   const searchParams = useSearchParams();
+  const mode = searchParams.get("mode");
   const filename = searchParams.get("filename") ?? "";
   const scope = searchParams.get("scope");
   const rawDocumentUrl = normalizeOptionalUrl(searchParams.get("document_url"));
@@ -38,6 +40,9 @@ export default function KnowledgeCitationViewPage() {
   const backHref = normalizeOptionalUrl(searchParams.get("back_href"))
     ?? (threadId ? `/workspace/chats/${threadId}` : "/workspace/chats");
   const backLabel = searchParams.get("back_label") ?? (threadId ? "对话" : "对话");
+  const originTitle = searchParams.get("origin_title") ?? (filename || "未命名资料");
+  const originFilename = searchParams.get("origin_filename") ?? (filename || "未知文件");
+  const knowledgeSpaceId = searchParams.get("knowledge_space_id");
   const documentUrl = useMemo(() => {
     if (rawDocumentUrl) {
       return rawDocumentUrl;
@@ -48,6 +53,118 @@ export default function KnowledgeCitationViewPage() {
     return buildKnowledgeDocumentUrl(scope === "user" ? "user" : "global", filename);
   }, [filename, rawDocumentUrl, scope]);
 
+  if (mode === "reader") {
+    return (
+      <KnowledgeReaderPage
+        backHref={backHref}
+        backLabel={backLabel}
+        documentUrl={documentUrl}
+        filename={filename}
+        originFilename={originFilename}
+        originTitle={originTitle}
+        initialPdfPageNo={parsePositiveInteger(pdfPageNo) ?? 1}
+        knowledgeSpaceId={knowledgeSpaceId}
+      />
+    );
+  }
+
+  return (
+    <KnowledgeCitationView
+      backHref={backHref}
+      backLabel={backLabel}
+      documentUrl={documentUrl}
+      pageNo={pageNo}
+      pdfPageNo={pdfPageNo}
+      paragraphNo={paragraphNo}
+      explicitOriginalUrl={explicitOriginalUrl}
+    />
+  );
+}
+
+function KnowledgeReaderPage({
+  backHref,
+  backLabel,
+  documentUrl,
+  filename,
+  originFilename,
+  originTitle,
+  initialPdfPageNo,
+  knowledgeSpaceId,
+}: {
+  backHref: string;
+  backLabel: string;
+  documentUrl: string | null;
+  filename: string;
+  originFilename: string;
+  originTitle: string;
+  initialPdfPageNo: number;
+  knowledgeSpaceId: string | null;
+}) {
+  return (
+    <div className="min-h-screen bg-[rgb(247,251,252)] px-6 py-8">
+      <div className="mx-auto flex max-w-7xl flex-col gap-4">
+        <div className="space-y-3">
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild>
+                  <Link href={backHref}>{backLabel}</Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>结构化阅读</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+              {originTitle}
+            </h1>
+            <div className="text-sm text-slate-500">
+              {originFilename || filename}
+            </div>
+          </div>
+        </div>
+
+        {!documentUrl ? (
+          <div className="rounded-xl bg-red-50 p-8 text-sm text-red-700 shadow-sm">
+            缺少文档地址，无法打开结构化阅读器。
+          </div>
+        ) : (
+          <KnowledgeStructuredViewer
+            className="min-h-[calc(100vh-190px)]"
+            documentUrl={documentUrl}
+            initialPdfPageNo={initialPdfPageNo}
+            excerptable
+            highlightable={false}
+            knowledgeSpaceId={knowledgeSpaceId ?? undefined}
+            originFilename={originFilename || filename}
+            originTitle={originTitle}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeCitationView({
+  backHref,
+  backLabel,
+  documentUrl,
+  pageNo,
+  pdfPageNo,
+  paragraphNo,
+  explicitOriginalUrl,
+}: {
+  backHref: string;
+  backLabel: string;
+  documentUrl: string | null;
+  pageNo: string | null;
+  pdfPageNo: string | null;
+  paragraphNo: string | null;
+  explicitOriginalUrl: string | null;
+}) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   useEffect(() => {
@@ -128,7 +245,8 @@ export default function KnowledgeCitationViewPage() {
         </div>
 
         {state.status === "loading" && (
-          <div className="rounded-xl bg-white p-8 text-sm text-muted-foreground shadow-sm">
+          <div className="flex items-center gap-2 rounded-xl bg-white p-8 text-sm text-muted-foreground shadow-sm">
+            <Loader2Icon className="size-4 animate-spin" />
             正在加载页码与段落定位信息...
           </div>
         )}
@@ -219,11 +337,21 @@ function normalizeOptionalUrl(url: string | null): string | null {
   }
 }
 
-function formatLocationLabel(
-  pageNo: number | null,
-  paragraphNo: number | null,
-): string {
-  const pageLabel = pageNo ? `第 ${pageNo} 页` : "页码未知";
-  const paragraphLabel = paragraphNo ? `第 ${paragraphNo} 段` : "段落未知";
-  return `【${pageLabel} ${paragraphLabel}】`;
+function parsePositiveInteger(value: string | null) {
+  if (!value) {
+    return null;
+  }
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatLocationLabel(pageNo: number | null, paragraphNo: number | null) {
+  const parts: string[] = [];
+  if (pageNo) {
+    parts.push(`第 ${pageNo} 页`);
+  }
+  if (paragraphNo) {
+    parts.push(`第 ${paragraphNo} 段`);
+  }
+  return parts.join(" · ") || "已定位";
 }

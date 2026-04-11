@@ -334,6 +334,7 @@ export default function KnowledgeManagementPage() {
     useState<DocumentTypeHint>("unknown");
   const [statusFilter, setStatusFilter] = useState<FileStatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedFilenames, setSelectedFilenames] = useState<string[]>([]);
   const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
   const [retryingFilename, setRetryingFilename] = useState<string | null>(null);
   const [editingFile, setEditingFile] = useState<KnowledgeFileInfo | null>(null);

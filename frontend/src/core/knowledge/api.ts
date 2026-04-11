@@ -32,6 +32,7 @@ export interface KnowledgeFileInfo {
   error?: string | null;
   hints?: Record<string, string>;
   type?: string | null;
+  folder?: string | null;
   categories?: string[];
   eras?: string[];
   regions?: string[];
@@ -44,6 +45,7 @@ export interface KnowledgeFileInfo {
 
 export interface KnowledgeMetadataUpdateInput {
   type?: string | null;
+  folder?: string | null;
   categories?: string[];
   eras?: string[];
   regions?: string[];

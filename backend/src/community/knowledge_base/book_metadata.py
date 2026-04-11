@@ -55,6 +55,7 @@ class BookMetadataPromptInput(BaseModel):
     max_excerpt_chars: int = DEFAULT_MAX_EXCERPT_CHARS
     selected_pages: list[BookMetadataSamplePage] = Field(default_factory=list)
     selection_notes: list[str] = Field(default_factory=list)
+    existing_folder_tree: str | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -65,6 +66,7 @@ class BookMetadataSuggestion(BaseModel):
     title: str | None = None
     author: MetadataField | None = None
     type: MetadataField | None = None
+    folder: MetadataField | None = None
     categories: list[MetadataField] = Field(default_factory=list)
     eras: list[MetadataField] = Field(default_factory=list)
     regions: list[MetadataField] = Field(default_factory=list)
@@ -130,6 +132,33 @@ def _coerce_book_type(value: Any) -> MetadataField | None:
     return field
 
 
+def normalize_folder_path(value: Any) -> str | None:
+    """Normalize a logical knowledge-folder path into slash-separated segments."""
+    raw = str(value or "").replace("\\", "/").strip()
+    if not raw:
+        return None
+
+    segments: list[str] = []
+    for segment in raw.split("/"):
+        normalized = " ".join(segment.split()).strip()
+        if not normalized or normalized in {".", ".."}:
+            continue
+        segments.append(normalized)
+
+    return "/".join(segments) or None
+
+
+def _coerce_folder_field(value: Any) -> MetadataField | None:
+    field = _coerce_metadata_field(value)
+    if field is None:
+        return None
+    normalized = normalize_folder_path(field.value)
+    if not normalized:
+        return None
+    field.value = normalized
+    return field
+
+
 def _coerce_metadata_fields(values: Any) -> list[MetadataField]:
     if values is None:
         return []
@@ -145,6 +174,7 @@ def _normalize_book_metadata_payload(payload: Mapping[str, Any]) -> dict[str, An
     normalized = dict(payload)
     normalized["author"] = _coerce_metadata_field(payload.get("author"))
     normalized["type"] = _coerce_book_type(payload.get("type"))
+    normalized["folder"] = _coerce_folder_field(payload.get("folder"))
     normalized["categories"] = _coerce_metadata_fields(payload.get("categories"))
     normalized["eras"] = _coerce_metadata_fields(payload.get("eras"))
     normalized["regions"] = _coerce_metadata_fields(payload.get("regions"))
@@ -163,6 +193,28 @@ def _truncate_text(text: str, max_chars: int) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return normalized[: max(0, max_chars - 3)].rstrip() + "..."
+
+
+def resolve_book_folder(suggestion: BookMetadataSuggestion | None) -> str | None:
+    """Resolve a logical folder path for a book suggestion.
+
+    Preference order:
+    1. Explicit `folder`
+    2. First category / era / region / keyword
+    """
+    if suggestion is None:
+        return None
+
+    explicit_folder = _coerce_folder_field(suggestion.folder)
+    if explicit_folder is not None:
+        return explicit_folder.value
+
+    for fields in (suggestion.categories, suggestion.eras, suggestion.regions, suggestion.keywords):
+        for field in fields:
+            normalized = normalize_folder_path(_coerce_metadata_field(field).value if field else None)
+            if normalized:
+                return normalized
+    return None
 
 
 def _page_no(page: Mapping[str, Any], fallback: int) -> int:
@@ -277,6 +329,7 @@ def build_book_metadata_prompt_input(
     front_page_limit: int = DEFAULT_FRONT_PAGE_LIMIT,
     body_sample_count: int = DEFAULT_BODY_SAMPLE_COUNT,
     max_excerpt_chars: int = DEFAULT_MAX_EXCERPT_CHARS,
+    existing_folder_tree: str | None = None,
 ) -> BookMetadataPromptInput:
     """Convert structured OCR output into a compact AI prompt input."""
     selected_pages = extract_book_metadata_pages(
@@ -303,6 +356,7 @@ def build_book_metadata_prompt_input(
         max_excerpt_chars=max_excerpt_chars,
         selected_pages=selected_pages,
         selection_notes=notes,
+        existing_folder_tree=existing_folder_tree.strip() if existing_folder_tree else None,
     )
 
 
@@ -313,6 +367,10 @@ def build_book_metadata_system_prompt() -> str:
         "Use only the supplied excerpts and their page numbers.\n"
         "Do not invent facts, and do not use outside knowledge to fill gaps.\n"
         "The field `type` is only for retrieval routing and must be one of: core, specialized, reference, unknown.\n"
+        "The field `folder` is the logical knowledge-folder path for this book, using `/` between levels.\n"
+        "Prefer reusing an existing folder from the supplied folder tree when one clearly fits.\n"
+        "If no existing folder fits, create a short new folder path based on the book's primary subject.\n"
+        "For older books, the folder should usually align with the first/highest-priority tag rather than the retrieval `type`.\n"
         "`core` means a general/synthetic history work such as 通史, 全史, 概论, 总论, or a broad dynastic overview.\n"
         "A domain-wide history such as《中国财政通史》is still `core`; do not mark it `specialized` merely because it focuses on one domain.\n"
         "`specialized` is for topic-focused or case-focused studies such as 专题研究, 制度史, 个案研究, 区域研究, 档案/史料研究.\n"
@@ -333,6 +391,7 @@ def build_book_metadata_system_prompt() -> str:
         '  "title": "string or null",\n'
         '  "author": {"value": "string", "confidence": 0.0, "evidence": "string"} or null,\n'
         '  "type": {"value": "core|specialized|reference|unknown", "confidence": 0.0, "evidence": "string"} or null,\n'
+        '  "folder": {"value": "string", "confidence": 0.0, "evidence": "string"} or null,\n'
         '  "categories": [{"value": "string", "confidence": 0.0, "evidence": "string"}],\n'
         '  "eras": [{"value": "string", "confidence": 0.0, "evidence": "string"}],\n'
         '  "regions": [{"value": "string", "confidence": 0.0, "evidence": "string"}],\n'
@@ -357,6 +416,14 @@ def render_book_metadata_user_prompt(prompt_input: BookMetadataPromptInput) -> s
                 page.text or "",
             ]
         )
+    if prompt_input.existing_folder_tree:
+        lines.extend(
+            [
+                "",
+                "### Existing Folder Tree",
+                prompt_input.existing_folder_tree,
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -368,6 +435,7 @@ def build_book_metadata_prompt_bundle(
     front_page_limit: int = DEFAULT_FRONT_PAGE_LIMIT,
     body_sample_count: int = DEFAULT_BODY_SAMPLE_COUNT,
     max_excerpt_chars: int = DEFAULT_MAX_EXCERPT_CHARS,
+    existing_folder_tree: str | None = None,
 ) -> BookMetadataPromptBundle:
     """Build the system/user prompt pair and structured input for an AI pass."""
     prompt_input = build_book_metadata_prompt_input(
@@ -377,6 +445,7 @@ def build_book_metadata_prompt_bundle(
         front_page_limit=front_page_limit,
         body_sample_count=body_sample_count,
         max_excerpt_chars=max_excerpt_chars,
+        existing_folder_tree=existing_folder_tree,
     )
     return BookMetadataPromptBundle(
         system_prompt=build_book_metadata_system_prompt(),

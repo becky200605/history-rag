@@ -4,10 +4,13 @@ import {
   ArchiveIcon,  
   BookOpenIcon,
   BookmarkPlusIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CheckSquareIcon,
   FileIcon,
   FileTextIcon,
   FilmIcon,
+  FolderIcon,
   LibraryIcon,
   Loader2Icon,
   MusicIcon,
@@ -49,12 +52,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import {
   WorkspaceBody,
   WorkspaceContainer,
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
-import { Textarea } from "@/components/ui/textarea";
 import type { KnowledgeFileInfo } from "@/core/knowledge/api";
 import {
   useDeleteKnowledgeFile,
@@ -66,6 +69,7 @@ import {
 } from "@/core/knowledge/hooks";
 import { useImportGlobalKnowledgeToPersonal } from "@/core/knowledge/user-hooks";
 import { env } from "@/env";
+import { cn } from "@/lib/utils";
 
 type LanguageHint = "unknown" | "zh-Hans" | "zh-Hant" | "en" | "mixed";
 type LayoutHint = "unknown" | "horizontal" | "vertical" | "mixed";
@@ -73,6 +77,13 @@ type DocumentTypeHint = "unknown" | "book" | "archive" | "periodical" | "ancient
 type FileStatusFilter = "all" | "active" | "indexed" | "failed" | "parsed" | "pending_parse" | "uploaded";
 type KnowledgeType = "core" | "specialized" | "reference" | "unknown";
 const KNOWLEDGE_TYPES = new Set(["core", "specialized", "reference", "unknown"]);
+
+type FolderTreeNode = {
+  name: string;
+  path: string;
+  fileCount: number;
+  children: FolderTreeNode[];
+};
 
 function buildFileTags(file: {
   tags?: string[];
@@ -97,6 +108,65 @@ function buildFileTags(file: {
       ),
     ),
   );
+}
+
+function normalizeFolderPath(value?: string | null) {
+  const normalized = (value ?? "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .join("/");
+  return normalized || "未分类";
+}
+
+function getFileFolderPath(file: { folder?: string | null; tags?: string[] }) {
+  const explicit = normalizeFolderPath(file.folder);
+  if (explicit !== "未分类") {
+    return explicit;
+  }
+  const firstTag = file.tags?.find((tag) => tag?.trim());
+  return normalizeFolderPath(firstTag ?? null);
+}
+
+function buildFolderTree(files: KnowledgeFileInfo[]): FolderTreeNode[] {
+  type MutableNode = { children: Map<string, MutableNode>; fileCount: number };
+
+  const ensureNode = (map: Map<string, MutableNode>, key: string): MutableNode => {
+    const existing = map.get(key);
+    if (existing) {
+      return existing;
+    }
+    const next: MutableNode = { children: new Map(), fileCount: 0 };
+    map.set(key, next);
+    return next;
+  };
+
+  const mutableRoot = new Map<string, MutableNode>();
+  for (const file of files) {
+    const segments = getFileFolderPath(file).split("/");
+    let current = mutableRoot;
+    for (const segment of segments) {
+      const node = ensureNode(current, segment);
+      node.fileCount += 1;
+      current = node.children;
+    }
+  }
+
+  const toTree = (map: Map<string, MutableNode>, parentPath = ""): FolderTreeNode[] =>
+    Array.from(map.entries())
+      .sort(([left], [right]) => left.localeCompare(right, "zh-CN"))
+      .map(([name, node]) => {
+        const path = parentPath ? `${parentPath}/${name}` : name;
+        return {
+          name,
+          path,
+          fileCount: node.fileCount,
+          children: toTree(node.children, path),
+        };
+      });
+
+  return toTree(mutableRoot);
 }
 
 function knowledgeTypeLabel(value?: string | null) {
@@ -323,6 +393,77 @@ function retryActionLabel(status?: string) {
   }
 }
 
+function FolderTreeBranch({
+  node,
+  selectedPath,
+  expandedPaths,
+  onSelect,
+  onToggle,
+  depth = 0,
+}: {
+  node: FolderTreeNode;
+  selectedPath: string;
+  expandedPaths: string[];
+  onSelect: (path: string) => void;
+  onToggle: (path: string) => void;
+  depth?: number;
+}) {
+  const isExpanded = expandedPaths.includes(node.path);
+  const isSelected = selectedPath === node.path;
+  const hasChildren = node.children.length > 0;
+
+  return (
+    <div>
+      <button
+        type="button"
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition",
+          isSelected
+            ? "bg-[rgb(241,248,249)] text-[rgb(23,89,108)]"
+            : "text-slate-700 hover:bg-slate-50",
+        )}
+        style={{ paddingLeft: `${8 + depth * 14}px` }}
+        onClick={() => onSelect(node.path)}
+      >
+        <span
+          className="inline-flex size-4 shrink-0 items-center justify-center text-slate-400"
+          onClick={(event) => {
+            event.stopPropagation();
+            if (hasChildren) {
+              onToggle(node.path);
+            }
+          }}
+        >
+          {hasChildren ? (
+            isExpanded ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />
+          ) : (
+            <span className="size-3.5" />
+          )}
+        </span>
+        <FolderIcon className="size-4 shrink-0 text-[rgb(57,130,152)]" />
+        <span className="min-w-0 flex-1 truncate">{node.name}</span>
+        <span className="shrink-0 text-xs text-slate-400">{node.fileCount}</span>
+      </button>
+
+      {hasChildren && isExpanded ? (
+        <div className="mt-0.5">
+          {node.children.map((child) => (
+            <FolderTreeBranch
+              key={child.path}
+              node={child}
+              selectedPath={selectedPath}
+              expandedPaths={expandedPaths}
+              onSelect={onSelect}
+              onToggle={onToggle}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function KnowledgeManagementPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -339,6 +480,7 @@ export default function KnowledgeManagementPage() {
   const [retryingFilename, setRetryingFilename] = useState<string | null>(null);
   const [editingFile, setEditingFile] = useState<KnowledgeFileInfo | null>(null);
   const [typeInput, setTypeInput] = useState<KnowledgeType>("unknown");
+  const [folderInput, setFolderInput] = useState("");
   const [categoriesInput, setCategoriesInput] = useState("");
   const [erasInput, setErasInput] = useState("");
   const [regionsInput, setRegionsInput] = useState("");
@@ -349,6 +491,8 @@ export default function KnowledgeManagementPage() {
   const [documentTypeHintInput, setDocumentTypeHintInput] =
     useState<DocumentTypeHint>("unknown");
   const [searchCategories, setSearchCategories] = useState<string[]>(['all']);
+  const [selectedFolderPath, setSelectedFolderPath] = useState<string>("all");
+  const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([]);
 
   const handleCategoryToggle = (category: string) => {
     if (category === 'all') {
@@ -387,6 +531,8 @@ export default function KnowledgeManagementPage() {
   const importMutation = useImportGlobalKnowledgeToPersonal();
   const updateMetadataMutation = useUpdateKnowledgeFileMetadata();
   const regenerateMetadataMutation = useRegenerateKnowledgeFileMetadata();
+  const metadataDialogError =
+    updateMetadataMutation.error ?? regenerateMetadataMutation.error;
 
   useEffect(() => {
     document.title = "知识库管理 - 财政历史智能知识库";
@@ -446,6 +592,7 @@ export default function KnowledgeManagementPage() {
 
       const haystack = [
         file.filename,
+        file.folder,
         file.type,
         ...(file.tags ?? []),
         ...(file.categories ?? []),
@@ -470,23 +617,61 @@ export default function KnowledgeManagementPage() {
     });
   }, [searchQuery, sortedFiles, statusFilter]);
 
+  const folderTree = useMemo(() => buildFolderTree(sortedFiles), [sortedFiles]);
+
   useEffect(() => {
-    const visibleFilenames = new Set(filteredFiles.map((file) => file.filename));
+    setExpandedFolderPaths((current) => {
+      if (current.length > 0) {
+        return current;
+      }
+      return folderTree.map((node) => node.path);
+    });
+  }, [folderTree]);
+
+  useEffect(() => {
+    if (selectedFolderPath === "all") {
+      return;
+    }
+    const availablePaths = new Set<string>();
+    const visit = (nodes: FolderTreeNode[]) => {
+      for (const node of nodes) {
+        availablePaths.add(node.path);
+        visit(node.children);
+      }
+    };
+    visit(folderTree);
+    if (!availablePaths.has(selectedFolderPath)) {
+      setSelectedFolderPath("all");
+    }
+  }, [folderTree, selectedFolderPath]);
+
+  const folderFilteredFiles = useMemo(() => {
+    if (selectedFolderPath === "all") {
+      return filteredFiles;
+    }
+    return filteredFiles.filter((file) => {
+      const folderPath = getFileFolderPath(file);
+      return folderPath === selectedFolderPath || folderPath.startsWith(`${selectedFolderPath}/`);
+    });
+  }, [filteredFiles, selectedFolderPath]);
+
+  useEffect(() => {
+    const visibleFilenames = new Set(folderFilteredFiles.map((file) => file.filename));
     setSelectedFilenames((current) =>
       current.filter((filename) => visibleFilenames.has(filename)),
     );
-  }, [filteredFiles]);
+  }, [folderFilteredFiles]);
 
   const selectedFiles = useMemo(
-    () => filteredFiles.filter((file) => selectedFilenames.includes(file.filename)),
-    [filteredFiles, selectedFilenames],
+    () => folderFilteredFiles.filter((file) => selectedFilenames.includes(file.filename)),
+    [folderFilteredFiles, selectedFilenames],
   );
   const selectableVisibleFiles = useMemo(
     () =>
-      filteredFiles.filter(
+      folderFilteredFiles.filter(
         (file) => Boolean(file.doc_id) && file.parse_status === "indexed",
       ),
-    [filteredFiles],
+    [folderFilteredFiles],
   );
 
   const allVisibleSelected =
@@ -603,6 +788,7 @@ export default function KnowledgeManagementPage() {
         ? (String(file.type).toLowerCase() as KnowledgeType)
         : "unknown",
     );
+    setFolderInput(file.folder ?? "");
     setCategoriesInput(joinTagInput(file.categories));
     setErasInput(joinTagInput(file.eras));
     setRegionsInput(joinTagInput(file.regions));
@@ -618,6 +804,7 @@ export default function KnowledgeManagementPage() {
   const closeEditDialog = () => {
     setEditingFile(null);
     setTypeInput("unknown");
+    setFolderInput("");
     setCategoriesInput("");
     setErasInput("");
     setRegionsInput("");
@@ -630,6 +817,7 @@ export default function KnowledgeManagementPage() {
 
   const applyMetadataToForm = (metadata: {
     type?: string | null;
+    folder?: string | null;
     categories?: string[];
     eras?: string[];
     regions?: string[];
@@ -644,6 +832,7 @@ export default function KnowledgeManagementPage() {
         ? (String(metadata.type).toLowerCase() as KnowledgeType)
         : "unknown",
     );
+    setFolderInput(metadata.folder ?? "");
     setCategoriesInput(joinTagInput(metadata.categories));
     setErasInput(joinTagInput(metadata.eras));
     setRegionsInput(joinTagInput(metadata.regions));
@@ -666,6 +855,7 @@ export default function KnowledgeManagementPage() {
         filename: editingFile.filename,
         payload: {
           type: typeInput === "unknown" ? null : typeInput,
+          folder: folderInput.trim() || null,
           categories: splitTagInput(categoriesInput),
           eras: splitTagInput(erasInput),
           regions: splitTagInput(regionsInput),
@@ -713,7 +903,7 @@ export default function KnowledgeManagementPage() {
       return;
     }
     setSelectedFilenames(
-      filteredFiles
+      folderFilteredFiles
         .filter((file) => file.parse_status === "indexed" && file.doc_id)
         .map((file) => file.filename),
     );
@@ -729,6 +919,14 @@ export default function KnowledgeManagementPage() {
       `/workspace/chats/new?materials=${encodeURIComponent(
         JSON.stringify(selectedMaterialsPayload),
       )}`,
+    );
+  };
+
+  const handleToggleFolderPath = (path: string) => {
+    setExpandedFolderPaths((current) =>
+      current.includes(path)
+        ? current.filter((item) => item !== path)
+        : [...current, path],
     );
   };
 
@@ -1059,15 +1257,69 @@ export default function KnowledgeManagementPage() {
               <div className="m-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                 {error.message}
               </div>
-            ) : filteredFiles.length === 0 ? (
+            ) : sortedFiles.length === 0 ? (
               <div className="text-muted-foreground flex flex-1 items-center justify-center px-6 text-sm">
-                {sortedFiles.length === 0
-                  ? "还没有全局知识库文档。"
-                  : "没有符合当前筛选条件的文件。"}
+                还没有全局知识库文档。
               </div>
             ) : (
-              <div className="min-h-0 flex-1 overflow-auto">
-                <Table className="w-[1600px] table-fixed text-xs">
+              <div className="flex min-h-0 flex-1 overflow-hidden">
+                <aside className="hidden w-[260px] shrink-0 border-r border-[rgba(57,130,152,0.14)] bg-[rgb(252,253,253)] lg:block">
+                  <div className="border-b border-[rgba(57,130,152,0.14)] px-3 py-2">
+                    <div className="text-sm font-medium text-slate-900">系统目录</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      旧数据按首个标签归档，新数据优先使用 AI 生成目录。
+                    </div>
+                  </div>
+                  <div className="h-full overflow-auto px-2 py-2">
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition",
+                        selectedFolderPath === "all"
+                          ? "bg-[rgb(241,248,249)] text-[rgb(23,89,108)]"
+                          : "text-slate-700 hover:bg-slate-50",
+                      )}
+                      onClick={() => setSelectedFolderPath("all")}
+                    >
+                      <span>全部文件</span>
+                      <span className="text-xs text-slate-400">{filteredFiles.length}</span>
+                    </button>
+                    <div className="mt-1 space-y-0.5">
+                      {folderTree.map((node) => (
+                        <FolderTreeBranch
+                          key={node.path}
+                          node={node}
+                          selectedPath={selectedFolderPath}
+                          expandedPaths={expandedFolderPaths}
+                          onSelect={setSelectedFolderPath}
+                          onToggle={handleToggleFolderPath}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </aside>
+
+                <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-[rgba(57,130,152,0.14)] px-4 py-2 text-sm">
+                    <div className="flex items-center gap-2 text-slate-700">
+                      <FolderIcon className="size-4 text-[rgb(57,130,152)]" />
+                      <span className="font-medium text-slate-900">
+                        {selectedFolderPath === "all" ? "全部目录" : selectedFolderPath}
+                      </span>
+                      <span className="text-slate-400">{folderFilteredFiles.length} 项</span>
+                    </div>
+                    <div className="text-xs text-slate-500 lg:hidden">
+                      当前目录：{selectedFolderPath === "all" ? "全部文件" : selectedFolderPath}
+                    </div>
+                  </div>
+
+                  {folderFilteredFiles.length === 0 ? (
+                    <div className="text-muted-foreground flex h-full items-center justify-center px-6 text-sm">
+                      没有符合当前目录和筛选条件的文件。
+                    </div>
+                  ) : (
+                    <div className="min-h-0 h-full overflow-auto">
+                      <Table className="w-[1720px] table-fixed text-xs">
                   <TableHeader className="sticky top-0 z-10 bg-[rgb(247,251,252)]/95 backdrop-blur">
                     <TableRow className="hover:bg-[rgb(247,251,252)]/95">
                       <TableHead className="w-[60px] min-w-[60px]">
@@ -1085,6 +1337,7 @@ export default function KnowledgeManagementPage() {
                         </button>
                       </TableHead>
                       <TableHead className="w-[320px] min-w-[320px]">文件</TableHead>
+                      <TableHead className="w-[180px] min-w-[180px]">目录</TableHead>
                       <TableHead className="w-[120px] min-w-[120px]">文档类型</TableHead>
                       <TableHead className="w-[120px] min-w-[120px]">检索类型</TableHead>
                       <TableHead className="w-[360px] min-w-[360px]">标签</TableHead>
@@ -1097,7 +1350,7 @@ export default function KnowledgeManagementPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredFiles.map((file) => {
+                    {folderFilteredFiles.map((file) => {
                       const isSelected = selectedFilenames.includes(file.filename);
                       const canSelectForChat =
                         Boolean(file.doc_id) && file.parse_status === "indexed";
@@ -1111,6 +1364,7 @@ export default function KnowledgeManagementPage() {
                       const statusHint = fileStatusHint(file);
                       const tags = buildFileTags(file);
                       const typeLabel = knowledgeTypeLabel(file.type);
+                      const folderPath = getFileFolderPath(file);
                       const canRetry =
                         file.indexable &&
                         ["failed", "index_failed", "indexed"].includes(file.parse_status ?? "");
@@ -1159,6 +1413,11 @@ export default function KnowledgeManagementPage() {
                                   {statusHint ? ` · ${statusHint}` : ""}
                                 </div>
                               </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="w-[180px] min-w-[180px] py-2.5 text-[12px] text-slate-700">
+                            <div className="truncate" title={folderPath}>
+                              {folderPath}
                             </div>
                           </TableCell>
                           <TableCell className="w-[120px] min-w-[120px] py-2.5 text-[12px] text-slate-700">
@@ -1314,6 +1573,9 @@ export default function KnowledgeManagementPage() {
                     })}
                   </TableBody>
                 </Table>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </section>
@@ -1336,23 +1598,37 @@ export default function KnowledgeManagementPage() {
             </DialogHeader>
 
             <div className="grid gap-4">
-              <div className="grid gap-2">
-                <label className="text-sm font-medium text-slate-800">检索类型</label>
-                <Select
-                  value={typeInput}
-                  onValueChange={(value) => setTypeInput(value as KnowledgeType)}
-                >
-                  <SelectTrigger className="bg-white text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {knowledgeTypeOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-slate-800">检索类型</label>
+                  <Select
+                    value={typeInput}
+                    onValueChange={(value) => setTypeInput(value as KnowledgeType)}
+                  >
+                    <SelectTrigger className="bg-white text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {knowledgeTypeOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-slate-800">文件夹路径</label>
+                  <Input
+                    value={folderInput}
+                    onChange={(event) => setFolderInput(event.target.value)}
+                    placeholder="例如：财政史/清代"
+                    className="bg-white"
+                  />
+                  <p className="text-xs text-slate-500">
+                    使用 `/` 表示多级目录；留空时会按首个标签回退归档。
+                  </p>
+                </div>
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">
@@ -1471,9 +1747,9 @@ export default function KnowledgeManagementPage() {
                 />
               </div>
 
-              {(updateMetadataMutation.error || regenerateMetadataMutation.error) && (
+              {metadataDialogError && (
                 <p className="text-sm text-destructive">
-                  {(updateMetadataMutation.error || regenerateMetadataMutation.error)?.message}
+                  {metadataDialogError.message}
                 </p>
               )}
             </div>

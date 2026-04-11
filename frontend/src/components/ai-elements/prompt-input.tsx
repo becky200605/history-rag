@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import type { SelectedMaterial } from "@/core/knowledge/selection";
 import {
   Command,
   CommandEmpty,
@@ -433,6 +434,7 @@ export const PromptInputActionAddAttachments = ({
 export type PromptInputMessage = {
   text: string;
   files: FileUIPart[];
+  selectedMaterials?: SelectedMaterial[];
 };
 
 export type PromptInputProps = Omit<

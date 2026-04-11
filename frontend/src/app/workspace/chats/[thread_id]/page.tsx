@@ -28,6 +28,10 @@ import { Tooltip } from "@/components/workspace/tooltip";
 import { Welcome } from "@/components/workspace/welcome";
 import { getAPIClient } from "@/core/api";
 import { useI18n } from "@/core/i18n/hooks";
+import {
+  parseSelectedMaterials,
+  type SelectedMaterial,
+} from "@/core/knowledge/selection";
 import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useLocalSettings } from "@/core/settings";
@@ -45,52 +49,6 @@ import { authClient } from "@/server/better-auth/client";
 
 const THREAD_ROUTE_HANDOFF_KEY = "workspace:thread-route-handoff";
 const THREAD_ROUTE_HANDOFF_TTL_MS = 15_000;
-
-type SelectedMaterial = {
-  doc_id: string;
-  title: string;
-  filename: string | null;
-  scope: "global" | "thread" | "user";
-};
-
-function parseSelectedMaterials(raw: string | null): SelectedMaterial[] {
-  if (!raw) {
-    return [];
-  }
-
-  try {
-    const payload = JSON.parse(raw) as unknown;
-    if (!Array.isArray(payload)) {
-      return [];
-    }
-    return payload
-      .map<SelectedMaterial | null>((item) => {
-        if (!item || typeof item !== "object") {
-          return null;
-        }
-        const material = item as Record<string, unknown>;
-        const docId = String(material.doc_id ?? "").trim();
-        const title = String(material.title ?? "").trim();
-        if (!docId || !title) {
-          return null;
-        }
-        const scope = material.scope;
-        return {
-          doc_id: docId,
-          title,
-          filename:
-            typeof material.filename === "string" ? material.filename : null,
-          scope:
-            scope === "global" || scope === "thread" || scope === "user"
-              ? scope
-              : "global",
-        };
-      })
-      .filter((item): item is SelectedMaterial => item !== null);
-  } catch {
-    return [];
-  }
-}
 
 function readThreadRouteHandoff() {
   if (typeof window === "undefined") {
@@ -161,7 +119,8 @@ export default function ChatPage() {
   const searchParams = useSearchParams();
   const { thread_id: threadIdFromPath } = useParams<{ thread_id: string }>();
   const isNewThread = threadIdFromPath === "new";
-  const { data: session, isPending: isSessionPending } = authClient.useSession();
+  const { data: session, isPending: isSessionPending } =
+    authClient.useSession();
   const shouldKeepContentDuringAccessCheck = useMemo(() => {
     if (isNewThread) {
       return false;
@@ -194,9 +153,8 @@ export default function ChatPage() {
       env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
       (Boolean(session?.user.id) && !isSessionPending && !isNewThread),
     queryFn: async () => {
-      const thread = await getAPIClient().threads.get<AgentThreadState>(
-        threadIdFromPath,
-      );
+      const thread =
+        await getAPIClient().threads.get<AgentThreadState>(threadIdFromPath);
       const ownerId =
         typeof thread.metadata?.user_id === "string"
           ? thread.metadata.user_id
@@ -299,7 +257,10 @@ function ChatPageContent({
   const setInputRef = useRef(promptInputController.textInput.setInput);
   setInputRef.current = promptInputController.textInput.setInput;
   useEffect(() => {
-    if (inputInitialValue && inputInitialValue !== lastInitialValueRef.current) {
+    if (
+      inputInitialValue &&
+      inputInitialValue !== lastInitialValueRef.current
+    ) {
       lastInitialValueRef.current = inputInitialValue;
       setTimeout(() => {
         setInputRef.current(inputInitialValue);
@@ -443,8 +404,8 @@ function ChatPageContent({
     }
 
     return (
-      models.find((model) => model.name === settings.context.model_name)?.name ??
-      models[0]?.name
+      models.find((model) => model.name === settings.context.model_name)
+        ?.name ?? models[0]?.name
     );
   }, [models, settings.context.model_name]);
 
@@ -631,7 +592,7 @@ function ChatPageContent({
         </div>
         {artifactPanelOpen && (
           <div
-            className="h-full shrink-0 border-l bg-background p-4"
+            className="bg-background h-full shrink-0 border-l p-4"
             style={{
               width: artifactCompareOpen
                 ? `min(${KNOWLEDGE_ARTIFACT_PANEL_EXPANDED_WIDTH}px, calc(100vw - 24px))`

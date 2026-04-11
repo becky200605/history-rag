@@ -15,10 +15,15 @@ from src.community.knowledge_base.book_metadata import (
     build_book_metadata_prompt_input,
     build_book_metadata_record,
     load_book_metadata_for_source,
+    normalize_folder_path,
+    resolve_book_folder,
     save_book_metadata,
 )
-from src.community.knowledge_base.book_metadata_runtime import maybe_generate_book_metadata
-from src.community.knowledge_base.book_metadata_runtime import generate_book_metadata_record
+from src.community.knowledge_base.book_metadata_runtime import (
+    build_existing_folder_tree,
+    generate_book_metadata_record,
+    maybe_generate_book_metadata,
+)
 from src.community.knowledge_base.citations import (
     encode_source_url,
     resolve_result_citation_context,
@@ -244,6 +249,7 @@ class KnowledgeDocumentListResponse(BaseModel):
 
 class KnowledgeMetadataUpdateRequest(BaseModel):
     type: str | None = None
+    folder: str | None = None
     categories: list[str] | None = None
     eras: list[str] | None = None
     regions: list[str] | None = None
@@ -410,6 +416,21 @@ def _metadata_values(fields: list[MetadataField] | None) -> list[str]:
     return values
 
 
+def _resolve_metadata_folder(
+    suggestion: Any | None,
+    *,
+    fallback_tags: list[str] | None = None,
+) -> str:
+    folder = resolve_book_folder(suggestion)
+    if folder:
+        return folder
+    for tag in fallback_tags or []:
+        normalized = normalize_folder_path(tag)
+        if normalized:
+            return normalized
+    return "未分类"
+
+
 def _manual_metadata_field(value: str | None) -> MetadataField | None:
     normalized = str(value or "").strip()
     if not normalized:
@@ -443,8 +464,10 @@ def _load_global_book_metadata(filename: str) -> dict[str, Any]:
     for value in [*categories, *eras, *regions, *keywords]:
         if value and value not in tags:
             tags.append(value)
+    folder = _resolve_metadata_folder(suggestion, fallback_tags=tags)
     return {
         "type": book_type,
+        "folder": folder,
         "categories": categories,
         "eras": eras,
         "regions": regions,
@@ -1158,6 +1181,10 @@ async def update_global_knowledge_metadata(
             title=str((record or {}).get("display_title") or Path(filename).stem),
             front_page_limit=(config.book_metadata.front_page_limit if config.book_metadata else 10),
             max_excerpt_chars=(config.book_metadata.max_excerpt_chars if config.book_metadata else 1200),
+            existing_folder_tree=build_existing_folder_tree(
+                docs_dir,
+                exclude_source_filename=filename,
+            ),
         )
     )
 
@@ -1168,6 +1195,11 @@ async def update_global_knowledge_metadata(
             _manual_metadata_field(payload.type)
             if "type" in provided_fields
             else (existing_suggestion.type if existing_suggestion else None)
+        ),
+        "folder": (
+            _manual_metadata_field(normalize_folder_path(payload.folder))
+            if "folder" in provided_fields
+            else (existing_suggestion.folder if existing_suggestion else None)
         ),
         "categories": (
             _manual_metadata_fields(payload.categories)

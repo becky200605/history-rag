@@ -32,7 +32,6 @@ import {
   PromptInputButton,
   PromptInputFooter,
   PromptInputSubmit,
-  PromptInputTextarea,
   PromptInputTools,
   usePromptInputAttachments,
   usePromptInputController,
@@ -45,6 +44,12 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { useI18n } from "@/core/i18n/hooks";
+import {
+  buildMentionableKnowledgeMaterials,
+  resolveSelectedMaterialsFromMentions,
+} from "@/core/knowledge/mentions";
+import { useKnowledgeFiles } from "@/core/knowledge/hooks";
+import { useUserKnowledgeRecords } from "@/core/knowledge/user-hooks";
 import type { Translations } from "@/core/i18n/locales/types";
 import { useModels } from "@/core/models/hooks";
 import type { AgentScenario, AgentTier } from "@/core/settings/local";
@@ -69,6 +74,7 @@ import {
 } from "../ui/dropdown-menu";
 
 import { ModeHoverGuide } from "./mode-hover-guide";
+import { KnowledgeMentionTextarea } from "./knowledge-mention-textarea";
 import { Tooltip } from "./tooltip";
 
 type ContextShape = Omit<
@@ -89,10 +95,7 @@ function presetLabelKey(
   tier: AgentTier,
 ): keyof Pick<
   Translations["inputBox"],
-  | "researchProLabel"
-  | "researchUltraLabel"
-  | "qaProLabel"
-  | "qaUltraLabel"
+  "researchProLabel" | "researchUltraLabel" | "qaProLabel" | "qaUltraLabel"
 > {
   if (scenario === "research" && tier === "ultra") {
     return "researchUltraLabel";
@@ -133,7 +136,6 @@ export function InputBox({
   context,
   extraHeader,
   isNewThread,
-  initialValue,
   onContextChange,
   onSubmit,
   onStop,
@@ -145,7 +147,6 @@ export function InputBox({
   context: ContextShape;
   extraHeader?: React.ReactNode;
   isNewThread?: boolean;
-  initialValue?: string;
   onContextChange?: (context: ContextShape) => void;
   onSubmit?: (message: PromptInputMessage) => void;
   onStop?: () => void;
@@ -154,6 +155,17 @@ export function InputBox({
   const searchParams = useSearchParams();
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const { models } = useModels();
+  const knowledgeFilesQuery = useKnowledgeFiles();
+  const userKnowledgeRecordsQuery = useUserKnowledgeRecords();
+
+  const mentionables = useMemo(
+    () =>
+      buildMentionableKnowledgeMaterials(
+        knowledgeFilesQuery.data?.files ?? [],
+        userKnowledgeRecordsQuery.data?.records ?? [],
+      ),
+    [knowledgeFilesQuery.data?.files, userKnowledgeRecordsQuery.data?.records],
+  );
 
   useEffect(() => {
     if (models.length === 0) {
@@ -220,12 +232,20 @@ export function InputBox({
         onStop?.();
         return;
       }
-      if (!message.text) {
+      const { normalizedText, selectedMaterials } =
+        resolveSelectedMaterialsFromMentions(message.text, mentionables);
+      const nextText = normalizedText.trim() || message.text.trim();
+      if (!nextText) {
         return;
       }
-      onSubmit?.(message);
+      onSubmit?.({
+        ...message,
+        text: nextText,
+        selectedMaterials:
+          selectedMaterials.length > 0 ? selectedMaterials : undefined,
+      });
     },
-    [onSubmit, onStop, status],
+    [mentionables, onSubmit, onStop, status],
   );
   return (
     <PromptInput
@@ -250,12 +270,12 @@ export function InputBox({
         {(attachment) => <PromptInputAttachment data={attachment} />}
       </PromptInputAttachments>
       <PromptInputBody className="absolute top-0 right-0 left-0 z-3">
-        <PromptInputTextarea
+        <KnowledgeMentionTextarea
+          autoFocus={autoFocus}
           className={cn("size-full")}
           disabled={disabled}
+          mentionables={mentionables}
           placeholder={t.inputBox.placeholder}
-          autoFocus={autoFocus}
-          defaultValue={initialValue}
         />
       </PromptInputBody>
       <PromptInputFooter className="flex">
@@ -271,10 +291,7 @@ export function InputBox({
           </PromptInputActionMenu> */}
           <AddAttachmentsButton className="px-2!" />
           <PromptInputActionMenu>
-            <ModeHoverGuide
-              scenario={context.scenario}
-              tier={context.tier}
-            >
+            <ModeHoverGuide scenario={context.scenario} tier={context.tier}>
               <PromptInputActionMenuTrigger className="max-w-38 gap-1! px-2!">
                 <PresetIcon scenario={context.scenario} tier={context.tier} />
                 <div
@@ -382,8 +399,7 @@ export function InputBox({
                         <MessageCircleIcon
                           className={cn(
                             "mr-2 size-4",
-                            isPreset("qa", "pro") &&
-                              "text-accent-foreground",
+                            isPreset("qa", "pro") && "text-accent-foreground",
                           )}
                         />
                         {t.inputBox.qaProLabel}
@@ -411,8 +427,7 @@ export function InputBox({
                         <ZapIcon
                           className={cn(
                             "mr-2 size-4",
-                            isPreset("qa", "ultra") &&
-                              "text-accent-foreground",
+                            isPreset("qa", "ultra") && "text-accent-foreground",
                           )}
                         />
                         {t.inputBox.qaUltraLabel}

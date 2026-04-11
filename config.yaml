@@ -103,13 +103,6 @@ tool_groups:
 # Configure available tools for the agent to use
 
 tools:
-  # Web search tool (requires Tavily API key)
-  - name: web_search
-    group: web
-    use: src.community.tavily.tools:web_search_tool
-    max_results: 5
-    # api_key: $TAVILY_API_KEY  # Set if needed
-
   # Web fetch tool (uses Jina AI reader)
   - name: web_fetch
     group: web

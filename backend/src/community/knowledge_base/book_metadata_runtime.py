@@ -15,7 +15,10 @@ from src.community.knowledge_base.book_metadata import (
     BookMetadataRecord,
     build_book_metadata_prompt_bundle,
     build_book_metadata_record,
+    get_book_metadata_dir,
+    load_book_metadata,
     parse_book_metadata_suggestion,
+    resolve_book_folder,
     save_book_metadata,
 )
 from src.config.knowledge_base_config import BookMetadataConfig
@@ -48,6 +51,58 @@ def _is_retryable_metadata_error(exc: Exception) -> bool:
     return exc.__class__.__name__ in {"APIConnectionError", "APITimeoutError", "RateLimitError"}
 
 
+def build_existing_folder_tree(
+    output_dir: Path,
+    *,
+    exclude_source_filename: str | None = None,
+) -> str | None:
+    """Render the current logical folder layout as a simple file tree."""
+    metadata_dir = get_book_metadata_dir(output_dir)
+    if not metadata_dir.exists():
+        return None
+
+    tree: dict[str, Any] = {}
+
+    def _node_children(node: dict[str, Any]) -> dict[str, Any]:
+        return node.setdefault("children", {})
+
+    def _node_files(node: dict[str, Any]) -> list[str]:
+        return node.setdefault("files", [])
+
+    for path in sorted(metadata_dir.glob("*.book-metadata.json")):
+        record = load_book_metadata(path)
+        if record is None or record.source_filename == exclude_source_filename:
+            continue
+        folder = resolve_book_folder(record.suggestion)
+        if not folder:
+            continue
+        node = tree
+        for segment in folder.split("/"):
+            node = _node_children(node).setdefault(segment, {})
+        _node_files(node).append(record.source_filename)
+
+    if not tree:
+        return None
+
+    lines = ["."]
+
+    def _render(node: dict[str, Any], prefix: str = "") -> None:
+        folders = sorted(_node_children(node).items(), key=lambda item: item[0])
+        files = sorted(_node_files(node))
+        entries: list[tuple[str, str, Any]] = [("folder", name, child) for name, child in folders]
+        entries.extend(("file", name, None) for name in files)
+
+        for index, (entry_type, name, child) in enumerate(entries):
+            is_last = index == len(entries) - 1
+            branch = "`-- " if is_last else "|-- "
+            lines.append(f"{prefix}{branch}{name}{'/' if entry_type == 'folder' else ''}")
+            if entry_type == "folder":
+                _render(child, prefix + ("    " if is_last else "|   "))
+
+    _render(tree)
+    return "\n".join(lines)
+
+
 def generate_book_metadata_record(
     *,
     structured_payload: Mapping[str, Any],
@@ -66,6 +121,10 @@ def generate_book_metadata_record(
         front_page_limit=config.front_page_limit,
         body_sample_count=config.body_sample_count,
         max_excerpt_chars=config.max_excerpt_chars,
+        existing_folder_tree=build_existing_folder_tree(
+            output_dir,
+            exclude_source_filename=source_filename,
+        ),
     )
 
     model = create_chat_model(name=config.model_name, thinking_enabled=False)

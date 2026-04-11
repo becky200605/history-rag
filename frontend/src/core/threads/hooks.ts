@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import type { SelectedMaterial } from "@/core/knowledge/selection";
 import { env } from "@/env";
 import { authClient } from "@/server/better-auth/client";
 
@@ -103,10 +104,48 @@ export function useSubmitThread({
 }) {
   const queryClient = useQueryClient();
   const { data: session } = authClient.useSession();
+
+  const buildEffectiveSelection = useCallback(
+    (selectedMaterials?: SelectedMaterial[]) => {
+      if (selectedMaterials && selectedMaterials.length > 0) {
+        const scopes = Array.from(
+          new Set(
+            selectedMaterials
+              .map((item) => item.scope)
+              .filter(
+                (scope): scope is "global" | "thread" | "user" =>
+                  scope === "global" || scope === "thread" || scope === "user",
+              ),
+          ),
+        );
+
+        return {
+          selected_doc_ids: selectedMaterials.map((item) => item.doc_id),
+          selected_sources_scope: scopes,
+          selected_materials: selectedMaterials,
+        };
+      }
+
+      return {
+        selected_doc_ids: threadContext.selected_doc_ids,
+        selected_sources_scope: threadContext.selected_sources_scope,
+        selected_materials: threadContext.selected_materials,
+      };
+    },
+    [
+      threadContext.selected_doc_ids,
+      threadContext.selected_materials,
+      threadContext.selected_sources_scope,
+    ],
+  );
+
   const callback = useCallback(
     async (message: PromptInputMessage) => {
       const text = message.text.trim();
       const userId = session?.user.id;
+      const effectiveSelection = buildEffectiveSelection(
+        message.selectedMaterials,
+      );
 
       if (
         env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
@@ -186,6 +225,7 @@ export function useSubmitThread({
           context: {
             ...threadContext,
             thread_id: threadId,
+            ...effectiveSelection,
             ...(userId ? { user_id: userId } : {}),
           },
         },
@@ -200,6 +240,7 @@ export function useSubmitThread({
       threadContext,
       queryClient,
       afterSubmit,
+      buildEffectiveSelection,
       session?.user.id,
     ],
   );
@@ -216,11 +257,14 @@ export function useThreads(
   const apiClient = getAPIClient();
   const { data: session, isPending } = authClient.useSession();
   const userId = session?.user.id;
-  const shouldUseMetadataFilter = env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
+  const shouldUseMetadataFilter =
+    env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
 
   return useQuery<AgentThread[]>({
     queryKey: ["threads", "search", params, userId],
-    enabled: env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" || (!!userId && !isPending),
+    enabled:
+      env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
+      (!!userId && !isPending),
     queryFn: async () => {
       const response = await apiClient.threads.search<AgentThreadState>({
         ...params,

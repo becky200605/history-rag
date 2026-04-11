@@ -404,3 +404,46 @@ def test_update_global_knowledge_metadata_updates_hints(monkeypatch) -> None:
     assert saved_records[-1]["hints"]["layout_hint"] == "vertical"
     assert saved_records[-1]["hints"]["language_hint"] == "zh-Hant"
     assert saved_records[-1]["hints"]["document_type_hint"] == "ancient_book"
+
+
+def test_load_global_book_metadata_uses_explicit_folder(monkeypatch, tmp_path) -> None:
+    suggestion = SimpleNamespace(
+        type=knowledge_router.MetadataField(value="core", confidence=0.9, evidence="demo"),
+        folder=knowledge_router.MetadataField(value="财政史/清代", confidence=0.8, evidence="demo"),
+        categories=[knowledge_router.MetadataField(value="财政史", confidence=0.9, evidence="demo")],
+        eras=[],
+        regions=[],
+        keywords=[],
+        summary=None,
+    )
+    record = SimpleNamespace(suggestion=suggestion)
+
+    monkeypatch.setattr(knowledge_router, "get_global_docs_dir", lambda: tmp_path)
+    monkeypatch.setattr(knowledge_router, "load_book_metadata_for_source", lambda docs_dir, filename: record)
+    monkeypatch.setattr(knowledge_router, "_find_global_record", lambda filename: {"hints": {}})
+
+    result = knowledge_router._load_global_book_metadata("demo.pdf")
+
+    assert result["folder"] == "财政史/清代"
+
+
+def test_load_global_book_metadata_falls_back_to_first_tag_for_legacy_records(monkeypatch, tmp_path) -> None:
+    suggestion = SimpleNamespace(
+        type=None,
+        folder=None,
+        categories=[knowledge_router.MetadataField(value="制度史", confidence=0.9, evidence="demo")],
+        eras=[knowledge_router.MetadataField(value="明清", confidence=0.8, evidence="demo")],
+        regions=[],
+        keywords=[],
+        summary=None,
+    )
+    record = SimpleNamespace(suggestion=suggestion)
+
+    monkeypatch.setattr(knowledge_router, "get_global_docs_dir", lambda: tmp_path)
+    monkeypatch.setattr(knowledge_router, "load_book_metadata_for_source", lambda docs_dir, filename: record)
+    monkeypatch.setattr(knowledge_router, "_find_global_record", lambda filename: {"hints": {}})
+
+    result = knowledge_router._load_global_book_metadata("legacy.pdf")
+
+    assert result["tags"] == ["制度史", "明清"]
+    assert result["folder"] == "制度史"

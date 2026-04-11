@@ -158,10 +158,10 @@ def _build_retry_query_suggestions(query: str) -> list[str]:
 def _build_no_result_guidance(query: str, doc_ids: list[str] | None) -> str:
     lines = ["## 检索结果", "", "本轮没有命中到可直接使用的内部知识片段。", "", "---"]
     if doc_ids:
-        lines.append("先不要因为这一轮空结果就直接换到别的书层，更不要立刻跳到 `web_search`。")
+        lines.append("先不要因为这一轮空结果就直接换到别的书层，更不要立刻放弃当前资料范围。")
         lines.append("如果这些 `doc_ids` 已经来自 `book_search` 里最匹配的书，先保持同一批相关 `doc_ids`，只改一个变量继续重试。")
     else:
-        lines.append("先不要立刻跳到 `web_search`；优先回到 `book_search` 找到更匹配的书，再在那一层继续检索。")
+        lines.append("先不要立刻放宽到整库乱搜；优先回到 `book_search` 找到更匹配的书，再在那一层继续检索。")
 
     lines.append("优先重试顺序：")
     lines.append("1. 保留原时期/制度/人物锚点，只把 query 缩窄成一个更小的专题分面。")
@@ -175,7 +175,7 @@ def _build_no_result_guidance(query: str, doc_ids: list[str] | None) -> str:
         for suggestion in suggestions:
             lines.append(f"- `{suggestion}`")
 
-    lines.append("只有在同一批最相关书里做过这些 grounded retries 仍然没有证据时，才考虑换书层；`web_search` 放在更后面。")
+    lines.append("只有在同一批最相关书里做过这些 grounded retries 仍然没有证据时，才考虑换书层或调整资料范围。")
     return "\n".join(lines)
 
 

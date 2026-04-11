@@ -3,8 +3,12 @@ from types import ModuleType, SimpleNamespace
 
 import httpx
 
-from src.community.knowledge_base.book_metadata import load_book_metadata_for_source
-from src.community.knowledge_base.book_metadata_runtime import generate_book_metadata_record, maybe_generate_book_metadata
+from src.community.knowledge_base.book_metadata import load_book_metadata_for_source, save_book_metadata
+from src.community.knowledge_base.book_metadata_runtime import (
+    build_existing_folder_tree,
+    generate_book_metadata_record,
+    maybe_generate_book_metadata,
+)
 from src.config.knowledge_base_config import BookMetadataConfig
 
 
@@ -57,6 +61,7 @@ def test_generate_book_metadata_record_persists_model_output(monkeypatch, tmp_pa
 {
   "title": "Demo Book",
   "type": {"value": "core", "confidence": 0.9, "evidence": "目录和前言"},
+  "folder": {"value": "财政史", "confidence": 0.8, "evidence": "目录"},
   "categories": [{"value": "财政史", "confidence": 0.8, "evidence": "目录"}],
   "summary": {"value": "财政通史著作", "confidence": 0.7, "evidence": "样本文本"}
 }
@@ -81,6 +86,9 @@ def test_generate_book_metadata_record_persists_model_output(monkeypatch, tmp_pa
     loaded = load_book_metadata_for_source(tmp_path, "demo.pdf")
     assert loaded is not None
     assert loaded.model_name == "demo-model"
+    assert loaded.suggestion is not None
+    assert loaded.suggestion.folder is not None
+    assert loaded.suggestion.folder.value == "财政史"
 
 
 def test_maybe_generate_book_metadata_returns_none_when_disabled(tmp_path) -> None:
@@ -130,3 +138,53 @@ def test_generate_book_metadata_record_retries_transient_invoke_failure(monkeypa
     assert record.suggestion is not None
     assert record.suggestion.type is not None
     assert record.suggestion.type.value == "core"
+
+
+def test_build_existing_folder_tree_renders_nested_paths(tmp_path) -> None:
+    save_book_metadata(
+        tmp_path,
+        "a.pdf",
+        {
+            "source_filename": "a.pdf",
+            "source_title": "A",
+            "page_count": 1,
+            "prompt_input": {
+                "source_filename": "a.pdf",
+                "title": "A",
+                "page_count": 1,
+                "selected_pages": [],
+                "selection_notes": [],
+            },
+            "suggestion": {
+                "folder": {"value": "财政史/清代", "confidence": 1.0, "evidence": "manual"},
+            },
+        },
+    )
+    save_book_metadata(
+        tmp_path,
+        "b.pdf",
+        {
+            "source_filename": "b.pdf",
+            "source_title": "B",
+            "page_count": 1,
+            "prompt_input": {
+                "source_filename": "b.pdf",
+                "title": "B",
+                "page_count": 1,
+                "selected_pages": [],
+                "selection_notes": [],
+            },
+            "suggestion": {
+                "categories": [{"value": "制度史", "confidence": 1.0, "evidence": "manual"}],
+            },
+        },
+    )
+
+    tree = build_existing_folder_tree(tmp_path)
+
+    assert tree is not None
+    assert "财政史/" in tree
+    assert "清代/" in tree
+    assert "a.pdf" in tree
+    assert "制度史/" in tree
+    assert "b.pdf" in tree

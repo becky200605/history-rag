@@ -7,7 +7,9 @@ from src.community.knowledge_base.book_metadata import (
     build_book_metadata_prompt_bundle,
     build_book_metadata_record,
     load_book_metadata_for_source,
+    normalize_folder_path,
     parse_book_metadata_suggestion,
+    resolve_book_folder,
     save_book_metadata,
 )
 
@@ -57,6 +59,7 @@ def test_build_book_metadata_prompt_bundle_only_uses_front_pages() -> None:
         front_page_limit=10,
         body_sample_count=3,
         max_excerpt_chars=200,
+        existing_folder_tree=".\n`-- 财政史/\n    `-- existing.pdf",
     )
 
     prompt_input = bundle.prompt_input
@@ -71,8 +74,11 @@ def test_build_book_metadata_prompt_bundle_only_uses_front_pages() -> None:
     assert "Reasons:" not in bundle.user_prompt
     assert "Return JSON with these fields:" not in bundle.user_prompt
     assert "Return raw JSON only." in bundle.system_prompt
+    assert '"folder": {"value": "string", "confidence": 0.0, "evidence": "string"} or null' in bundle.system_prompt
     assert '"ocr_quality": {"value": "high|medium|low"' in bundle.system_prompt
     assert "`categories` are subject/domain labels" in bundle.system_prompt
+    assert "### Existing Folder Tree" in bundle.user_prompt
+    assert "existing.pdf" in bundle.user_prompt
 
 
 def test_parse_book_metadata_suggestion_accepts_json_string() -> None:
@@ -102,6 +108,7 @@ def test_parse_book_metadata_suggestion_coerces_scalar_fields() -> None:
             "title": "民国财政史",
             "author": "杨荫溥",
             "type": "specialized",
+            "folder": "财政史/民国",
             "categories": ["中国财政史", "民国史"],
             "eras": ["1912-1949"],
             "regions": ["中国"],
@@ -115,6 +122,8 @@ def test_parse_book_metadata_suggestion_coerces_scalar_fields() -> None:
     assert suggestion.author.value == "杨荫溥"
     assert suggestion.type is not None
     assert suggestion.type.value == "specialized"
+    assert suggestion.folder is not None
+    assert suggestion.folder.value == "财政史/民国"
     assert [field.value for field in suggestion.categories] == ["中国财政史", "民国史"]
     assert [field.value for field in suggestion.keywords] == ["民国财政", "税收制度"]
     assert suggestion.summary is not None
@@ -134,6 +143,7 @@ def test_book_metadata_persistence_uses_dedicated_subdirectory(tmp_path) -> None
         suggestion={
             "title": "Demo Book",
             "type": {"value": "specialized", "confidence": 0.8, "evidence": "示例"},
+            "folder": {"value": "财政史", "confidence": 0.9, "evidence": "示例"},
         },
         model_name="test-model",
         generated_at="2026-03-22T00:00:00Z",
@@ -149,3 +159,24 @@ def test_book_metadata_persistence_uses_dedicated_subdirectory(tmp_path) -> None
     assert loaded.suggestion is not None
     assert loaded.suggestion.type is not None
     assert loaded.suggestion.type.value == "specialized"
+    assert loaded.suggestion.folder is not None
+    assert loaded.suggestion.folder.value == "财政史"
+
+
+def test_resolve_book_folder_prefers_explicit_folder_then_first_tag() -> None:
+    explicit = parse_book_metadata_suggestion(
+        {
+            "folder": "财政史/清代",
+            "categories": ["制度史"],
+        }
+    )
+    fallback = parse_book_metadata_suggestion(
+        {
+            "categories": ["制度史", "财政史"],
+            "keywords": ["盐政"],
+        }
+    )
+
+    assert resolve_book_folder(explicit) == "财政史/清代"
+    assert resolve_book_folder(fallback) == "制度史"
+    assert normalize_folder_path("  财政史 \\ 清代  ") == "财政史/清代"

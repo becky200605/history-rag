@@ -460,7 +460,7 @@ def test_knowledge_search_tool_no_result_guides_grounded_retries_before_web(monk
     )
 
     assert "不要因为这一轮空结果就直接换到别的书层" in output
-    assert "不要立刻跳到 `web_search`" in output
+    assert "不要立刻放弃当前资料范围" in output
     assert "句子型专业 query" in output
     assert "关键词堆砌" in output
     assert "`晚清财政情况如何`" in output

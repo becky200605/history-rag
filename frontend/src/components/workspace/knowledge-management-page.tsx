@@ -1732,7 +1732,7 @@ export default function KnowledgeManagementPage() {
                           <TableCell className="w-[16%] px-3 py-1.5 truncate text-[12px] text-slate-400">-</TableCell>
                           <TableCell className="w-[12%] px-3 py-1.5 truncate text-[12px] text-slate-500">文件夹</TableCell>
                           <TableCell className="w-[10%] px-3 py-1.5 truncate text-[12px] text-slate-400">-</TableCell>
-                          <TableCell className="w-[10%] px-3 py-1.5 text-right flex justify-end gap-1"></TableCell>
+                          <TableCell className="w-[10%] px-3 py-1.5 text-right"></TableCell>
                       </TableRow>
                     ))}
 
@@ -1830,7 +1830,8 @@ export default function KnowledgeManagementPage() {
                           <TableCell className="w-[10%] px-3 py-1.5 truncate text-[12px] text-slate-500">
                             {formatBytes(file.size)}
                           </TableCell>
-                          <TableCell className="w-[10%] px-3 py-1.5 text-right flex justify-end gap-1">
+                          <TableCell className="w-[10%] px-3 py-1.5 text-right">
+                            <div className="flex justify-end gap-1">
                               {file.source === "global" ? (
                                 <Button
                                   variant="ghost"
@@ -1899,6 +1900,7 @@ export default function KnowledgeManagementPage() {
                                   <Trash2Icon className="size-3.5" />
                                 )}
                               </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );

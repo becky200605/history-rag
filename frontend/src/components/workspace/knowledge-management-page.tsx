@@ -1,16 +1,23 @@
 "use client";
 
 import {
+  ArchiveIcon,  
+  BookOpenIcon,
   BookmarkPlusIcon,
   CheckSquareIcon,
   FileIcon,
+  FileTextIcon,
+  FilmIcon,
+  LibraryIcon,
   Loader2Icon,
+  MusicIcon,
   PencilIcon,
   RefreshCwIcon,
   SearchIcon,
   SquareIcon,
   Trash2Icon,
   UploadIcon,
+  ImageIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -340,7 +347,37 @@ export default function KnowledgeManagementPage() {
   const [layoutHintInput, setLayoutHintInput] = useState<LayoutHint>("unknown");
   const [documentTypeHintInput, setDocumentTypeHintInput] =
     useState<DocumentTypeHint>("unknown");
-  const [selectedFilenames, setSelectedFilenames] = useState<string[]>([]);
+  const [searchCategories, setSearchCategories] = useState<string[]>(['all']);
+
+  const handleCategoryToggle = (category: string) => {
+    if (category === 'all') {
+      setSearchCategories(['all']);
+    } else {
+      const newCategories = searchCategories.filter(c => c !== 'all' && c !== category);
+      if (!searchCategories.includes(category)) {
+        newCategories.push(category);
+      }
+      if (newCategories.length === 0) {
+        setSearchCategories(['all']);
+      } else {
+        setSearchCategories(newCategories);
+      }
+    }
+  };
+
+  const CATEGORY_OPTIONS = [
+    { value: 'all', label: '所有' },
+    { value: 'book', label: '图书', icon: BookOpenIcon },
+    { value: 'newspaper', label: '报纸', icon: FileTextIcon },
+    { value: 'archive', label: '档案', icon: ArchiveIcon },
+    { value: 'periodical', label: '期刊', icon: LibraryIcon },
+    { value: 'audio', label: '音频', icon: MusicIcon },
+    { value: 'image', label: '图片', icon: ImageIcon },
+    { value: 'video', label: '视频', icon: FilmIcon },
+    { value: 'thematic', label: '专题库' }
+  ];
+
+  const BOTTOM_BUTTONS = CATEGORY_OPTIONS.filter(opt => opt.icon);
 
   const { data, isLoading, error, refetch, isFetching } = useKnowledgeFiles();
   const uploadMutation = useUploadKnowledgeFiles();
@@ -917,35 +954,99 @@ export default function KnowledgeManagementPage() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-end gap-2 border-b border-[rgba(57,130,152,0.14)] px-4 py-3">
-              <div className="w-[140px]">
-                <Select
-                  value={statusFilter}
-                  onValueChange={(value) => setStatusFilter(value as FileStatusFilter)}
-                >
-                  <SelectTrigger className="h-8 bg-white text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statusFilterOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <div className="relative border-b border-[rgba(57,130,152,0.14)] w-full">
+              {/* Banner Area */}
+              <div 
+                className="relative w-full py-12 flex flex-col items-center justify-center overflow-hidden"
+                style={{
+                  backgroundImage: `linear-gradient(rgba(45, 34, 25, 0.8), rgba(45, 34, 25, 0.8)), url('/images/3823e443-4e2b-4679-b496-a9506eae462b.jpg')`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                }}
+              >
+                <div className="w-full max-w-4xl relative z-10 space-y-4 px-6 text-white">
+                  <div className="flex w-full shadow-lg h-12">
+                     <Select defaultValue="all">
+                       <SelectTrigger className="w-[100px] h-full rounded-r-none border-0 focus:ring-0 bg-white text-slate-800 rounded-l-md font-medium px-4">
+                         <SelectValue placeholder="全部" />
+                       </SelectTrigger>
+                       <SelectContent>
+                         <SelectItem value="all">全部</SelectItem>
+                         <SelectItem value="title">书名</SelectItem>
+                         <SelectItem value="author">作者</SelectItem>
+                       </SelectContent>
+                     </Select>
+                     <Input
+                       value={searchQuery}
+                       onChange={(event) => setSearchQuery(event.target.value)}
+                       placeholder="请输入搜索内容"
+                       className="flex-1 h-full rounded-none border-0 focus-visible:ring-0 px-4 text-slate-800 bg-white"
+                     />
+                     <Button className="h-full px-8 rounded-l-none bg-[#9c1c22] hover:bg-[#7a151a] text-white rounded-r-md transition-colors">
+                       <SearchIcon className="size-5" />
+                     </Button>
+                  </div>
+                  
+                  <div className="flex items-center justify-between mt-2">
+                    <div className="flex items-center flex-wrap gap-4 text-sm font-medium">
+                      {CATEGORY_OPTIONS.map((cat) => (
+                        <label key={cat.value} className="flex items-center gap-1.5 cursor-pointer group">
+                          <input 
+                            type="checkbox"
+                            checked={searchCategories.includes(cat.value)}
+                            onChange={() => handleCategoryToggle(cat.value)}
+                            className="hidden"
+                          />
+                          <div className={`size-3.5 flex items-center justify-center border transition-colors ${searchCategories.includes(cat.value) ? 'bg-[#9c1c22] border-[#9c1c22]' : 'bg-transparent border-white/60 group-hover:border-white'}`}>
+                            {searchCategories.includes(cat.value) && (
+                               <CheckSquareIcon className="size-3 text-white" />
+                            )}
+                          </div>
+                          <span className="text-white/90 group-hover:text-white transition-colors">{cat.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <a href="#" className="text-sm text-white/80 hover:text-white hover:underline underline-offset-4 transition-all">高级搜索</a>
+                  </div>
+                </div>
               </div>
 
-              <div className="relative min-w-[240px] flex-1">
-                <SearchIcon className="text-muted-foreground absolute left-3 top-1/2 size-3.5 -translate-y-1/2" />
-                <Input
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="搜索书名、文件名、检索类型、标签"
-                  className="h-8 bg-white pl-8 text-xs"
-                />
+              {/* Bottom Large Buttons Area */}
+              <div className="w-full bg-[rgb(250,250,250)] py-6 px-4 flex justify-center border-b border-[rgba(57,130,152,0.14)]">
+                <div className="flex flex-wrap justify-center gap-4 max-w-6xl">
+                  {BOTTOM_BUTTONS.map((btn) => (
+                    <button 
+                      key={btn.value}
+                      onClick={() => handleCategoryToggle(btn.value)}
+                      className={`flex items-center gap-2.5 px-6 py-3 rounded-sm transition-all border ${searchCategories.includes(btn.value) && !searchCategories.includes('all') ? 'bg-[#f4efe9] border-[#eaddcf] text-[#9c1c22]' : 'bg-[#f5ebd8]/40 border-transparent text-[#8a7a6a] hover:bg-[#f4efe9] hover:text-[#9c1c22]'}`}
+                    >
+                      {btn.icon && <btn.icon className="size-5" strokeWidth={1.5} />}
+                      <span className="font-medium text-sm">{btn.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-
+              
+              <div className="flex justify-between items-center py-2 px-4 bg-white hidden">
+                {/* Keep existing status filter but initially hidden or re-integrate if needed */}
+                <div className="w-[140px]">
+                  <Select
+                    value={statusFilter}
+                    onValueChange={(value) => setStatusFilter(value as FileStatusFilter)}
+                  >
+                    <SelectTrigger className="h-8 bg-white text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {statusFilterOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
 
             {isLoading ? (

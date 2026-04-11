@@ -1,20 +1,14 @@
 "use client";
 
 import {
-  ArchiveIcon,  
   ArrowRightIcon,
   BookmarkPlusIcon,
-  BookOpenIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CheckSquareIcon,
   FileIcon,
-  FileTextIcon,
-  FilmIcon,
   FolderIcon,
-  LibraryIcon,
   Loader2Icon,
-  MusicIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -22,7 +16,6 @@ import {
   SquareIcon,
   Trash2Icon,
   UploadIcon,
-  ImageIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -606,39 +599,9 @@ export default function KnowledgeManagementPage() {
   const [layoutHintInput, setLayoutHintInput] = useState<LayoutHint>("unknown");
   const [documentTypeHintInput, setDocumentTypeHintInput] =
     useState<DocumentTypeHint>("unknown");
-  const [searchCategories, setSearchCategories] = useState<string[]>(['all']);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string>("all");
   const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([]);
 
-  const handleCategoryToggle = (category: string) => {
-    if (category === 'all') {
-      setSearchCategories(['all']);
-    } else {
-      const newCategories = searchCategories.filter(c => c !== 'all' && c !== category);
-      if (!searchCategories.includes(category)) {
-        newCategories.push(category);
-      }
-      if (newCategories.length === 0) {
-        setSearchCategories(['all']);
-      } else {
-        setSearchCategories(newCategories);
-      }
-    }
-  };
-
-  const CATEGORY_OPTIONS = [
-    { value: 'all', label: '所有' },
-    { value: 'book', label: '图书', icon: BookOpenIcon },
-    { value: 'newspaper', label: '报纸', icon: FileTextIcon },
-    { value: 'archive', label: '档案', icon: ArchiveIcon },
-    { value: 'periodical', label: '期刊', icon: LibraryIcon },
-    { value: 'audio', label: '音频', icon: MusicIcon },
-    { value: 'image', label: '图片', icon: ImageIcon },
-    { value: 'video', label: '视频', icon: FilmIcon },
-    { value: 'thematic', label: '专题库' }
-  ];
-
-  const BOTTOM_BUTTONS = CATEGORY_OPTIONS.filter(opt => opt.icon);
 
   const { data, isLoading, error, refetch, isFetching } = useKnowledgeFiles();
   const personalSpacesQuery = useUserKnowledgeSpaces();
@@ -1596,26 +1559,6 @@ export default function KnowledgeManagementPage() {
                   />
                 </Button>
                 <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-[rgba(57,130,152,0.18)] bg-white px-3 text-[rgb(23,89,108)]"
-                  onClick={() => setIsCreateFolderDialogOpen(true)}
-                  disabled={createSpaceMutation.isPending}
-                >
-                  <PlusIcon className="size-4" />
-                  新建个人文件夹
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-[rgba(57,130,152,0.18)] bg-white px-3 text-[rgb(23,89,108)]"
-                  onClick={() => void handleDeleteFolder()}
-                  disabled={!selectedFolderNode?.deletable || deleteSpaceMutation.isPending}
-                >
-                  <Trash2Icon className="size-4" />
-                  删除当前文件夹
-                </Button>
-                <Button
                   size="sm"
                   className="h-8 rounded-md bg-[rgb(57,130,152)] px-3 text-white hover:bg-[rgb(49,113,132)]"
                   onClick={handleOpenUploadDialog}
@@ -1631,100 +1574,7 @@ export default function KnowledgeManagementPage() {
               </div>
             </div>
 
-            <div className="relative border-b border-[rgba(57,130,152,0.14)] w-full">
-              {/* Banner Area */}
-              <div 
-                className="relative w-full py-12 flex flex-col items-center justify-center overflow-hidden"
-                style={{
-                  backgroundImage: `linear-gradient(rgba(45, 34, 25, 0.8), rgba(45, 34, 25, 0.8)), url('/images/3823e443-4e2b-4679-b496-a9506eae462b.jpg')`,
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center',
-                }}
-              >
-                <div className="w-full max-w-4xl relative z-10 space-y-4 px-6 text-white">
-                  <div className="flex w-full shadow-lg h-12">
-                     <Select defaultValue="all">
-                       <SelectTrigger className="w-[100px] h-full rounded-r-none border-0 focus:ring-0 bg-white text-slate-800 rounded-l-md font-medium px-4">
-                         <SelectValue placeholder="全部" />
-                       </SelectTrigger>
-                       <SelectContent>
-                         <SelectItem value="all">全部</SelectItem>
-                         <SelectItem value="title">书名</SelectItem>
-                         <SelectItem value="author">作者</SelectItem>
-                       </SelectContent>
-                     </Select>
-                     <Input
-                       value={searchQuery}
-                       onChange={(event) => setSearchQuery(event.target.value)}
-                       placeholder="请输入搜索内容"
-                       className="flex-1 h-full rounded-none border-0 focus-visible:ring-0 px-4 text-slate-800 bg-white"
-                     />
-                     <Button className="h-full px-8 rounded-l-none bg-[#9c1c22] hover:bg-[#7a151a] text-white rounded-r-md transition-colors">
-                       <SearchIcon className="size-5" />
-                     </Button>
-                  </div>
-                  
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="flex items-center flex-wrap gap-4 text-sm font-medium">
-                      {CATEGORY_OPTIONS.map((cat) => (
-                        <label key={cat.value} className="flex items-center gap-1.5 cursor-pointer group">
-                          <input 
-                            type="checkbox"
-                            checked={searchCategories.includes(cat.value)}
-                            onChange={() => handleCategoryToggle(cat.value)}
-                            className="hidden"
-                          />
-                          <div className={`size-3.5 flex items-center justify-center border transition-colors ${searchCategories.includes(cat.value) ? 'bg-[#9c1c22] border-[#9c1c22]' : 'bg-transparent border-white/60 group-hover:border-white'}`}>
-                            {searchCategories.includes(cat.value) && (
-                               <CheckSquareIcon className="size-3 text-white" />
-                            )}
-                          </div>
-                          <span className="text-white/90 group-hover:text-white transition-colors">{cat.label}</span>
-                        </label>
-                      ))}
-                    </div>
-                    <a href="#" className="text-sm text-white/80 hover:text-white hover:underline underline-offset-4 transition-all">高级搜索</a>
-                  </div>
-                </div>
-              </div>
 
-              {/* Bottom Large Buttons Area */}
-              <div className="w-full bg-[rgb(250,250,250)] py-6 px-4 flex justify-center border-b border-[rgba(57,130,152,0.14)]">
-                <div className="flex flex-wrap justify-center gap-4 max-w-6xl">
-                  {BOTTOM_BUTTONS.map((btn) => (
-                    <button 
-                      key={btn.value}
-                      onClick={() => handleCategoryToggle(btn.value)}
-                      className={`flex items-center gap-2.5 px-6 py-3 rounded-sm transition-all border ${searchCategories.includes(btn.value) && !searchCategories.includes('all') ? 'bg-[#f4efe9] border-[#eaddcf] text-[#9c1c22]' : 'bg-[#f5ebd8]/40 border-transparent text-[#8a7a6a] hover:bg-[#f4efe9] hover:text-[#9c1c22]'}`}
-                    >
-                      {btn.icon && <btn.icon className="size-5" strokeWidth={1.5} />}
-                      <span className="font-medium text-sm">{btn.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              
-              <div className="flex justify-between items-center py-2 px-4 bg-white hidden">
-                {/* Keep existing status filter but initially hidden or re-integrate if needed */}
-                <div className="w-[140px]">
-                  <Select
-                    value={statusFilter}
-                    onValueChange={(value) => setStatusFilter(value as FileStatusFilter)}
-                  >
-                    <SelectTrigger className="h-8 bg-white text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {statusFilterOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </div>
 
             {isLoading || personalRecordsQuery.isLoading || personalSpacesQuery.isLoading ? (
               <div className="text-muted-foreground flex flex-1 items-center justify-center gap-2 text-sm">
@@ -1742,10 +1592,41 @@ export default function KnowledgeManagementPage() {
             ) : (
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <aside className="hidden w-[260px] shrink-0 border-r border-[rgba(57,130,152,0.14)] bg-[rgb(252,253,253)] lg:block">
-                  <div className="border-b border-[rgba(57,130,152,0.14)] px-3 py-2">
+                  <div className="flex items-center justify-between border-b border-[rgba(57,130,152,0.14)] px-3 py-2">
                     <div className="text-sm font-medium text-slate-900">文件目录</div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      顶层包含系统和个人两套目录，个人文件可自由换文件夹。
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 text-[rgb(23,89,108)] hover:bg-[rgb(241,248,249)] hover:text-[rgb(23,89,108)]"
+                        onClick={() => setIsCreateFolderDialogOpen(true)}
+                        disabled={createSpaceMutation.isPending}
+                        title="新建个人文件夹"
+                        aria-label="新建个人文件夹"
+                      >
+                        {createSpaceMutation.isPending ? (
+                          <Loader2Icon className="size-3.5 animate-spin" />
+                        ) : (
+                          <PlusIcon className="size-3.5" />
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 text-[rgb(23,89,108)] hover:bg-[rgb(241,248,249)] hover:text-[rgb(23,89,108)]"
+                        onClick={() => void handleDeleteFolder()}
+                        disabled={!selectedFolderNode?.deletable || deleteSpaceMutation.isPending}
+                        title="删除当前文件夹"
+                        aria-label="删除当前文件夹"
+                      >
+                        {deleteSpaceMutation.isPending ? (
+                          <Loader2Icon className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2Icon className="size-3.5" />
+                        )}
+                      </Button>
                     </div>
                   </div>
                   <div className="h-full overflow-auto px-2 py-2">
@@ -1778,14 +1659,34 @@ export default function KnowledgeManagementPage() {
                 </aside>
 
                 <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-                  <div className="flex items-center justify-between border-b border-[rgba(57,130,152,0.14)] px-4 py-2 text-sm">
+                  <div className="flex items-center justify-between border-b border-[rgba(57,130,152,0.14)] bg-white px-4 py-2 text-sm z-10 sticky top-0">
                     <div className="flex items-center gap-2 text-slate-700">
                       <FolderIcon className="size-4 text-[rgb(57,130,152)]" />
-                      <span className="font-medium text-slate-900">{selectedFolderNode?.name ?? (selectedFolderPath === "all" ? "全部目录" : selectedFolderPath)}</span>
+                      <span className="font-medium text-slate-900">{selectedFolderNode?.name ?? (selectedFolderPath === "all" ? "全部文件" : selectedFolderPath)}</span>
                       <span className="text-slate-400">{folderFilteredFiles.length} 项</span>
                     </div>
-                    <div className="text-xs text-slate-500 lg:hidden">
-                      当前目录：{selectedFolderNode?.name ?? (selectedFolderPath === "all" ? "全部文件" : selectedFolderPath)}
+                    <div className="flex items-center gap-3">
+                      <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as FileStatusFilter)}>
+                        <SelectTrigger className="h-8 w-[130px] bg-white text-xs border-[rgba(57,130,152,0.18)] text-slate-700">
+                          <SelectValue placeholder="状态筛选" />
+                        </SelectTrigger>
+                        <SelectContent className="text-xs">
+                          {statusFilterOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value} className="text-xs">
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="relative">
+                        <SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
+                        <Input
+                          value={searchQuery}
+                          onChange={(event) => setSearchQuery(event.target.value)}
+                          placeholder="在当前视图中搜索..."
+                          className="h-8 w-64 pl-8 text-xs bg-white border-[rgba(57,130,152,0.18)] focus-visible:ring-[rgba(57,130,152,0.3)] transition-all shadow-sm"
+                        />
+                      </div>
                     </div>
                   </div>
 

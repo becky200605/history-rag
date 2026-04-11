@@ -1,6 +1,7 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { usePathname } from "next/navigation";
 import { type CSSProperties } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Toaster } from "sonner";
@@ -49,8 +50,10 @@ export function WorkspaceShell({
   children,
   user,
 }: Readonly<{ children: React.ReactNode; user?: WorkspaceUser | null }>) {
+  const pathname = usePathname();
   const [settings, setSettings] = useLocalSettings();
   const [open, setOpen] = useState(() => !settings.layout.sidebar_collapsed);
+  const isImmersiveKnowledgeView = pathname.startsWith("/workspace/knowledge/view");
 
   useEffect(() => {
     setOpen(!settings.layout.sidebar_collapsed);
@@ -66,17 +69,26 @@ export function WorkspaceShell({
 
   return (
     <QueryClientProvider client={queryClient}>
-      <SidebarProvider
-        className="h-screen bg-[linear-gradient(180deg,rgba(249,252,252,1),rgba(241,248,249,1))] text-foreground"
-        open={open}
-        onOpenChange={handleOpenChange}
-        style={workspaceTheme}
-      >
-        <WorkspaceSidebar user={user} />
-        <SidebarInset className="min-w-0 bg-[linear-gradient(180deg,rgba(249,252,252,1),rgba(241,248,249,1))]">
+      {isImmersiveKnowledgeView ? (
+        <div
+          className="h-screen bg-[linear-gradient(180deg,rgba(249,252,252,1),rgba(241,248,249,1))] text-foreground"
+          style={workspaceTheme}
+        >
           {children}
-        </SidebarInset>
-      </SidebarProvider>
+        </div>
+      ) : (
+        <SidebarProvider
+          className="h-screen bg-[linear-gradient(180deg,rgba(249,252,252,1),rgba(241,248,249,1))] text-foreground"
+          open={open}
+          onOpenChange={handleOpenChange}
+          style={workspaceTheme}
+        >
+          <WorkspaceSidebar user={user} />
+          <SidebarInset className="min-w-0 bg-[linear-gradient(180deg,rgba(249,252,252,1),rgba(241,248,249,1))]">
+            {children}
+          </SidebarInset>
+        </SidebarProvider>
+      )}
       <Toaster position="top-center" />
     </QueryClientProvider>
   );

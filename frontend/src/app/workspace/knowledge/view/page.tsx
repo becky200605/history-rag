@@ -1,18 +1,9 @@
 "use client";
 
 import { ExternalLinkIcon, Loader2Icon } from "lucide-react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
 import { KnowledgeStructuredViewer } from "@/components/workspace/artifacts/knowledge-structured-viewer";
 import {
   buildKnowledgeDocumentUrl,
@@ -35,11 +26,7 @@ export default function KnowledgeViewPage() {
   const pageNo = searchParams.get("page_no");
   const pdfPageNo = searchParams.get("pdf_page_no");
   const paragraphNo = searchParams.get("paragraph_no");
-  const threadId = searchParams.get("thread_id");
   const explicitOriginalUrl = normalizeOptionalUrl(searchParams.get("original_url"));
-  const backHref = normalizeOptionalUrl(searchParams.get("back_href"))
-    ?? (threadId ? `/workspace/chats/${threadId}` : "/workspace/chats");
-  const backLabel = searchParams.get("back_label") ?? (threadId ? "对话" : "对话");
   const originTitle = searchParams.get("origin_title") ?? (filename || "未命名资料");
   const originFilename = searchParams.get("origin_filename") ?? (filename || "未知文件");
   const knowledgeSpaceId = searchParams.get("knowledge_space_id");
@@ -56,8 +43,6 @@ export default function KnowledgeViewPage() {
   if (mode === "reader") {
     return (
       <KnowledgeReaderPage
-        backHref={backHref}
-        backLabel={backLabel}
         documentUrl={documentUrl}
         filename={filename}
         originFilename={originFilename}
@@ -70,8 +55,6 @@ export default function KnowledgeViewPage() {
 
   return (
     <KnowledgeCitationView
-      backHref={backHref}
-      backLabel={backLabel}
       documentUrl={documentUrl}
       pageNo={pageNo}
       pdfPageNo={pdfPageNo}
@@ -82,8 +65,6 @@ export default function KnowledgeViewPage() {
 }
 
 function KnowledgeReaderPage({
-  backHref,
-  backLabel,
   documentUrl,
   filename,
   originFilename,
@@ -91,8 +72,6 @@ function KnowledgeReaderPage({
   initialPdfPageNo,
   knowledgeSpaceId,
 }: {
-  backHref: string;
-  backLabel: string;
   documentUrl: string | null;
   filename: string;
   originFilename: string;
@@ -101,64 +80,34 @@ function KnowledgeReaderPage({
   knowledgeSpaceId: string | null;
 }) {
   return (
-    <div className="min-h-screen bg-[rgb(247,251,252)] px-6 py-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-4">
-        <div className="space-y-3">
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink asChild>
-                  <Link href={backHref}>{backLabel}</Link>
-                </BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>结构化阅读</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-              {originTitle}
-            </h1>
-            <div className="text-sm text-slate-500">
-              {originFilename || filename}
-            </div>
-          </div>
+    <div className="h-screen bg-[rgb(247,251,252)] p-4 md:p-6">
+      {!documentUrl ? (
+        <div className="mx-auto max-w-7xl rounded-xl bg-red-50 p-8 text-sm text-red-700 shadow-sm">
+          缺少文档地址，无法打开结构化阅读器。
         </div>
-
-        {!documentUrl ? (
-          <div className="rounded-xl bg-red-50 p-8 text-sm text-red-700 shadow-sm">
-            缺少文档地址，无法打开结构化阅读器。
-          </div>
-        ) : (
-          <KnowledgeStructuredViewer
-            className="min-h-[calc(100vh-190px)]"
-            documentUrl={documentUrl}
-            initialPdfPageNo={initialPdfPageNo}
-            excerptable
-            highlightable={false}
-            knowledgeSpaceId={knowledgeSpaceId ?? undefined}
-            originFilename={originFilename || filename}
-            originTitle={originTitle}
-          />
-        )}
-      </div>
+      ) : (
+        <KnowledgeStructuredViewer
+          className="h-full"
+          documentUrl={documentUrl}
+          initialPdfPageNo={initialPdfPageNo}
+          excerptable
+          highlightable={false}
+          knowledgeSpaceId={knowledgeSpaceId ?? undefined}
+          originFilename={originFilename || filename}
+          originTitle={originTitle}
+        />
+      )}
     </div>
   );
 }
 
 function KnowledgeCitationView({
-  backHref,
-  backLabel,
   documentUrl,
   pageNo,
   pdfPageNo,
   paragraphNo,
   explicitOriginalUrl,
 }: {
-  backHref: string;
-  backLabel: string;
   documentUrl: string | null;
   pageNo: string | null;
   pdfPageNo: string | null;
@@ -202,21 +151,8 @@ function KnowledgeCitationView({
     <div className="min-h-screen px-6 py-8">
       <div className="mx-auto flex max-w-6xl flex-col gap-4">
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink asChild>
-                    <Link href={backHref}>{backLabel}</Link>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>citation 定位查看</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-            {originalUrl && (
+          {originalUrl && (
+            <div className="flex justify-end">
               <a
                 href={originalUrl}
                 target="_blank"
@@ -226,9 +162,8 @@ function KnowledgeCitationView({
                 打开原文
                 <ExternalLinkIcon className="size-4" />
               </a>
-            )}
-          </div>
-
+            </div>
+          )}
           {state.status === "ready" && (
             <div className="space-y-1 text-center">
               <h1 className="text-xl font-semibold tracking-tight text-foreground">

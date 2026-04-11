@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  ArrowLeftIcon,
   ArrowRightIcon,
+  ArrowUpIcon,
   BookmarkPlusIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -955,6 +957,22 @@ export default function KnowledgeManagementPage() {
     return visit(folderTree);
   }, [folderTree, selectedFolderPath]);
 
+  const breadcrumbs = useMemo(() => {
+    if (selectedFolderPath === "all") return [];
+    const path: { name: string; path: string }[] = [];
+    const findPath = (nodes: FolderTreeNode[], target: string): boolean => {
+      for (const node of nodes) {
+        path.push({ name: node.name, path: node.path });
+        if (node.path === target) return true;
+        if (findPath(node.children, target)) return true;
+        path.pop();
+      }
+      return false;
+    };
+    findPath(folderTree, selectedFolderPath);
+    return path;
+  }, [folderTree, selectedFolderPath]);
+
   const resetUploadDialog = () => {
     setPendingFiles([]);
     setIsUploadDialogOpen(false);
@@ -1514,64 +1532,129 @@ export default function KnowledgeManagementPage() {
               </DialogContent>
             </Dialog>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[rgba(57,130,152,0.14)] px-4 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="rounded-md border border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)] px-3 py-1.5 text-xs text-slate-700">
-                  文档 <span className="ml-1 font-semibold text-slate-900">{summary.total}</span>
-                </div>
-                <div className="rounded-md border border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)] px-3 py-1.5 text-xs text-slate-700">
-                  已入库 <span className="ml-1 font-semibold text-slate-900">{summary.indexed}</span>
-                </div>
-                <div className="rounded-md border border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)] px-3 py-1.5 text-xs text-slate-700">
-                  处理中 <span className="ml-1 font-semibold text-slate-900">{summary.active}</span>
-                </div>
-                <div className="rounded-md border border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)] px-3 py-1.5 text-xs text-slate-700">
-                  失败 <span className="ml-1 font-semibold text-slate-900">{summary.failed}</span>
-                </div>
-                {summary.active > 0 && (
-                  <div className="text-muted-foreground text-xs">
-                    正在自动刷新队列状态
-                  </div>
-                )}
+            {/* Windows 11 Explorer Style Toolbar (Ribbon) */}
+            <div className="flex items-center justify-between border-b border-slate-200 bg-[#f9f9f9] px-2 py-1.5 flex-shrink-0">
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2 text-slate-700 hover:bg-slate-200" onClick={handleOpenUploadDialog} disabled={uploadMutation.isPending || uploadUserMutation.isPending}>
+                  {uploadMutation.isPending || uploadUserMutation.isPending ? <Loader2Icon className="size-4 animate-spin text-blue-600" /> : <UploadIcon className="size-4 text-blue-600" />}
+                  <span className="text-xs font-medium">新建 / 上传</span>
+                </Button>
+                <div className="h-4 w-px bg-slate-300 mx-1"></div>
+                <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2 text-slate-700 hover:bg-slate-200" onClick={() => setIsCreateFolderDialogOpen(true)} disabled={createSpaceMutation.isPending}>
+                  {createSpaceMutation.isPending ? <Loader2Icon className="size-4 animate-spin text-yellow-500" /> : <FolderIcon className="size-4 text-yellow-500 fill-yellow-100" />}
+                  <span className="text-xs font-medium">新建文件夹</span>
+                </Button>
+                <div className="h-4 w-px bg-slate-300 mx-1"></div>
+                <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2 text-slate-700 hover:bg-slate-200" onClick={handleStartChat} disabled={selectedMaterialsPayload.length === 0}>
+                  <BookmarkPlusIcon className="size-4 text-purple-600" />
+                  <span className="text-xs font-medium">基于选择项提问</span>
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2 text-slate-700 hover:bg-slate-200" onClick={() => void refetch()} disabled={isFetching}>
+                  <RefreshCwIcon className={cn("size-4 text-green-600", isFetching && "animate-spin")} />
+                  <span className="text-xs font-medium">刷新</span>
+                </Button>
               </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-[rgba(57,130,152,0.18)] bg-white px-3 text-[rgb(23,89,108)]"
-                  onClick={handleStartChat}
-                  disabled={selectedMaterialsPayload.length === 0}
-                >
-                  <BookmarkPlusIcon className="size-4" />
-                  基于已选资料提问
-                  {selectedMaterialsPayload.length > 0 ? ` (${selectedMaterialsPayload.length})` : ""}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-[rgba(57,130,152,0.18)] bg-white px-2.5 text-[rgb(23,89,108)]"
-                  onClick={() => void refetch()}
-                  disabled={isFetching}
-                >
-                  <RefreshCwIcon
-                    className={isFetching ? "size-4 animate-spin" : "size-4"}
-                  />
-                </Button>
-                <Button
-                  size="sm"
-                  className="h-8 rounded-md bg-[rgb(57,130,152)] px-3 text-white hover:bg-[rgb(49,113,132)]"
-                  onClick={handleOpenUploadDialog}
-                  disabled={uploadMutation.isPending || uploadUserMutation.isPending}
-                >
-                  {uploadMutation.isPending || uploadUserMutation.isPending ? (
-                    <Loader2Icon className="size-4 animate-spin" />
-                  ) : (
-                    <UploadIcon className="size-4" />
+              <div className="flex items-center gap-2 pr-2">
+                <div className="text-[11px] text-slate-500 flex items-center gap-3">
+                  <span className="flex items-center gap-1 select-none">
+                    <span className="inline-block size-2 rounded-full bg-blue-500"></span>
+                    <span>全部 {summary.total}</span>
+                  </span>
+                  <span className="flex items-center gap-1 select-none">
+                    <span className="inline-block size-2 rounded-full bg-green-500"></span>
+                    <span>已入库 {summary.indexed}</span>
+                  </span>
+                  {summary.active > 0 && (
+                    <span className="flex items-center gap-1 select-none animate-pulse">
+                      <span className="inline-block size-2 rounded-full bg-yellow-500"></span>
+                      <span>处理中 {summary.active}</span>
+                    </span>
                   )}
-                  上传文件
-                </Button>
+                  {summary.failed > 0 && (
+                    <span className="flex items-center gap-1 select-none">
+                      <span className="inline-block size-2 rounded-full bg-red-500"></span>
+                      <span>失败 {summary.failed}</span>
+                    </span>
+                  )}
+                </div>
               </div>
+            </div>
+
+            {/* Address Bar & Search Box */}
+            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2 flex-shrink-0 shadow-sm z-10">
+               <div className="flex items-center gap-1 mr-3 shrink-0">
+                 <Button 
+                   variant="ghost" 
+                   size="icon" 
+                   className="h-7 w-7 text-slate-500 hover:bg-slate-200" 
+                   disabled={selectedFolderPath === "all"}
+                   onClick={() => {
+                     if (breadcrumbs.length > 1) {
+                       setSelectedFolderPath(breadcrumbs[breadcrumbs.length - 2].path);
+                     } else {
+                       setSelectedFolderPath("all");
+                     }
+                   }}
+                 >
+                   <ArrowLeftIcon className="size-4" />
+                 </Button>
+                 <Button 
+                   variant="ghost" 
+                   size="icon" 
+                   className="h-7 w-7 text-slate-500 hover:bg-slate-200" 
+                   disabled={selectedFolderPath === "all"}
+                   onClick={() => setSelectedFolderPath("all")}
+                   title="返回顶层主页"
+                 >
+                   <ArrowUpIcon className="size-4" />
+                 </Button>
+               </div>
+
+               <div className="flex flex-1 items-center gap-2 mr-4 rounded-md border border-slate-200 bg-white px-3 py-1 shadow-inner focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
+                  <div className="flex items-center gap-1.5 text-xs text-slate-700 select-none w-full truncate">
+                    <FolderIcon className="size-4 text-blue-500 fill-blue-50 shrink-0" />
+                    <ChevronRightIcon className="size-3.5 text-slate-400 shrink-0" />
+                    {breadcrumbs.length === 0 ? (
+                      <span className="font-medium text-slate-900 cursor-default px-1">此电脑 (主页)</span>
+                    ) : (
+                      breadcrumbs.map((bc, i) => (
+                        <div key={bc.path} className="flex items-center gap-1.5 shrink-0">
+                          {i > 0 && <ChevronRightIcon className="size-3.5 text-slate-400 shrink-0" />}
+                          <span 
+                            className="cursor-pointer hover:bg-blue-50 hover:text-blue-700 px-1 rounded transition-colors"
+                            onClick={() => setSelectedFolderPath(bc.path)}
+                          >
+                            {bc.name === "系统" ? "此电脑 (系统区)" : bc.name === "个人" ? "主位 (个人区)" : bc.name}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+               </div>
+               
+               <div className="flex items-center gap-2 shrink-0">
+                 <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as FileStatusFilter)}>
+                    <SelectTrigger className="h-[28px] w-[110px] bg-white text-xs border-slate-200 text-slate-700 focus:ring-0 focus:ring-offset-0 shadow-inner">
+                      <SelectValue placeholder="状态筛选" />
+                    </SelectTrigger>
+                    <SelectContent className="text-xs">
+                      {statusFilterOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value} className="text-xs">
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                 </Select>
+                 <div className="relative">
+                   <Input
+                     value={searchQuery}
+                     onChange={(event) => setSearchQuery(event.target.value)}
+                     placeholder={`搜索 "${selectedFolderNode?.name ?? "全部文件"}"`}
+                     className="h-[28px] w-56 pr-8 text-xs bg-white border-slate-200 focus-visible:ring-blue-500 shadow-inner"
+                   />
+                   <SearchIcon className="absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                 </div>
+               </div>
             </div>
 
 
@@ -1589,145 +1672,71 @@ export default function KnowledgeManagementPage() {
               <div className="text-muted-foreground flex flex-1 items-center justify-center px-6 text-sm">
                 还没有知识库文件。
               </div>
+            ) : (selectedFolderPath !== "all" && folderFilteredFiles.length === 0 && (!selectedFolderNode?.children || selectedFolderNode.children.length === 0)) ? (
+              <div className="text-muted-foreground flex flex-1 items-center justify-center px-6 text-sm">
+                此文件夹为空。
+              </div>
             ) : (
               <div className="flex min-h-0 flex-1 overflow-hidden">
-                <aside className="hidden w-[260px] shrink-0 border-r border-[rgba(57,130,152,0.14)] bg-[rgb(252,253,253)] lg:block">
-                  <div className="flex items-center justify-between border-b border-[rgba(57,130,152,0.14)] px-3 py-2">
-                    <div className="text-sm font-medium text-slate-900">文件目录</div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 text-[rgb(23,89,108)] hover:bg-[rgb(241,248,249)] hover:text-[rgb(23,89,108)]"
-                        onClick={() => setIsCreateFolderDialogOpen(true)}
-                        disabled={createSpaceMutation.isPending}
-                        title="新建个人文件夹"
-                        aria-label="新建个人文件夹"
-                      >
-                        {createSpaceMutation.isPending ? (
-                          <Loader2Icon className="size-3.5 animate-spin" />
-                        ) : (
-                          <PlusIcon className="size-3.5" />
-                        )}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 text-[rgb(23,89,108)] hover:bg-[rgb(241,248,249)] hover:text-[rgb(23,89,108)]"
-                        onClick={() => void handleDeleteFolder()}
-                        disabled={!selectedFolderNode?.deletable || deleteSpaceMutation.isPending}
-                        title="删除当前文件夹"
-                        aria-label="删除当前文件夹"
-                      >
-                        {deleteSpaceMutation.isPending ? (
-                          <Loader2Icon className="size-3.5 animate-spin" />
-                        ) : (
-                          <Trash2Icon className="size-3.5" />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="h-full overflow-auto px-2 py-2">
-                    <button
-                      type="button"
-                      className={cn(
-                        "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition",
-                        selectedFolderPath === "all"
-                          ? "bg-[rgb(241,248,249)] text-[rgb(23,89,108)]"
-                          : "text-slate-700 hover:bg-slate-50",
-                      )}
-                      onClick={() => setSelectedFolderPath("all")}
-                    >
-                      <span>全部文件</span>
-                      <span className="text-xs text-slate-400">{filteredFiles.length}</span>
-                    </button>
-                    <div className="mt-1 space-y-0.5">
-                      {folderTree.map((node) => (
-                        <FolderTreeBranch
-                          key={node.path}
-                          node={node}
-                          selectedPath={selectedFolderPath}
-                          expandedPaths={expandedFolderPaths}
-                          onSelect={setSelectedFolderPath}
-                          onToggle={handleToggleFolderPath}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </aside>
-
                 <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-                  <div className="flex items-center justify-between border-b border-[rgba(57,130,152,0.14)] bg-white px-4 py-2 text-sm z-10 sticky top-0">
-                    <div className="flex items-center gap-2 text-slate-700">
-                      <FolderIcon className="size-4 text-[rgb(57,130,152)]" />
-                      <span className="font-medium text-slate-900">{selectedFolderNode?.name ?? (selectedFolderPath === "all" ? "全部文件" : selectedFolderPath)}</span>
-                      <span className="text-slate-400">{folderFilteredFiles.length} 项</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as FileStatusFilter)}>
-                        <SelectTrigger className="h-8 w-[130px] bg-white text-xs border-[rgba(57,130,152,0.18)] text-slate-700">
-                          <SelectValue placeholder="状态筛选" />
-                        </SelectTrigger>
-                        <SelectContent className="text-xs">
-                          {statusFilterOptions.map((option) => (
-                            <SelectItem key={option.value} value={option.value} className="text-xs">
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <div className="relative">
-                        <SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
-                        <Input
-                          value={searchQuery}
-                          onChange={(event) => setSearchQuery(event.target.value)}
-                          placeholder="在当前视图中搜索..."
-                          className="h-8 w-64 pl-8 text-xs bg-white border-[rgba(57,130,152,0.18)] focus-visible:ring-[rgba(57,130,152,0.3)] transition-all shadow-sm"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                  {/* Address bar moved up, omitting local table header */}
 
                   {folderFilteredFiles.length === 0 ? (
                     <div className="text-muted-foreground flex h-full items-center justify-center px-6 text-sm">
                       没有符合当前目录和筛选条件的文件。
                     </div>
                   ) : (
-                    <div className="min-h-0 h-full overflow-auto">
-                      <Table className="w-[1820px] table-fixed text-xs">
-                  <TableHeader className="sticky top-0 z-10 bg-[rgb(247,251,252)]/95 backdrop-blur">
-                    <TableRow className="hover:bg-[rgb(247,251,252)]/95">
-                      <TableHead className="w-[60px] min-w-[60px]">
+                    <div className="min-h-0 h-full overflow-auto bg-white pb-10">
+                      <Table className="w-full text-[13px] text-slate-700">
+                  <TableHeader className="sticky top-0 z-10 bg-white shadow-[0_1px_0_0_rgb(226,232,240)]">
+                    <TableRow className="hover:bg-transparent border-none">
+                      <TableHead className="w-[48px] px-4 font-normal text-slate-500">
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1 text-slate-600 hover:text-slate-900"
+                          className="inline-flex items-center text-slate-400 hover:text-blue-600"
                           onClick={handleToggleAllVisible}
                         >
                           {allVisibleSelected ? (
-                            <CheckSquareIcon className="size-4" />
+                            <CheckSquareIcon className="size-4 text-blue-500" />
                           ) : (
                             <SquareIcon className="size-4" />
                           )}
-                          <span className="sr-only">全选</span>
                         </button>
                       </TableHead>
-                      <TableHead className="w-[320px] min-w-[320px]">文件</TableHead>
-                      <TableHead className="w-[100px] min-w-[100px]">来源</TableHead>
-                      <TableHead className="w-[180px] min-w-[180px]">目录</TableHead>
-                      <TableHead className="w-[120px] min-w-[120px]">文档类型</TableHead>
-                      <TableHead className="w-[120px] min-w-[120px]">检索类型</TableHead>
-                      <TableHead className="w-[360px] min-w-[360px]">标签</TableHead>
-                      <TableHead className="w-[100px] min-w-[100px]">状态</TableHead>
-                      <TableHead className="w-[160px] min-w-[160px]">线索</TableHead>
-                      <TableHead className="w-[90px] min-w-[90px]">大小</TableHead>
-                      <TableHead className="w-[140px] min-w-[140px]">时间</TableHead>
-                      <TableHead className="w-[250px] min-w-[250px]">产物</TableHead>
-                      <TableHead className="w-[164px] min-w-[164px] text-right">操作</TableHead>
+                      <TableHead className="w-[40%] font-normal text-slate-500 border-l border-transparent hover:border-slate-200 px-3 cursor-default hover:bg-slate-50">文件名称</TableHead>
+                      <TableHead className="w-[12%] font-normal text-slate-500 border-l border-slate-200 px-3 cursor-default hover:bg-slate-50">状态</TableHead>
+                      <TableHead className="w-[16%] font-normal text-slate-500 border-l border-slate-200 px-3 cursor-default hover:bg-slate-50">修改日期</TableHead>
+                      <TableHead className="w-[12%] font-normal text-slate-500 border-l border-slate-200 px-3 cursor-default hover:bg-slate-50">类型</TableHead>
+                      <TableHead className="w-[10%] font-normal text-slate-500 border-l border-slate-200 px-3 cursor-default hover:bg-slate-50">大小</TableHead>
+                      <TableHead className="w-[10%] font-normal text-slate-500 border-l border-slate-200 px-3 cursor-default text-right">操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
+                    {/* Render Folders First */}
+                    {(selectedFolderPath === "all" ? folderTree : selectedFolderNode?.children ?? []).map((folderNode) => (
+                      <TableRow 
+                          key={`folder-${folderNode.path}`}
+                          className="h-10 hover:bg-blue-50/50 transition-colors border-none border-b border-slate-100 cursor-pointer"
+                          onDoubleClick={() => setSelectedFolderPath(folderNode.path)}
+                      >
+                          <TableCell className="w-[48px] px-4 py-1.5"></TableCell>
+                          <TableCell className="w-[40%] px-3 py-1.5 truncate">
+                            <div className="flex items-center gap-2">
+                              <FolderIcon className="size-5 shrink-0 text-yellow-500 fill-yellow-100" />
+                              <span className="truncate text-slate-800 font-medium select-none">
+                                {folderNode.name === "系统" ? "此电脑 (系统知识库)" : folderNode.name === "个人" ? "个人空间" : folderNode.name}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="w-[12%] px-3 py-1.5 truncate text-[12px]"></TableCell>
+                          <TableCell className="w-[16%] px-3 py-1.5 truncate text-[12px] text-slate-400">-</TableCell>
+                          <TableCell className="w-[12%] px-3 py-1.5 truncate text-[12px] text-slate-500">文件夹</TableCell>
+                          <TableCell className="w-[10%] px-3 py-1.5 truncate text-[12px] text-slate-400">-</TableCell>
+                          <TableCell className="w-[10%] px-3 py-1.5 text-right flex justify-end gap-1"></TableCell>
+                      </TableRow>
+                    ))}
+
+                    {/* Then Render Files */}
                     {folderFilteredFiles.map((file) => {
                       const isSelected = selectedRowIds.includes(file.rowId);
                       const canSelectForChat =
@@ -1747,11 +1756,7 @@ export default function KnowledgeManagementPage() {
                       const isRetrying =
                         retryMutation.isPending &&
                         retryingFilename === file.filename;
-                      const methodLabel = parseMethodLabel(file.parseMethod);
-                      const statusHint = fileStatusHint(file);
-                      const tags = buildFileTags(file);
-                      const typeLabel = knowledgeTypeLabel(file.type);
-                      const folderPath = file.folderDisplay;
+                      
                       const canRetry =
                         file.source === "global" &&
                         file.indexable &&
@@ -1768,18 +1773,22 @@ export default function KnowledgeManagementPage() {
                         ["queued", "queued_ocr", "parsing"].includes(file.parseStatus ?? "");
 
                       return (
-                        <TableRow key={file.rowId} className="h-14">
-                          <TableCell className="w-[60px] min-w-[60px] py-2.5">
+                        <TableRow 
+                          key={file.rowId} 
+                          className={cn(
+                            "h-10 hover:bg-blue-50/50 transition-colors border-none border-b border-slate-100",
+                            isSelected && "bg-blue-50/80 hover:bg-blue-100/50"
+                          )}
+                        >
+                          <TableCell className="w-[48px] px-4 py-1.5">
                             <button
                               type="button"
-                              className="inline-flex items-center justify-center text-slate-600 hover:text-slate-900"
+                              className={cn(
+                                "inline-flex items-center justify-center",
+                                isSelected ? "text-blue-500" : "text-slate-300 hover:text-slate-500"
+                              )}
                               onClick={() => toggleFileSelection(file.rowId)}
                               disabled={!canSelectForChat}
-                              title={
-                                canSelectForChat
-                                  ? "选择资料用于问答"
-                                  : "当前文件未完成入库，暂不可用于问答"
-                              }
                             >
                               {isSelected ? (
                                 <CheckSquareIcon className="size-4" />
@@ -1788,152 +1797,52 @@ export default function KnowledgeManagementPage() {
                               )}
                             </button>
                           </TableCell>
-                          <TableCell className="w-[320px] min-w-[320px] py-2.5">
+                          <TableCell className="w-[40%] px-3 py-1.5 truncate">
                             <div className="flex items-center gap-2">
-                              <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[rgb(241,248,249)] text-[rgb(57,130,152)]">
-                                <FileIcon className="size-3.5" />
-                              </div>
-                              <div className="min-w-0">
+                              <FileIcon className={cn("size-4 shrink-0", isSelected ? "text-blue-500" : "text-slate-400 fill-slate-50")} />
+                              <div className="min-w-0" title={file.title}>
                                 {canOpenReader && readerHref ? (
                                   <a
                                     href={readerHref}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="block truncate font-medium text-[13px] text-[rgb(23,89,108)] underline-offset-4 hover:underline"
-                                    title="新开标签页查看结构化书籍"
+                                    className="truncate text-slate-800 hover:text-blue-600 focus:outline-none"
                                   >
                                     {file.title}
                                   </a>
                                 ) : (
-                                  <div
-                                    className="truncate font-medium text-[13px] text-slate-900"
-                                    title={file.structuredFilename ? "结构化阅读准备中" : undefined}
-                                  >
+                                  <span className="truncate text-slate-800">
                                     {file.title}
-                                  </div>
-                                )}
-                                <div className="truncate text-[11px] text-slate-500">
-                                  {`解析：${methodLabel}`}
-                                  {statusHint ? ` · ${statusHint}` : ""}
-                                </div>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="w-[100px] min-w-[100px] py-2.5 text-[12px] text-slate-700">
-                            <Badge variant="outline" className="rounded-md px-2 py-0.5 text-[11px]">
-                              {file.source === "global" ? "系统" : "个人"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="w-[180px] min-w-[180px] py-2.5 text-[12px] text-slate-700">
-                            <div className="truncate" title={folderPath}>
-                              {folderPath}
-                            </div>
-                          </TableCell>
-                          <TableCell className="w-[120px] min-w-[120px] py-2.5 text-[12px] text-slate-700">
-                            <div>{documentTypeLabel(file.hints?.document_type_hint)}</div>
-                            {file.extension && (
-                              <div className="text-[11px] text-slate-500">
-                                {file.extension.replace(/^\./, "").toUpperCase()}
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell className="w-[120px] min-w-[120px] py-2.5">
-                            <Badge
-                              variant={file.type ? "secondary" : "outline"}
-                              className="rounded-md px-2 py-0.5 text-[11px]"
-                            >
-                              {file.source === "global" ? typeLabel : "个人文件"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="w-[360px] min-w-[360px] py-2.5">
-                            <div className="w-full overflow-x-auto overflow-y-hidden overscroll-x-contain whitespace-nowrap">
-                              <div className="flex w-max min-w-full flex-nowrap gap-1 pr-2">
-                                {tags.length > 0 ? (
-                                  tags.map((tag) => (
-                                    <Badge
-                                      key={`${file.filename}-${tag}`}
-                                      variant="outline"
-                                      className="shrink-0 rounded-md px-2 py-0.5 text-[11px]"
-                                    >
-                                      {tag}
-                                    </Badge>
-                                  ))
-                                ) : (
-                                  <span className="text-[11px] text-slate-400">-</span>
+                                  </span>
                                 )}
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="w-[100px] min-w-[100px] py-2.5">
-                            <Badge
-                              variant={statusVariant(file.parseStatus)}
-                              className="h-5 rounded-md px-2 text-[11px]"
-                            >
-                              {statusLabel(file.parseStatus)}
-                            </Badge>
+                          <TableCell className="w-[12%] px-3 py-1.5 truncate text-[12px]">
+                            {statusLabel(file.parseStatus)}
                           </TableCell>
-                          <TableCell className="w-[160px] min-w-[160px] py-2.5 text-[12px] text-slate-600">
-                            <div>
-                              {languageLabel(file.hints?.language_hint)}
-                              <span className="mx-1 text-slate-300">/</span>
-                              {layoutLabel(file.hints?.layout_hint)}
-                            </div>
-                          </TableCell>
-                          <TableCell className="w-[90px] min-w-[90px] py-2.5 text-[12px] text-slate-700">
-                            {formatBytes(file.size)}
-                          </TableCell>
-                          <TableCell className="w-[140px] min-w-[140px] py-2.5 text-[12px] text-slate-700">
+                          <TableCell className="w-[16%] px-3 py-1.5 truncate text-[12px] text-slate-500">
                             {formatCompactTime(file.modified)}
                           </TableCell>
-                          <TableCell className="w-[250px] min-w-[250px] py-2.5 text-[12px]">
-                            <div className="flex flex-wrap gap-x-3 gap-y-1">
-                              {file.artifactUrl ? (
-                                <a
-                                  className="text-[rgb(23,89,108)] underline underline-offset-4 hover:text-[rgb(57,130,152)]"
-                                  href={file.artifactUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  原文
-                                </a>
-                              ) : null}
-                              {file.previewFilename &&
-                                file.previewFilename !== file.filename &&
-                                file.previewArtifactUrl && (
-                                  <a
-                                    className="text-[rgb(23,89,108)] underline underline-offset-4 hover:text-[rgb(57,130,152)]"
-                                    href={file.previewArtifactUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    解析
-                                  </a>
-                                )}
-                              {file.structuredFilename && (
-                                <span
-                                  className="truncate text-slate-600"
-                                  title={file.structuredFilename}
-                                >
-                                  结构化
-                                </span>
-                              )}
-                            </div>
+                          <TableCell className="w-[12%] px-3 py-1.5 truncate text-[12px] text-slate-500">
+                            {documentTypeLabel(file.hints?.document_type_hint)}
                           </TableCell>
-                          <TableCell className="w-[164px] min-w-[164px] py-1.5 text-right">
-                            <div className="flex justify-end gap-1">
+                          <TableCell className="w-[10%] px-3 py-1.5 truncate text-[12px] text-slate-500">
+                            {formatBytes(file.size)}
+                          </TableCell>
+                          <TableCell className="w-[10%] px-3 py-1.5 text-right flex justify-end gap-1">
                               {file.source === "global" ? (
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="size-7"
+                                  className="h-7 w-7 text-slate-400 hover:text-slate-700"
                                   disabled={editDisabled || updateMetadataMutation.isPending}
                                   onClick={() =>
                                     openEditDialog(
                                       sortedGlobalFiles.find((candidate) => candidate.filename === file.filename)!,
                                     )
                                   }
-                                  title="修改标签"
-                                  aria-label="修改标签"
+                                  title="属性 / 标签"
                                 >
                                   <PencilIcon className="size-3.5" />
                                 </Button>
@@ -1941,14 +1850,13 @@ export default function KnowledgeManagementPage() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="size-7"
+                                  className="h-7 w-7 text-slate-400 hover:text-slate-700"
                                   disabled={personalSpaces.length <= 1}
                                   onClick={() => {
                                     setMovingRecord(file);
                                     setMoveTargetSpaceId(file.knowledgeSpaceId ?? defaultPersonalSpace?.id ?? "");
                                   }}
-                                  title="移动到其他文件夹"
-                                  aria-label="移动到其他文件夹"
+                                  title="移动到..."
                                 >
                                   <FolderIcon className="size-3.5" />
                                 </Button>
@@ -1957,11 +1865,10 @@ export default function KnowledgeManagementPage() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="size-7"
+                                  className="h-7 w-7 text-slate-400 hover:text-slate-700"
                                   disabled={retryMutation.isPending}
                                   onClick={() => void handleRetryIndexing(file.filename)}
                                   title={retryLabel}
-                                  aria-label={retryLabel}
                                 >
                                   {isRetrying ? (
                                     <Loader2Icon className="size-3.5 animate-spin" />
@@ -1973,7 +1880,7 @@ export default function KnowledgeManagementPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="size-7"
+                                className="h-7 w-7 text-slate-400 hover:text-red-600"
                                 disabled={
                                   file.source === "global"
                                     ? deleteMutation.isPending
@@ -1984,6 +1891,7 @@ export default function KnowledgeManagementPage() {
                                     ? void handleDelete(file.filename)
                                     : void handleDeletePersonalRecord(file.userRecordId ?? "")
                                 }
+                                title="删除"
                               >
                                 {isDeleting ? (
                                   <Loader2Icon className="size-3.5 animate-spin" />
@@ -1991,7 +1899,6 @@ export default function KnowledgeManagementPage() {
                                   <Trash2Icon className="size-3.5" />
                                 )}
                               </Button>
-                            </div>
                           </TableCell>
                         </TableRow>
                       );

@@ -29,7 +29,8 @@ import {
   WorkspaceContainer,
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
-import { buildKnowledgeDocumentUrl } from "@/core/knowledge/api";
+import { buildKnowledgeDocumentUrl, type KnowledgeFileInfo } from "@/core/knowledge/api";
+import { useKnowledgeFiles } from "@/core/knowledge/hooks";
 import type { UserKnowledgeRecord } from "@/core/knowledge/user-api";
 import {
   useDeleteUserKnowledgeRecord,
@@ -40,11 +41,28 @@ import {
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
-function formatListDate(value?: string | null) {
+type CombinedKnowledgeItem = {
+  id: string;
+  scope: "user" | "global";
+  sourceLabel: string;
+  title: string;
+  subtitle: string;
+  dateValue?: string | number | null;
+  previewUrl: string | null;
+  initialPdfPageNo: number;
+  originFilename: string;
+  originTitle: string;
+  deleteRecordId?: string | null;
+};
+
+function formatListDate(value?: string | number | null) {
   if (!value) {
     return "";
   }
-  const date = new Date(value);
+  const date =
+    typeof value === "number"
+      ? new Date(value < 1_000_000_000_000 ? value * 1000 : value)
+      : new Date(value);
   if (Number.isNaN(date.getTime())) {
     return "";
   }
@@ -52,6 +70,10 @@ function formatListDate(value?: string | null) {
     month: "numeric",
     day: "numeric",
   });
+}
+
+function stripExtension(filename?: string | null) {
+  return String(filename ?? "").replace(/\.[^.]+$/, "").trim();
 }
 
 function getRecordTitle(record: UserKnowledgeRecord) {
@@ -114,36 +136,6 @@ function sortRecords(records: UserKnowledgeRecord[]) {
   });
 }
 
-function SidebarRecordRow({
-  record,
-  isActive,
-  onClick,
-}: {
-  record: UserKnowledgeRecord;
-  isActive: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "grid h-10 w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-l-2 px-4 text-left transition",
-        isActive
-          ? "border-l-[rgb(57,130,152)] bg-slate-50 text-slate-900"
-          : "border-l-transparent text-slate-700 hover:bg-slate-50",
-      )}
-    >
-      <span className="block min-w-0 truncate text-sm">
-        {getRecordTitle(record)}
-      </span>
-      <span className="shrink-0 text-xs text-slate-400">
-        {formatListDate(record.updated_at ?? record.created_at)}
-      </span>
-    </button>
-  );
-}
-
 function buildKnowledgePreviewUrl(record: UserKnowledgeRecord) {
   const baseUrl = resolveRecordDocumentUrl(record, { preferPreview: !isPdfRecord(record) });
   if (!baseUrl) {
@@ -184,6 +176,25 @@ function buildKnowledgePreviewUrl(record: UserKnowledgeRecord) {
   }
 }
 
+function buildGlobalKnowledgePreviewUrl(file: KnowledgeFileInfo) {
+  const baseUrl =
+    file.preview_artifact_url ??
+    file.artifact_url ??
+    buildKnowledgeDocumentUrl("global", file.preview_filename ?? file.filename);
+
+  try {
+    const url = new URL(baseUrl, window.location.origin);
+    const sourceTitle = stripExtension(file.filename) || file.filename;
+    if (sourceTitle) {
+      url.searchParams.set("citation_source_title", sourceTitle);
+    }
+    url.searchParams.set("citation_source_label", "系统知识库");
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return baseUrl;
+  }
+}
+
 export default function KnowledgeLibraryPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -208,12 +219,73 @@ export default function KnowledgeLibraryPage() {
   }, [personalSpaces, selectedSpaceIdFromQuery]);
 
   const { data, isLoading, error } = useUserKnowledgeRecords(activeSpaceId);
+  const globalFilesQuery = useKnowledgeFiles();
   const deleteMutation = useDeleteUserKnowledgeRecord();
   const uploadMutation = useUploadUserKnowledgeFiles();
 
-  const records = useMemo(
+  const personalRecords = useMemo(
     () => sortRecords((data?.records ?? []).filter(isReferenceRecord)),
     [data?.records],
+  );
+  const globalRecords = useMemo(
+    () =>
+      [...(globalFilesQuery.data?.files ?? [])].sort((left, right) => {
+        const timeDelta = (right.modified ?? 0) - (left.modified ?? 0);
+        if (timeDelta !== 0) {
+          return timeDelta;
+        }
+        return left.filename.localeCompare(right.filename, "zh-CN");
+      }),
+    [globalFilesQuery.data?.files],
+  );
+  const items = useMemo<CombinedKnowledgeItem[]>(() => {
+    const personalItems = personalRecords.map<CombinedKnowledgeItem>((record) => ({
+      id: `user:${record.id}`,
+      scope: "user",
+      sourceLabel: "个人资料",
+      title: getRecordTitle(record),
+      subtitle: record.knowledge_space_name ?? "个人知识库",
+      dateValue: record.updated_at ?? record.created_at,
+      previewUrl: buildKnowledgePreviewUrl(record),
+      initialPdfPageNo:
+        getOriginAnchorNumber(record, "pdf_page_no")
+        ?? getOriginAnchorNumber(record, "page_no")
+        ?? 1,
+      originFilename: record.origin_filename ?? record.filename ?? "未知文档",
+      originTitle: getRecordTitle(record),
+      deleteRecordId: record.id,
+    }));
+    const systemItems = globalRecords.map<CombinedKnowledgeItem>((file) => ({
+      id: `global:${file.filename}`,
+      scope: "global",
+      sourceLabel: "系统书籍",
+      title: stripExtension(file.filename) || file.filename,
+      subtitle: file.folder ?? "系统知识库",
+      dateValue: file.modified,
+      previewUrl: buildGlobalKnowledgePreviewUrl(file),
+      initialPdfPageNo: 1,
+      originFilename: file.filename,
+      originTitle: stripExtension(file.filename) || file.filename,
+      deleteRecordId: null,
+    }));
+    return [...personalItems, ...systemItems].sort((left, right) => {
+      const leftTime =
+        typeof left.dateValue === "number"
+          ? left.dateValue
+          : new Date(left.dateValue ?? 0).getTime();
+      const rightTime =
+        typeof right.dateValue === "number"
+          ? right.dateValue
+          : new Date(right.dateValue ?? 0).getTime();
+      return rightTime - leftTime;
+    });
+  }, [globalRecords, personalRecords]);
+  const groupedItems = useMemo(
+    () => ({
+      user: items.filter((item) => item.scope === "user"),
+      global: items.filter((item) => item.scope === "global"),
+    }),
+    [items],
   );
   const requestedRecordId = searchParams.get("record");
 
@@ -231,43 +303,29 @@ export default function KnowledgeLibraryPage() {
   }, [activeSpaceId, pathname, router, searchParams, selectedSpaceIdFromQuery]);
 
   useEffect(() => {
-    if (records.length === 0) {
+    if (items.length === 0) {
       setSelectedRecordId(null);
       return;
     }
     setSelectedRecordId((current) =>
-      current && records.some((record) => record.id === current)
+      current && items.some((item) => item.id === current)
         ? current
-        : records[0]?.id ?? null,
+        : items[0]?.id ?? null,
     );
-  }, [records]);
+  }, [items]);
 
   useEffect(() => {
     if (!requestedRecordId) {
       return;
     }
-    const requestedRecord = records.find((record) => record.id === requestedRecordId);
-    if (!requestedRecord) {
+    const requestedItem = items.find((item) => item.id === requestedRecordId);
+    if (!requestedItem) {
       return;
     }
     setSelectedRecordId(requestedRecordId);
-  }, [records, requestedRecordId]);
+  }, [items, requestedRecordId]);
 
-  const selectedRecord =
-    records.find((record) => record.id === selectedRecordId) ?? records[0] ?? null;
-  const selectedPreviewUrl = useMemo(
-    () => (selectedRecord ? buildKnowledgePreviewUrl(selectedRecord) : null),
-    [selectedRecord],
-  );
-  const selectedInitialPdfPageNo = useMemo(
-    () =>
-      selectedRecord
-        ? getOriginAnchorNumber(selectedRecord, "pdf_page_no")
-          ?? getOriginAnchorNumber(selectedRecord, "page_no")
-          ?? 1
-        : 1,
-    [selectedRecord],
-  );
+  const selectedItem = items.find((item) => item.id === selectedRecordId) ?? items[0] ?? null;
 
   const handleDelete = async (recordId: string) => {
     setDeletingRecordId(recordId);
@@ -319,7 +377,9 @@ export default function KnowledgeLibraryPage() {
   }
 
   const selectedIsDeleting =
-    deleteMutation.isPending && deletingRecordId === selectedRecord?.id;
+    deleteMutation.isPending && deletingRecordId === selectedItem?.deleteRecordId;
+  const combinedLoading = isLoading || globalFilesQuery.isLoading;
+  const combinedError = error ?? globalFilesQuery.error;
 
   return (
     <WorkspaceContainer>
@@ -328,9 +388,9 @@ export default function KnowledgeLibraryPage() {
         <div className="border-b border-slate-200 bg-white px-4 py-3 md:px-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-base font-medium text-slate-900">个人知识库</div>
+              <div className="text-base font-medium text-slate-900">知识库</div>
               <div className="text-sm text-slate-500">
-                用文件夹整理个人资料，底层检索仍然统一管理。
+                个人资料和系统书籍统一浏览；系统书籍当前按只读展示。
               </div>
             </div>
             {personalSpaces.length > 0 ? (
@@ -351,15 +411,15 @@ export default function KnowledgeLibraryPage() {
         <div className="flex h-full min-h-0 w-full overflow-hidden bg-white">
           <aside className="flex min-h-0 w-full shrink-0 flex-col border-b border-slate-200 bg-white lg:w-[240px] lg:border-r lg:border-b-0">
             <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
-              <div className="text-xs text-slate-500">{records.length} 项</div>
+              <div className="text-xs text-slate-500">{items.length} 项</div>
               <div className="flex items-center gap-1">
-                {selectedRecord ? (
+                {selectedItem?.scope === "user" && selectedItem.deleteRecordId ? (
                   <Button
                     variant="ghost"
                     size="sm"
                     className="h-8 rounded-md px-2 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
                     disabled={deleteMutation.isPending}
-                    onClick={() => void handleDelete(selectedRecord.id)}
+                    onClick={() => void handleDelete(selectedItem.deleteRecordId ?? "")}
                   >
                     {selectedIsDeleting ? (
                       <Loader2Icon className="size-4 animate-spin" />
@@ -382,36 +442,62 @@ export default function KnowledgeLibraryPage() {
             </div>
 
             <ScrollArea className="min-h-0 flex-1">
-              {isLoading ? (
+              {combinedLoading ? (
                 <div className="flex min-h-[240px] items-center justify-center gap-2 text-sm text-slate-500">
                   <Loader2Icon className="size-4 animate-spin" />
                   正在加载
                 </div>
-              ) : error ? (
+              ) : combinedError ? (
                 <div className="m-4 border border-red-500/20 bg-red-500/6 p-4 text-sm text-red-600">
-                  {error.message}
+                  {combinedError.message}
                 </div>
-              ) : records.length === 0 ? (
-                <div className="p-4 text-sm text-slate-500">
-                  暂无资料。
-                </div>
+              ) : items.length === 0 ? (
+                <div className="p-4 text-sm text-slate-500">暂无资料。</div>
               ) : (
-                <div>
-                  {records.map((record) => (
-                    <SidebarRecordRow
-                      key={record.id}
-                      record={record}
-                      isActive={selectedRecord?.id === record.id}
-                      onClick={() => setSelectedRecordId(record.id)}
-                    />
-                  ))}
+                <div className="py-2">
+                  {([
+                    ["个人资料", groupedItems.user],
+                    ["系统书籍", groupedItems.global],
+                  ] as const).map(([label, sectionItems]) =>
+                    sectionItems.length > 0 ? (
+                      <div key={label} className="mb-2">
+                        <div className="px-4 py-2 text-xs font-medium text-slate-400">
+                          {label}
+                        </div>
+                        {sectionItems.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => setSelectedRecordId(item.id)}
+                            className={cn(
+                              "grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-3 border-l-2 px-4 py-2 text-left transition",
+                              selectedItem?.id === item.id
+                                ? "border-l-[rgb(57,130,152)] bg-slate-50 text-slate-900"
+                                : "border-l-transparent text-slate-700 hover:bg-slate-50",
+                            )}
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate text-sm">{item.title}</div>
+                              <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
+                                <span>{item.sourceLabel}</span>
+                                <span className="truncate">{item.subtitle}</span>
+                              </div>
+                            </div>
+                            <span className="shrink-0 pt-0.5 text-xs text-slate-400">
+                              {formatListDate(item.dateValue)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null,
+                  )}
                 </div>
               )}
             </ScrollArea>
           </aside>
 
           <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
-            {!selectedRecord ? (
+            {!selectedItem ? (
               <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-16">
                 <div className="text-center">
                   <div className="mx-auto flex h-10 w-10 items-center justify-center text-slate-400">
@@ -422,7 +508,7 @@ export default function KnowledgeLibraryPage() {
                   </div>
                 </div>
               </div>
-            ) : !selectedPreviewUrl ? (
+            ) : !selectedItem.previewUrl ? (
               <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-16">
                 <div className="text-center">
                   <div className="mx-auto flex h-10 w-10 items-center justify-center text-slate-400">
@@ -431,22 +517,29 @@ export default function KnowledgeLibraryPage() {
                   <div className="mt-3 text-sm text-slate-500">
                     当前文件暂时没有可展示的预览地址
                   </div>
-                  <div className="mt-2 text-xs text-slate-400">
-                    来源：{selectedRecord.origin_filename ?? selectedRecord.filename ?? "未知"}
+                  <div className="mt-2 flex items-center justify-center gap-2 text-xs text-slate-400">
+                    <span>来源：{selectedItem.originFilename}</span>
+                    <span>{selectedItem.sourceLabel}</span>
                   </div>
                 </div>
               </div>
             ) : (
               <div className="min-h-0 flex-1 p-4 md:p-6">
+                <div className="mb-3 flex items-center gap-2 px-1">
+                  <div className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
+                    {selectedItem.sourceLabel}
+                  </div>
+                  <div className="text-sm text-slate-500">{selectedItem.subtitle}</div>
+                </div>
                 <KnowledgeStructuredViewer
                   className="h-full min-h-[640px]"
-                  documentUrl={selectedPreviewUrl}
-                  initialPdfPageNo={selectedInitialPdfPageNo}
+                  documentUrl={selectedItem.previewUrl}
+                  initialPdfPageNo={selectedItem.initialPdfPageNo}
                   excerptable
                   knowledgeSpaceId={activeSpaceId ?? undefined}
                   highlightable={false}
-                  originFilename={selectedRecord.origin_filename ?? selectedRecord.filename ?? "未知文档"}
-                  originTitle={getRecordTitle(selectedRecord)}
+                  originFilename={selectedItem.originFilename}
+                  originTitle={selectedItem.originTitle}
                 />
               </div>
             )}

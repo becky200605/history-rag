@@ -48,19 +48,15 @@ models:
   #       thinking:
   #         type: enabled
 
-  # Example: Volcengine (Doubao) model
-  - name: doubao-seed-2.0-pro
-    display_name: Doubao 2.0  (Thinking)
-    use: langchain_deepseek:ChatDeepSeek
-    model: doubao-seed-2.0-pro
-    api_base: https://ark.cn-beijing.volces.com/api/coding/v3
-    api_key: $VOLCENGINE_API_KEY
+  # KBKBK-compatible OpenAI API model
+  - name: qwen3.5-27b-4bit
+    display_name: Qwen3.5 27B 4bit
+    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
+    model: mlx-community/Qwen3.5-27B-4bit
+    base_url: https://model.kbkbk.xyz/v1
+    api_key: dummy
     supports_thinking: true
-    supports_vision: true  # Check your specific model's capabilities
-    when_thinking_enabled:
-      extra_body:
-        thinking:
-          type: enabled
+    supports_vision: false
 
   - name: openrouter-qwen3.6-plus-preview-free
     display_name: OpenRouter Qwen3.6 Plus Preview (Free)
@@ -372,7 +368,7 @@ knowledge_base:
 
   book_metadata:
     enabled: true
-    model_name: openrouter-qwen3.6-plus-preview-free
+    model_name: qwen3.5-27b-4bit
     front_page_limit: 10
     max_excerpt_chars: 1200
 

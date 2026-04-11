@@ -46,19 +46,15 @@ models:
   #       thinking:
   #         type: enabled
 
-  # Example: Volcengine (Doubao) model
-  # - name: doubao-seed-1.8
-  #   display_name: Doubao 1.8 (Thinking)
-  #   use: langchain_deepseek:ChatDeepSeek
-  #   model: ep-m-20260106111913-xxxxx
-  #   api_base: https://ark.cn-beijing.volces.com/api/v3
-  #   api_key: $VOLCENGINE_API_KEY
+  # Example: OpenAI-compatible custom endpoint
+  # - name: qwen3.5-27b-4bit
+  #   display_name: Qwen3.5 27B 4bit
+  #   use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
+  #   model: mlx-community/Qwen3.5-27B-4bit
+  #   base_url: https://model.kbkbk.xyz/v1
+  #   api_key: dummy
   #   supports_thinking: true
-  #   supports_vision: false  # Check your specific model's capabilities
-  #   when_thinking_enabled:
-  #     extra_body:
-  #       thinking:
-  #         type: enabled
+  #   supports_vision: false
 
   # Example: Kimi K2.5 model
   # - name: kimi-k2.5

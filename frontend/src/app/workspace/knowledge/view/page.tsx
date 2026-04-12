@@ -1,32 +1,16 @@
 "use client";
 
 import { ExternalLinkIcon, Loader2Icon } from "lucide-react";
-import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { KnowledgeStructuredViewer } from "@/components/workspace/artifacts/knowledge-structured-viewer";
-import { KNOWLEDGE_SIDE_PANE_WIDTH } from "@/components/workspace/artifacts/knowledge-layout";
-import { Button } from "@/components/ui/button";
+import { KnowledgePdfReader } from "@/components/workspace/artifacts/knowledge-pdf-reader";
 import {
   buildKnowledgeDocumentUrl,
   buildKnowledgePageImageURLForDocumentUrl,
   getKnowledgeParagraphLocationForDocumentUrl,
   type KnowledgeParagraphLocation,
 } from "@/core/knowledge/api";
-import { cn } from "@/lib/utils";
-
-const PdfViewer = dynamic(
-  () => import("@/components/workspace/artifacts/pdf-viewer").then((module) => module.PdfViewer),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex size-full items-center justify-center bg-muted/30 p-4 text-sm text-muted-foreground">
-        正在加载 PDF...
-      </div>
-    ),
-  },
-);
 
 type LoadState =
   | { status: "loading" }
@@ -95,29 +79,6 @@ function KnowledgeReaderPage({
   initialPdfPageNo: number;
   knowledgeSpaceId: string | null;
 }) {
-  const [currentPdfPageNo, setCurrentPdfPageNo] = useState<number>(
-    Math.max(initialPdfPageNo, 1),
-  );
-  const [pdfPaneOpen, setPdfPaneOpen] = useState(false);
-  const supportsPdfPane = useMemo(() => isPdfDocumentUrl(documentUrl), [documentUrl]);
-  const layoutStyle = useMemo(
-    () =>
-      ({
-        "--reader-pdf-pane-width": `${KNOWLEDGE_SIDE_PANE_WIDTH}px`,
-      }) as CSSProperties,
-    [],
-  );
-
-  useEffect(() => {
-    setCurrentPdfPageNo(Math.max(initialPdfPageNo, 1));
-  }, [documentUrl, initialPdfPageNo]);
-
-  useEffect(() => {
-    if (!supportsPdfPane) {
-      setPdfPaneOpen(false);
-    }
-  }, [supportsPdfPane]);
-
   return (
     <div className="h-screen bg-[rgb(247,251,252)] p-4 md:p-6">
       {!documentUrl ? (
@@ -125,49 +86,14 @@ function KnowledgeReaderPage({
           缺少文档地址，无法打开结构化阅读器。
         </div>
       ) : (
-        <div
-          className={cn(
-            "mx-auto h-full max-w-[1680px] min-h-0",
-            pdfPaneOpen && supportsPdfPane
-              ? "grid grid-cols-1 gap-4 lg:gap-0 lg:[grid-template-columns:minmax(0,1fr)_var(--reader-pdf-pane-width)]"
-              : "block",
-          )}
-          style={layoutStyle}
-        >
-          <div className="min-h-0">
-            <KnowledgeStructuredViewer
-              className="h-full"
-              documentUrl={documentUrl}
-              initialPdfPageNo={initialPdfPageNo}
-              currentPdfPageNo={currentPdfPageNo}
-              onCurrentPdfPageNoChange={setCurrentPdfPageNo}
-              excerptable
-              highlightable={false}
-              knowledgeSpaceId={knowledgeSpaceId ?? undefined}
-              originFilename={originFilename || filename}
-              originTitle={originTitle}
-              toolbarExtra={supportsPdfPane ? (
-                <Button
-                  variant={pdfPaneOpen ? "default" : "outline"}
-                  size="sm"
-                  className="h-8 rounded-xl"
-                  onClick={() => setPdfPaneOpen((open) => !open)}
-                >
-                  {pdfPaneOpen ? "隐藏原 PDF" : "显示原 PDF"}
-                </Button>
-              ) : null}
-            />
-          </div>
-          {pdfPaneOpen && supportsPdfPane && (
-            <div className="min-h-[420px] overflow-hidden rounded-[28px] border border-[rgba(57,130,152,0.16)] bg-white lg:ml-4">
-              <PdfViewer
-                url={documentUrl}
-                page={currentPdfPageNo - 1}
-                className="size-full"
-                onPageChange={(page) => setCurrentPdfPageNo(page + 1)}
-              />
-            </div>
-          )}
+        <div className="mx-auto h-full max-w-[1680px] min-h-0">
+          <KnowledgePdfReader
+            documentUrl={documentUrl}
+            initialPdfPageNo={initialPdfPageNo}
+            knowledgeSpaceId={knowledgeSpaceId ?? undefined}
+            originFilename={originFilename || filename}
+            originTitle={originTitle}
+          />
         </div>
       )}
     </div>
@@ -351,19 +277,6 @@ function parsePositiveInteger(value: string | null) {
   }
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function isPdfDocumentUrl(url: string | null) {
-  if (!url) {
-    return false;
-  }
-
-  try {
-    const parsed = new URL(url, window.location.origin);
-    return parsed.pathname.toLowerCase().endsWith(".pdf");
-  } catch {
-    return url.toLowerCase().endsWith(".pdf");
-  }
 }
 
 function formatLocationLabel(pageNo: number | null, paragraphNo: number | null) {

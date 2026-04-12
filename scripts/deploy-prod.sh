@@ -39,6 +39,7 @@ load_env_file() {
 }
 
 load_env_file "$BACKEND_ENV_FILE"
+load_env_file "$FRONTEND_ENV_FILE"
 
 PROD_STATE_DIR="${PROD_STATE_DIR:-/var/lib/history-rag/backend/.deer-flow}"
 PROD_KNOWLEDGE_DIR="${PROD_KNOWLEDGE_DIR:-/var/lib/history-rag/knowledge}"

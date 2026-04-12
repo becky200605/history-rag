@@ -997,6 +997,13 @@ export default function KnowledgeManagementPage() {
     return path;
   }, [folderTree, selectedFolderPath]);
 
+  const currentLevelFolderNodes = useMemo(
+    () => (selectedFolderPath === "all" ? folderTree : selectedFolderNode?.children ?? []),
+    [folderTree, selectedFolderNode?.children, selectedFolderPath],
+  );
+  const hasCurrentLevelEntries =
+    currentLevelFolderNodes.length > 0 || folderFilteredFiles.length > 0;
+
   const resetUploadDialog = () => {
     setPendingFiles([]);
     setIsUploadDialogOpen(false);
@@ -1702,7 +1709,7 @@ export default function KnowledgeManagementPage() {
                 <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
                   {/* Address bar moved up, omitting local table header */}
 
-                  {folderFilteredFiles.length === 0 ? (
+                  {!hasCurrentLevelEntries ? (
                     <div className="text-muted-foreground flex h-full items-center justify-center px-6 text-sm">
                       没有符合当前目录和筛选条件的文件。
                     </div>
@@ -1734,7 +1741,7 @@ export default function KnowledgeManagementPage() {
                   </TableHeader>
                   <TableBody>
                     {/* Render Folders First */}
-                    {(selectedFolderPath === "all" ? folderTree : selectedFolderNode?.children ?? []).map((folderNode) => (
+                    {currentLevelFolderNodes.map((folderNode) => (
                       <TableRow 
                           key={`folder-${folderNode.path}`}
                           className="h-10 hover:bg-blue-50/50 transition-colors border-none border-b border-slate-100 cursor-pointer"

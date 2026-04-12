@@ -9,7 +9,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { usePromptInputController } from "@/components/ai-elements/prompt-input";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import {
@@ -544,6 +543,7 @@ function ChatPageContent({
                     autoFocus={isNewThread}
                     status={thread.isLoading ? "streaming" : "ready"}
                     context={resolvedContext}
+                    selectedMaterials={selectedMaterials}
                     extraHeader={
                       isNewThread && (
                         <Welcome
@@ -559,27 +559,6 @@ function ChatPageContent({
                     onSubmit={handleSubmit}
                     onStop={handleStop}
                   />
-                  {selectedMaterials.length > 0 && (
-                    <div className="bg-background/90 mt-2 rounded-2xl border border-[rgba(57,130,152,0.16)] px-4 py-3 shadow-sm backdrop-blur-sm">
-                      <div className="text-xs font-medium tracking-[0.08em] text-[rgb(23,89,108)] uppercase">
-                        已选资料范围
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {selectedMaterials.map((material) => (
-                          <Badge
-                            key={material.doc_id}
-                            variant="secondary"
-                            className="rounded-md bg-[rgb(241,248,249)] text-[rgb(23,89,108)]"
-                          >
-                            {material.title}
-                          </Badge>
-                        ))}
-                      </div>
-                      <div className="mt-2 text-xs text-slate-500">
-                        本轮问答会优先限制在这些资料范围内检索。
-                      </div>
-                    </div>
-                  )}
                   {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" && (
                     <div className="text-muted-foreground/67 w-full translate-y-12 text-center text-xs">
                       {t.common.notAvailableInDemoMode}

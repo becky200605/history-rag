@@ -49,6 +49,7 @@ import {
   resolveSelectedMaterialsFromMentions,
 } from "@/core/knowledge/mentions";
 import { useKnowledgeFiles } from "@/core/knowledge/hooks";
+import type { SelectedMaterial } from "@/core/knowledge/selection";
 import { useUserKnowledgeRecords } from "@/core/knowledge/user-hooks";
 import type { Translations } from "@/core/i18n/locales/types";
 import { useModels } from "@/core/models/hooks";
@@ -136,6 +137,7 @@ export function InputBox({
   context,
   extraHeader,
   isNewThread,
+  selectedMaterials = [],
   onContextChange,
   onSubmit,
   onStop,
@@ -147,6 +149,7 @@ export function InputBox({
   context: ContextShape;
   extraHeader?: React.ReactNode;
   isNewThread?: boolean;
+  selectedMaterials?: SelectedMaterial[];
   onContextChange?: (context: ContextShape) => void;
   onSubmit?: (message: PromptInputMessage) => void;
   onStop?: () => void;
@@ -276,6 +279,7 @@ export function InputBox({
           disabled={disabled}
           mentionables={mentionables}
           placeholder={t.inputBox.placeholder}
+          selectedMaterials={selectedMaterials}
         />
       </PromptInputBody>
       <PromptInputFooter className="flex">

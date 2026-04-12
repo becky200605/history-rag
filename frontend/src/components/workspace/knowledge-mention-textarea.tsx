@@ -7,12 +7,18 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { InputGroupTextarea } from "@/components/ui/input-group";
 import {
   usePromptInputAttachments,
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
 import type { MentionableKnowledgeMaterial } from "@/core/knowledge/mentions";
+import type { SelectedMaterial } from "@/core/knowledge/selection";
 import { cn } from "@/lib/utils";
 import { BookOpenTextIcon, FolderIcon, LibraryBigIcon } from "lucide-react";
 import {
@@ -71,12 +77,14 @@ export function KnowledgeMentionTextarea({
   disabled,
   mentionables,
   placeholder,
+  selectedMaterials = [],
 }: {
   autoFocus?: boolean;
   className?: string;
   disabled?: boolean;
   mentionables: MentionableKnowledgeMaterial[];
   placeholder: string;
+  selectedMaterials?: SelectedMaterial[];
 }) {
   const { textInput } = usePromptInputController();
   const attachments = usePromptInputAttachments();
@@ -242,6 +250,21 @@ export function KnowledgeMentionTextarea({
     syncSelection(event.currentTarget);
   };
 
+  const selectedSummary = useMemo(() => {
+    if (selectedMaterials.length === 0) {
+      return null;
+    }
+
+    const firstTitle = selectedMaterials[0]?.title?.trim();
+    if (!firstTitle) {
+      return null;
+    }
+
+    return selectedMaterials.length === 1
+      ? `已选中【${firstTitle}】本书`
+      : `已选中【${firstTitle}】等 ${selectedMaterials.length} 本书`;
+  }, [selectedMaterials]);
+
   return (
     <div className="relative">
       {activeMention && (
@@ -304,9 +327,45 @@ export function KnowledgeMentionTextarea({
           </div>
         </div>
       )}
+      {selectedSummary && (
+        <div className="px-3 pt-3 pb-1">
+          <HoverCard openDelay={120}>
+            <HoverCardTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex max-w-full items-center rounded-full border border-[rgba(57,130,152,0.18)] bg-[rgb(241,248,249)] px-3 py-1 text-xs font-medium text-[rgb(23,89,108)] transition-colors hover:bg-[rgb(232,244,246)]"
+              >
+                <span className="truncate">{selectedSummary}</span>
+              </button>
+            </HoverCardTrigger>
+            <HoverCardContent
+              align="start"
+              className="w-80 rounded-2xl border border-[rgba(57,130,152,0.18)] bg-white/97 p-3 shadow-lg backdrop-blur-sm"
+            >
+              <div className="mb-2 text-xs font-medium tracking-[0.08em] text-[rgb(23,89,108)] uppercase">
+                已选资料范围
+              </div>
+              <div className="space-y-1.5">
+                {selectedMaterials.map((material) => (
+                  <div
+                    key={material.doc_id}
+                    className="rounded-xl bg-[rgb(247,250,251)] px-3 py-2 text-sm text-slate-700"
+                  >
+                    {material.title}
+                  </div>
+                ))}
+              </div>
+            </HoverCardContent>
+          </HoverCard>
+        </div>
+      )}
       <InputGroupTextarea
         ref={textareaRef}
-        className={cn("field-sizing-content max-h-48 min-h-16", className)}
+        className={cn(
+          "field-sizing-content max-h-48 min-h-16",
+          selectedSummary && "pt-2",
+          className,
+        )}
         autoFocus={autoFocus}
         disabled={disabled}
         name="message"

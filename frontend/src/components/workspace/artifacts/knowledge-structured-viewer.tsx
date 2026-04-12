@@ -6,7 +6,7 @@ import {
   LanguagesIcon,
   ScrollTextIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,9 @@ export function KnowledgeStructuredViewer({
   knowledgeSpaceId,
   originFilename,
   originTitle,
+  currentPdfPageNo,
+  onCurrentPdfPageNoChange,
+  toolbarExtra,
 }: {
   className?: string;
   documentUrl: string;
@@ -38,22 +41,35 @@ export function KnowledgeStructuredViewer({
   knowledgeSpaceId?: string;
   originFilename: string;
   originTitle: string;
+  currentPdfPageNo?: number;
+  onCurrentPdfPageNoChange?: (page: number) => void;
+  toolbarExtra?: ReactNode;
 }) {
   const [mode, setMode] = useState<KnowledgeSidePaneMode>("compare");
   const [translationSourceLanguage, setTranslationSourceLanguage] = useState<
     "en" | "ja" | "de"
   >("en");
-  const [currentPdfPageNo, setCurrentPdfPageNo] = useState<number>(
+  const [internalCurrentPdfPageNo, setInternalCurrentPdfPageNo] = useState<number>(
     Math.max(initialPdfPageNo, 1),
   );
   const [pageInputValue, setPageInputValue] = useState("");
   const [pageCount, setPageCount] = useState<number | null>(null);
+  const resolvedCurrentPdfPageNo = Math.max(
+    currentPdfPageNo ?? internalCurrentPdfPageNo,
+    1,
+  );
 
   useEffect(() => {
-    setCurrentPdfPageNo(Math.max(initialPdfPageNo, 1));
+    setInternalCurrentPdfPageNo(Math.max(initialPdfPageNo, 1));
     setPageInputValue("");
     setPageCount(null);
   }, [documentUrl, initialPdfPageNo]);
+
+  useEffect(() => {
+    if (typeof currentPdfPageNo === "number" && currentPdfPageNo > 0) {
+      setInternalCurrentPdfPageNo(currentPdfPageNo);
+    }
+  }, [currentPdfPageNo]);
 
   const goToPage = (page: number) => {
     if (page < 1) {
@@ -62,7 +78,8 @@ export function KnowledgeStructuredViewer({
     if (pageCount && page > pageCount) {
       return;
     }
-    setCurrentPdfPageNo(page);
+    setInternalCurrentPdfPageNo(page);
+    onCurrentPdfPageNoChange?.(page);
     setPageInputValue("");
   };
 
@@ -80,8 +97,8 @@ export function KnowledgeStructuredViewer({
               variant="ghost"
               size="icon"
               className="size-8 rounded-xl"
-              onClick={() => goToPage(currentPdfPageNo - 1)}
-              disabled={currentPdfPageNo <= 1}
+              onClick={() => goToPage(resolvedCurrentPdfPageNo - 1)}
+              disabled={resolvedCurrentPdfPageNo <= 1}
             >
               <ChevronLeftIcon className="size-4" />
             </Button>
@@ -92,7 +109,7 @@ export function KnowledgeStructuredViewer({
                 value={
                   pageInputValue !== ""
                     ? pageInputValue
-                    : String(currentPdfPageNo)
+                    : String(resolvedCurrentPdfPageNo)
                 }
                 onChange={(event) => setPageInputValue(event.target.value)}
                 onKeyDown={(event) => {
@@ -105,7 +122,7 @@ export function KnowledgeStructuredViewer({
                   }
                 }}
                 onBlur={() => setPageInputValue("")}
-                onFocus={() => setPageInputValue(String(currentPdfPageNo))}
+                onFocus={() => setPageInputValue(String(resolvedCurrentPdfPageNo))}
               />
               <span className="text-slate-500">/ {pageCount ?? "?"}</span>
             </div>
@@ -113,8 +130,8 @@ export function KnowledgeStructuredViewer({
               variant="ghost"
               size="icon"
               className="size-8 rounded-xl"
-              onClick={() => goToPage(currentPdfPageNo + 1)}
-              disabled={pageCount ? currentPdfPageNo >= pageCount : false}
+              onClick={() => goToPage(resolvedCurrentPdfPageNo + 1)}
+              disabled={pageCount ? resolvedCurrentPdfPageNo >= pageCount : false}
             >
               <ChevronRightIcon className="size-4" />
             </Button>
@@ -149,13 +166,14 @@ export function KnowledgeStructuredViewer({
             <LanguagesIcon className="mr-1.5 size-4" />
             中文翻译
           </Button>
+          {toolbarExtra}
         </div>
       </div>
 
       <div className="min-h-0 flex-1">
         {mode === "compare" ? (
           <KnowledgeSidePane
-            currentPdfPageNo={currentPdfPageNo}
+            currentPdfPageNo={resolvedCurrentPdfPageNo}
             documentUrl={documentUrl}
             mode={mode}
             originFilename={originFilename}
@@ -173,7 +191,7 @@ export function KnowledgeStructuredViewer({
         ) : (
           <KnowledgeTranslationWorkspace
             documentUrl={documentUrl}
-            currentPdfPageNo={currentPdfPageNo}
+            currentPdfPageNo={resolvedCurrentPdfPageNo}
             sourceLanguage={translationSourceLanguage}
             onSourceLanguageChange={setTranslationSourceLanguage}
             onPageDataChange={(pageData) => {

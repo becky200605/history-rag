@@ -42,5 +42,6 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Doc-ID Scope Alignment Rule" in prompt
     assert "Retry Discipline Rule" in prompt
     assert "Best-Match Book Rule" in prompt
-    assert "Web Search Escalation Rule" in prompt
+    assert "Response Staging Rule" in prompt
+    assert "回答正文" in prompt
     assert "Do not refuse after the first weak retrieval pass." in prompt

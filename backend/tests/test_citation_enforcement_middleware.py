@@ -1,5 +1,7 @@
 """Tests for citation enforcement middleware."""
 
+from types import SimpleNamespace
+
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
@@ -9,9 +11,20 @@ from src.agents.middlewares.citation_enforcement_middleware import (
 )
 
 
-def _build_request() -> ModelRequest:
+class _SuggestionModel:
+    def __init__(self, suggestions: str | None = None) -> None:
+        self.suggestions = suggestions or "问题一？\n问题二？\n问题三？"
+
+    def invoke(self, messages):
+        return SimpleNamespace(content=self.suggestions)
+
+    async def ainvoke(self, messages):
+        return SimpleNamespace(content=self.suggestions)
+
+
+def _build_request(model=None) -> ModelRequest:
     return ModelRequest(
-        model=object(),
+        model=model or _SuggestionModel(),
         messages=[
             HumanMessage(content="请根据知识库回答这个问题"),
             ToolMessage(
@@ -28,7 +41,20 @@ def _bad_response() -> ModelResponse:
     return ModelResponse(result=[AIMessage(content="这是一个没有 citation 的回答。")])
 
 
-def _good_response() -> ModelResponse:
+def _good_stage_one_response() -> ModelResponse:
+    return ModelResponse(
+        result=[
+            AIMessage(
+                content=(
+                    "根据现有资料，可以得出相关结论。"
+                    "[citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)"
+                )
+            )
+        ]
+    )
+
+
+def _response_with_prebuilt_sections() -> ModelResponse:
     return ModelResponse(
         result=[
             AIMessage(
@@ -36,18 +62,10 @@ def _good_response() -> ModelResponse:
                     "根据现有资料，可以得出相关结论。"
                     "[citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)\n\n"
                     "参考文献\n"
-                    "1. [citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)"
+                    "1. [citation:旧引用](/old)\n\n"
+                    "建议问题\n"
+                    "1. 旧问题？"
                 )
-            )
-        ]
-    )
-
-
-def _good_response_without_reference_section() -> ModelResponse:
-    return ModelResponse(
-        result=[
-            AIMessage(
-                content="根据现有资料，可以得出相关结论。[citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)"
             )
         ]
     )
@@ -58,12 +76,12 @@ def _refusal_response(content: str) -> ModelResponse:
 
 
 class TestCitationEnforcementMiddleware:
-    """Tests for retry and fallback behavior."""
+    """Tests for retry, staged assembly, and refusal behavior."""
 
     def test_retries_until_second_retry_succeeds(self):
         middleware = CitationEnforcementMiddleware()
-        request = _build_request()
-        responses = [_bad_response(), _bad_response(), _good_response()]
+        request = _build_request(model=_SuggestionModel("继续追问一？\n继续追问二？\n继续追问三？"))
+        responses = [_bad_response(), _bad_response(), _good_stage_one_response()]
         seen_requests: list[ModelRequest] = []
 
         def handler(current_request: ModelRequest) -> ModelResponse:
@@ -71,8 +89,13 @@ class TestCitationEnforcementMiddleware:
             return responses[len(seen_requests) - 1]
 
         final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
 
-        assert final_response.result[-1].content == _good_response().result[-1].content
+        assert "根据现有资料，可以得出相关结论。" in content
+        assert "参考文献" in content
+        assert "1. [citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)" in content
+        assert "建议问题" in content
+        assert "1. 继续追问一？" in content
         assert len(seen_requests) == 3
         assert seen_requests[1].system_message is not None
         assert "previous draft was blocked" in str(seen_requests[1].system_message.content)
@@ -81,9 +104,9 @@ class TestCitationEnforcementMiddleware:
             seen_requests[2].system_message.content
         ).lower()
 
-    def test_returns_final_refusal_after_all_retries_fail(self):
+    def test_returns_final_refusal_after_all_retries_fail_and_skips_reference_stage(self):
         middleware = CitationEnforcementMiddleware()
-        request = _build_request()
+        request = _build_request(model=_SuggestionModel("缩小范围？\n指定书名？\n补充线索？"))
         seen_requests: list[ModelRequest] = []
 
         def handler(current_request: ModelRequest) -> ModelResponse:
@@ -91,29 +114,38 @@ class TestCitationEnforcementMiddleware:
             return _bad_response()
 
         final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
 
         assert len(seen_requests) == 3
-        assert final_response.result[-1].content == FINAL_FALLBACK_RESPONSE
+        assert content.startswith(FINAL_FALLBACK_RESPONSE)
+        assert "参考文献" not in content
+        assert "建议问题" in content
+        assert "1. 缩小范围？" in content
         assert final_response.result[-1].tool_calls == []
 
-    def test_retries_when_only_citation_exists_without_reference_section(self):
+    def test_stage_two_rebuilds_reference_section_and_stage_three_rebuilds_suggestions(self):
         middleware = CitationEnforcementMiddleware()
-        request = _build_request()
+        request = _build_request(model=_SuggestionModel("新问题一？\n新问题二？\n新问题三？"))
         seen_requests: list[ModelRequest] = []
-        responses = [_good_response_without_reference_section(), _good_response()]
 
         def handler(current_request: ModelRequest) -> ModelResponse:
             seen_requests.append(current_request)
-            return responses[len(seen_requests) - 1]
+            return _response_with_prebuilt_sections()
 
         final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
 
-        assert len(seen_requests) == 2
-        assert final_response.result[-1].content == _good_response().result[-1].content
+        assert len(seen_requests) == 1
+        assert "[citation:旧引用](/old)" not in content
+        assert "旧问题？" not in content
+        assert "参考文献" in content
+        assert "1. [citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)" in content
+        assert "建议问题" in content
+        assert "1. 新问题一？" in content
 
     def test_allows_refusal_without_reference_section_when_catalog_has_no_material(self):
         middleware = CitationEnforcementMiddleware()
-        request = _build_request()
+        request = _build_request(model=_SuggestionModel("缩小到更具体时期？\n指定书名或章节？\n优先核实哪条史料？"))
         seen_requests: list[ModelRequest] = []
         refusal = _refusal_response("【无法回答】当前书目中暂无相关资料，无法根据现有资料回答这个问题。")
 
@@ -122,13 +154,16 @@ class TestCitationEnforcementMiddleware:
             return refusal
 
         final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
 
         assert len(seen_requests) == 1
-        assert final_response.result[-1].content == refusal.result[-1].content
+        assert content.startswith("【无法回答】当前书目中暂无相关资料")
+        assert "参考文献" not in content
+        assert "建议问题" in content
 
     def test_allows_no_relevant_information_refusal_without_reference_section(self):
         middleware = CitationEnforcementMiddleware()
-        request = _build_request()
+        request = _build_request(model=_SuggestionModel("换一个更窄的问题？\n指定材料范围？\n先查哪条线索？"))
         seen_requests: list[ModelRequest] = []
         refusal = _refusal_response("【无法回答】No relevant information found in the knowledge base, so I cannot answer from the provided materials.")
 
@@ -137,6 +172,9 @@ class TestCitationEnforcementMiddleware:
             return refusal
 
         final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
 
         assert len(seen_requests) == 1
-        assert final_response.result[-1].content == refusal.result[-1].content
+        assert content.startswith("【无法回答】No relevant information found")
+        assert "参考文献" not in content
+        assert "建议问题" in content

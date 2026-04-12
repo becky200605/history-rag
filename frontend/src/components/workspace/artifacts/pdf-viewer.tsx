@@ -22,6 +22,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 export interface PdfViewerProps {
   url: string;
   initialPage?: number;
+  page?: number;
   className?: string;
   onPageChange?: (page: number) => void;
   toolbarExtra?: ReactNode;
@@ -30,6 +31,7 @@ export interface PdfViewerProps {
 export function PdfViewer({
   url,
   initialPage = 0,
+  page,
   className,
   onPageChange,
   toolbarExtra,
@@ -47,6 +49,12 @@ export function PdfViewer({
       setPageNumber(initialPage + 1);
     }
   }, [initialPage]);
+
+  useEffect(() => {
+    if (typeof page === "number" && page >= 0) {
+      setPageNumber(page + 1);
+    }
+  }, [page]);
 
   const onDocumentLoadSuccess = useCallback(
     ({ numPages }: { numPages: number }) => {

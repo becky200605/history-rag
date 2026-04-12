@@ -240,6 +240,36 @@ function buildPersonalFolderTree(
     }));
 }
 
+function isFileInFolderScope(file: ManagedKnowledgeFile, selectedFolderPath: string) {
+  if (selectedFolderPath === "all") {
+    return true;
+  }
+  if (selectedFolderPath === "personal-root") {
+    return file.source === "personal";
+  }
+  if (selectedFolderPath === "system-root") {
+    return file.source === "global";
+  }
+  if (selectedFolderPath.startsWith("personal:")) {
+    return file.folderPath === selectedFolderPath;
+  }
+  return (
+    file.folderPath === selectedFolderPath
+    || file.folderPath.startsWith(`${selectedFolderPath}/`)
+  );
+}
+
+function isFileDirectlyInFolder(file: ManagedKnowledgeFile, selectedFolderPath: string) {
+  if (
+    selectedFolderPath === "all"
+    || selectedFolderPath === "personal-root"
+    || selectedFolderPath === "system-root"
+  ) {
+    return false;
+  }
+  return file.folderPath === selectedFolderPath;
+}
+
 function knowledgeTypeLabel(value?: string | null) {
   switch ((value ?? "").toLowerCase()) {
     case "core":
@@ -875,23 +905,17 @@ export default function KnowledgeManagementPage() {
     }
   }, [folderTree, selectedFolderPath]);
 
+  const scopedFilteredFiles = useMemo(
+    () => filteredFiles.filter((file) => isFileInFolderScope(file, selectedFolderPath)),
+    [filteredFiles, selectedFolderPath],
+  );
+
   const folderFilteredFiles = useMemo(() => {
-    if (selectedFolderPath === "all") {
-      return filteredFiles;
+    if (searchQuery.trim()) {
+      return scopedFilteredFiles;
     }
-    if (selectedFolderPath === "personal-root") {
-      return filteredFiles.filter((file) => file.source === "personal");
-    }
-    if (selectedFolderPath === "system-root") {
-      return filteredFiles.filter((file) => file.source === "global");
-    }
-    if (selectedFolderPath.startsWith("personal:")) {
-      return filteredFiles.filter((file) => file.folderPath === selectedFolderPath);
-    }
-    return filteredFiles.filter((file) => {
-      return file.folderPath === selectedFolderPath || file.folderPath.startsWith(`${selectedFolderPath}/`);
-    });
-  }, [filteredFiles, selectedFolderPath]);
+    return scopedFilteredFiles.filter((file) => isFileDirectlyInFolder(file, selectedFolderPath));
+  }, [scopedFilteredFiles, searchQuery, selectedFolderPath]);
 
   useEffect(() => {
     const visibleRowIds = new Set(folderFilteredFiles.map((file) => file.rowId));

@@ -13,17 +13,13 @@
 # Configure available LLM models for the agent to use
 
 models:
-  - name: openai/gpt-5.4
+  - name: gpt-5.4-univibe
     display_name: gpt-5.4
     use: langchain_openai:ChatOpenAI
-    model: openai/gpt-5.4
-    api_key: $OPENAI_REVERSE_API_KEY
-    base_url: https://api.univibe.cc/openai/v1/chat/completions
+    model: gpt-5.4
+    api_key: sk-tjPmJVSJ1aN5SHplCNvOMhsRCQjulrkn
+    base_url: https://api.univibe.cc/openai/v1
     supports_thinking: true
-    when_thinking_enabled:
-      extra_body:
-        thinking:
-          type: enabled
 
   # Example: Anthropic Claude model
   # - name: claude-3-5-sonnet

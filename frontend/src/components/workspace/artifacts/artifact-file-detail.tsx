@@ -1,17 +1,13 @@
 import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
   Code2Icon,
   CopyIcon,
   DownloadIcon,
   EyeIcon,
-  LanguagesIcon,
   LoaderIcon,
   PackageIcon,
   SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
-import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
@@ -25,7 +21,6 @@ import {
   ArtifactTitle,
 } from "@/components/ai-elements/artifact";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select, SelectItem } from "@/components/ui/select";
 import {
   SelectContent,
@@ -39,7 +34,6 @@ import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
 import {
-  buildKnowledgePageImageURLForDocumentUrl,
   getKnowledgeParagraphLocationForDocumentUrl,
   type KnowledgeParagraphLocation,
 } from "@/core/knowledge/api";
@@ -54,24 +48,7 @@ import { CitationLink } from "../citations/citation-link";
 import { Tooltip } from "../tooltip";
 
 import { useArtifacts } from "./context";
-import { KNOWLEDGE_SIDE_PANE_WIDTH } from "./knowledge-layout";
-import { KnowledgePageSurface } from "./knowledge-page-surface";
-import {
-  KnowledgeSidePane,
-  type KnowledgeSidePaneMode,
-} from "./knowledge-side-pane";
-
-const PdfViewer = dynamic(
-  () => import("./pdf-viewer").then((module) => module.PdfViewer),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex size-full items-center justify-center bg-muted/30 p-4 text-sm text-muted-foreground">
-        正在加载 PDF...
-      </div>
-    ),
-  },
-);
+import { KnowledgePdfReader } from "./knowledge-pdf-reader";
 
 type PreviewVariant = "rendered" | "original" | "split";
 
@@ -489,7 +466,6 @@ export function ArtifactFileDetail({
             knowledgePdfLocator.paragraphNo) ? (
             <KnowledgeCitationPdfViewer
               documentUrl={knowledgePdfUrl}
-              pdfUrl={knowledgePdfUrl}
               pageNo={knowledgePdfLocator.pageNo}
               pdfPageNo={knowledgePdfLocator.pdfPageNo}
               paragraphNo={knowledgePdfLocator.paragraphNo}
@@ -498,7 +474,6 @@ export function ArtifactFileDetail({
           ) : (
             <KnowledgeDocumentPdfViewer
               documentUrl={knowledgePdfUrl}
-              pdfUrl={knowledgePdfUrl}
               initialPage={knowledgePdfPage ?? 0}
               filename={filepath}
               onCompareToggle={onKnowledgeCompareToggle}
@@ -553,137 +528,54 @@ export function ArtifactFileDetail({
   );
 }
 
-type KnowledgeCitationState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; data: KnowledgeParagraphLocation };
-
-function KnowledgePaneModeButtons({
-  mode,
-  onModeChange,
-}: {
-  mode: KnowledgeSidePaneMode | null;
-  onModeChange: (mode: KnowledgeSidePaneMode | null) => void;
-}) {
-  return (
-    <>
-      <Button
-        variant={mode === "compare" ? "default" : "outline"}
-        size="sm"
-        className="h-8"
-        onClick={() => onModeChange(mode === "compare" ? null : "compare")}
-      >
-        原文对照
-      </Button>
-      <Button
-        variant={mode === "translation" ? "default" : "outline"}
-        size="sm"
-        className="h-8"
-        onClick={() => onModeChange(mode === "translation" ? null : "translation")}
-      >
-        <LanguagesIcon className="mr-1.5 size-4" />
-        原文翻译
-      </Button>
-    </>
-  );
-}
-
 function KnowledgeDocumentPdfViewer({
   documentUrl,
-  pdfUrl,
   initialPage,
   filename,
   onCompareToggle,
 }: {
   documentUrl: string;
-  pdfUrl: string;
   initialPage: number;
   filename: string;
   onCompareToggle?: (open: boolean) => void;
 }) {
-  const [sidePaneMode, setSidePaneMode] = useState<KnowledgeSidePaneMode | null>(null);
-  const [currentPdfPageNo, setCurrentPdfPageNo] = useState<number>(initialPage + 1);
-  const sidePaneOpen = sidePaneMode !== null;
-
   useEffect(() => {
-    onCompareToggle?.(sidePaneOpen);
-  }, [onCompareToggle, sidePaneOpen]);
-
-  useEffect(() => {
-    return () => {
-      onCompareToggle?.(false);
-    };
+    onCompareToggle?.(false);
+    return () => onCompareToggle?.(false);
   }, [onCompareToggle]);
 
   return (
-    <div
-      className="grid size-full min-h-0"
-      style={{
-        gridTemplateColumns: sidePaneOpen
-          ? `minmax(0, 1fr) ${KNOWLEDGE_SIDE_PANE_WIDTH}px`
-          : "minmax(0, 1fr)",
-      }}
-    >
-      <div className="min-w-0">
-        <PdfViewer
-          url={pdfUrl}
-          initialPage={initialPage}
-          className="size-full"
-          onPageChange={(page) => setCurrentPdfPageNo(page + 1)}
-          toolbarExtra={(
-            <KnowledgePaneModeButtons
-              mode={sidePaneMode}
-              onModeChange={setSidePaneMode}
-            />
-          )}
-        />
-      </div>
-      {sidePaneMode && (
-        <KnowledgeSidePane
-          documentUrl={documentUrl}
-          currentPdfPageNo={currentPdfPageNo}
-          originFilename={filename}
-          originTitle={filename.replace(/\.pdf$/i, "")}
-          mode={sidePaneMode}
-        />
-      )}
-    </div>
+    <KnowledgePdfReader
+      documentUrl={documentUrl}
+      initialPdfPageNo={initialPage + 1}
+      originFilename={filename}
+      originTitle={filename.replace(/\.pdf$/i, "")}
+    />
   );
 }
 
 function KnowledgeCitationPdfViewer({
   documentUrl,
-  pdfUrl,
   pageNo,
   pdfPageNo,
   paragraphNo,
   onCompareToggle,
 }: {
   documentUrl: string;
-  pdfUrl: string;
   pageNo: string | null;
   pdfPageNo: string | null;
   paragraphNo: string | null;
   onCompareToggle?: (open: boolean) => void;
 }) {
-  const [state, setState] = useState<KnowledgeCitationState>({ status: "loading" });
-  const [numPages, setNumPages] = useState<number | null>(null);
-  const [currentPdfPageNo, setCurrentPdfPageNo] = useState<number | null>(null);
-  const [pageInputValue, setPageInputValue] = useState<string>("");
-  const [viewportSize, setViewportSize] = useState<{ width: number; height: number } | null>(null);
-  const [imageNaturalSize, setImageNaturalSize] = useState<{ width: number; height: number } | null>(null);
-  const [sidePaneMode, setSidePaneMode] = useState<KnowledgeSidePaneMode | null>(null);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
-  const sidePaneOpen = sidePaneMode !== null;
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | { status: "error"; message: string }
+    | { status: "ready"; data: KnowledgeParagraphLocation }
+  >({ status: "loading" });
 
   useEffect(() => {
-    onCompareToggle?.(sidePaneOpen);
-  }, [onCompareToggle, sidePaneOpen]);
-
-  useEffect(() => {
-    return () => {
-      onCompareToggle?.(false);
-    };
+    onCompareToggle?.(false);
+    return () => onCompareToggle?.(false);
   }, [onCompareToggle]);
 
   useEffect(() => {
@@ -708,99 +600,6 @@ function KnowledgeCitationPdfViewer({
     };
   }, [documentUrl, pageNo, pdfPageNo, paragraphNo]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let cleanup: (() => Promise<void>) | null = null;
-
-    void (async () => {
-      try {
-        const { pdfjs } = await import("react-pdf");
-        const loadingTask = pdfjs.getDocument(pdfUrl);
-        cleanup = async () => {
-          await loadingTask.destroy();
-        };
-
-        const document = await loadingTask.promise;
-        if (!cancelled) {
-          setNumPages(document.numPages);
-        }
-      } catch {
-        if (!cancelled) {
-          setNumPages(null);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (cleanup) {
-        void cleanup();
-      }
-    };
-  }, [pdfUrl]);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) {
-      return;
-    }
-    const updateSize = () => {
-      setViewportSize({
-        width: viewport.clientWidth,
-        height: viewport.clientHeight,
-      });
-    };
-    updateSize();
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(viewport);
-    return () => {
-      observer.disconnect();
-    };
-  }, [currentPdfPageNo]);
-
-  useEffect(() => {
-    if (state.status !== "ready") {
-      setCurrentPdfPageNo(null);
-      return;
-    }
-    setCurrentPdfPageNo(state.data.pdf_page_no ?? null);
-  }, [state]);
-
-  useEffect(() => {
-    setImageNaturalSize(null);
-  }, [currentPdfPageNo]);
-
-  const totalPages =
-    state.status === "ready" ? numPages ?? state.data.page_count ?? null : numPages;
-
-  const goToPage = (page: number) => {
-    if (page < 1) {
-      return;
-    }
-    if (totalPages && page > totalPages) {
-      return;
-    }
-    setCurrentPdfPageNo(page);
-    setPageInputValue("");
-  };
-
-  const goToPrevPage = () => {
-    if (!currentPdfPageNo || currentPdfPageNo <= 1) {
-      return;
-    }
-    goToPage(currentPdfPageNo - 1);
-  };
-
-  const goToNextPage = () => {
-    if (!currentPdfPageNo) {
-      return;
-    }
-    if (totalPages && currentPdfPageNo >= totalPages) {
-      return;
-    }
-    goToPage(currentPdfPageNo + 1);
-  };
-
   if (state.status === "loading") {
     return (
       <div className="flex size-full items-center justify-center bg-muted/30 p-4 text-sm text-muted-foreground">
@@ -817,178 +616,13 @@ function KnowledgeCitationPdfViewer({
     );
   }
 
-  const { data } = state;
-  const imageUrl = currentPdfPageNo
-    ? buildKnowledgePageImageURLForDocumentUrl(documentUrl, currentPdfPageNo)
-    : null;
-  const isCitationPage = currentPdfPageNo === data.pdf_page_no;
-  const pageWidth = data.page_meta?.page_width ?? null;
-  const pageHeight = data.page_meta?.page_height ?? null;
-  const displayWidth = imageNaturalSize?.width ?? pageWidth ?? null;
-  const displayHeight = imageNaturalSize?.height ?? pageHeight ?? null;
-  const bbox = data.bbox;
-  const fittedScale =
-    displayWidth && displayHeight && viewportSize
-      ? Math.min(
-          viewportSize.width / displayWidth,
-          viewportSize.height / displayHeight,
-          1,
-        )
-      : null;
-  const renderedWidth =
-    displayWidth && fittedScale ? Math.floor(displayWidth * fittedScale) : null;
-  const renderedHeight =
-    displayHeight && fittedScale ? Math.floor(displayHeight * fittedScale) : null;
-  const overlayStyle =
-    isCitationPage &&
-    bbox &&
-    pageWidth &&
-    pageHeight &&
-    renderedWidth &&
-    renderedHeight
-      ? {
-          left: `${(bbox.x / pageWidth) * 100}%`,
-          top: `${(bbox.y / pageHeight) * 100}%`,
-          width: `${(bbox.width / pageWidth) * 100}%`,
-          height: `${(bbox.height / pageHeight) * 100}%`,
-        }
-      : null;
-
   return (
-    <div className="flex size-full flex-col overflow-hidden bg-muted/20">
-      <div className="flex items-center justify-between border-b bg-muted/50 px-2 py-1.5">
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={goToPrevPage}
-            disabled={!currentPdfPageNo || currentPdfPageNo <= 1}
-          >
-            <ChevronLeftIcon className="size-4" />
-          </Button>
-          <div className="flex items-center gap-1 text-sm">
-            <Input
-              type="text"
-              className="h-7 w-12 text-center"
-              value={
-                pageInputValue !== ""
-                  ? pageInputValue
-                  : (currentPdfPageNo?.toString() ?? "")
-              }
-              onChange={(event) => setPageInputValue(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") {
-                  return;
-                }
-                const page = parseInt(pageInputValue, 10);
-                if (!Number.isNaN(page)) {
-                  goToPage(page);
-                }
-              }}
-              onBlur={() => setPageInputValue("")}
-              onFocus={() => {
-                if (currentPdfPageNo) {
-                  setPageInputValue(String(currentPdfPageNo));
-                }
-              }}
-            />
-            <span className="text-muted-foreground">/ {totalPages ?? "?"}</span>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={goToNextPage}
-            disabled={!currentPdfPageNo || (totalPages ? currentPdfPageNo >= totalPages : false)}
-          >
-            <ChevronRightIcon className="size-4" />
-          </Button>
-          <div className="ml-2 flex items-center gap-2">
-            <KnowledgePaneModeButtons
-              mode={sidePaneMode}
-              onModeChange={setSidePaneMode}
-            />
-          </div>
-        </div>
-        <div className="text-xs text-muted-foreground">
-          {isCitationPage && data.paragraph_no
-            ? `引用段落：第 ${data.paragraph_no} 段`
-            : "当前页预览"}
-        </div>
-      </div>
-      <div
-        className="grid min-h-0 flex-1"
-        style={{
-          gridTemplateColumns: sidePaneOpen
-            ? `minmax(0, 1fr) ${KNOWLEDGE_SIDE_PANE_WIDTH}px`
-            : "minmax(0, 1fr)",
-        }}
-      >
-        {imageUrl ? (
-          <div
-            className={cn(
-              "flex min-h-0 min-w-0 p-4",
-              sidePaneOpen ? "items-center justify-center pl-3 pr-2" : "items-center justify-center",
-            )}
-          >
-            <div
-              ref={viewportRef}
-              className={cn(
-                "flex h-full w-full overflow-hidden justify-center",
-                sidePaneOpen ? "items-center" : "items-center",
-              )}
-            >
-              <KnowledgePageSurface
-                width={renderedWidth}
-                height={renderedHeight}
-              >
-                <img
-                  src={imageUrl}
-                  alt={`${data.title} PDF page ${data.pdf_page_no ?? ""}`}
-                  className="block bg-white object-contain"
-                  style={
-                    renderedWidth && renderedHeight
-                      ? {
-                          width: `${renderedWidth}px`,
-                          height: `${renderedHeight}px`,
-                        }
-                      : undefined
-                  }
-                  onLoad={(event) => {
-                    setImageNaturalSize({
-                      width: event.currentTarget.naturalWidth,
-                      height: event.currentTarget.naturalHeight,
-                    });
-                  }}
-                />
-                {overlayStyle && (
-                  <div
-                    className="pointer-events-none absolute rounded-md border-2 border-emerald-500/90 bg-emerald-300/12"
-                    style={overlayStyle}
-                  />
-                )}
-              </KnowledgePageSurface>
-            </div>
-          </div>
-        ) : (
-          <div className="flex size-full items-center justify-center p-4 text-sm text-muted-foreground">
-            当前 citation 缺少 PDF 页码，无法渲染整页预览。
-          </div>
-        )}
-        {sidePaneMode && (
-          <KnowledgeSidePane
-            documentUrl={documentUrl}
-            currentPdfPageNo={currentPdfPageNo}
-            originFilename={data.filename}
-            originTitle={data.title}
-            mode={sidePaneMode}
-            referencePageWidth={renderedWidth}
-            referencePageHeight={renderedHeight}
-          />
-        )}
-      </div>
-    </div>
+    <KnowledgePdfReader
+      documentUrl={documentUrl}
+      initialPdfPageNo={state.data.pdf_page_no ?? 1}
+      originFilename={state.data.filename}
+      originTitle={state.data.title}
+    />
   );
 }
 

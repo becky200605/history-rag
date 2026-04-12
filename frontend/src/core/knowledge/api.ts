@@ -118,6 +118,7 @@ export interface KnowledgeStructuredPage {
   scope?: "global" | "thread" | "user" | null;
   filename: string;
   title: string;
+  layout_hint?: string | null;
   page_count?: number | null;
   page_no?: number | null;
   pdf_page_no?: number | null;

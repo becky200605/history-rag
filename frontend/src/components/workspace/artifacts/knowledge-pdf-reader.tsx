@@ -59,17 +59,38 @@ type ContextMenuState = {
 type TranslationLayoutItem = {
   contextParagraph: ContextParagraph;
   paragraph: KnowledgeStructuredParagraph;
+  source: "current" | "previous-spill";
+  baseWidth: number;
   baseHeight: number;
+  overflowWidth: number;
   overflowHeight: number;
   textLeft: number;
   textTop: number;
   textWidth: number;
+  textHeight: number;
   translatedText: string;
 };
 
+type RenderParagraphItem = {
+  key: string;
+  contextParagraph: ContextParagraph;
+  paragraph: KnowledgeStructuredParagraph;
+  source: "current" | "previous-spill";
+  textLeft: number;
+  textTop: number;
+  textWidth: number;
+  textHeight: number;
+  visibleLeft: number;
+  visibleTop: number;
+  visibleWidth: number;
+  visibleHeight: number;
+};
+
 const TRANSLATION_LINE_HEIGHT = 1.48;
+const VERTICAL_TRANSLATION_LINE_HEIGHT = 1.18;
 const TRANSLATION_BLOCK_PADDING_X = 8;
 const TRANSLATION_BLOCK_PADDING_Y = 6;
+const PAGE_OVERFLOW_TOLERANCE = 8;
 
 function paragraphKey(
   page: KnowledgeStructuredPage,
@@ -92,7 +113,9 @@ function buildContextParagraph(
 }
 
 function buildExcerptTitle(originTitle: string, paragraph: ContextParagraph) {
-  const location = paragraph.paragraphNo ? `第${paragraph.paragraphNo}段` : "摘录";
+  const location = paragraph.paragraphNo
+    ? `第${paragraph.paragraphNo}段`
+    : "摘录";
   return `${originTitle} ${location}摘录`;
 }
 
@@ -161,23 +184,49 @@ function estimateTextHeight(text: string, width: number, fontSize: number) {
   return lines * fontSize * TRANSLATION_LINE_HEIGHT;
 }
 
-function paragraphFontSize(paragraph: KnowledgeStructuredParagraph) {
+function estimateVerticalTextWidth(
+  text: string,
+  height: number,
+  fontSize: number,
+) {
+  const normalizedHeight = Math.max(height / fontSize, 1);
+  const columns = text.split("\n").reduce((total, line) => {
+    const lineUnits = Array.from(line).reduce(
+      (sum, character) => sum + characterWidthWeight(character),
+      0,
+    );
+    return total + Math.max(1, Math.ceil(lineUnits / normalizedHeight));
+  }, 0);
+  return columns * fontSize * 1.14;
+}
+
+function paragraphFontSize(
+  paragraph: KnowledgeStructuredParagraph,
+  text: string,
+  layoutHint: string | null | undefined,
+) {
   const bbox = paragraph.bbox;
   if (!bbox) {
     return 14;
   }
 
   const availableWidth = Math.max(bbox.width - TRANSLATION_BLOCK_PADDING_X, 18);
-  const availableHeight = Math.max(bbox.height - TRANSLATION_BLOCK_PADDING_Y, 14);
+  const availableHeight = Math.max(
+    bbox.height - TRANSLATION_BLOCK_PADDING_Y,
+    14,
+  );
   const maxSize = Math.max(9, Math.min(28, Math.floor(availableHeight * 0.72)));
+  const isVertical = String(layoutHint || "").toLowerCase() === "vertical";
   let low = 8;
   let high = maxSize;
   let best = 8;
 
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
-    const estimatedHeight = estimateTextHeight(paragraph.text, availableWidth, mid);
-    if (estimatedHeight <= availableHeight) {
+    const fits = isVertical
+      ? estimateVerticalTextWidth(text, availableHeight, mid) <= availableWidth
+      : estimateTextHeight(text, availableWidth, mid) <= availableHeight;
+    if (fits) {
       best = mid;
       low = mid + 1;
     } else {
@@ -186,6 +235,117 @@ function paragraphFontSize(paragraph: KnowledgeStructuredParagraph) {
   }
 
   return best;
+}
+
+function buildRenderableParagraphItems(
+  currentPage: KnowledgeStructuredPage | null,
+  previousPage: KnowledgeStructuredPage | null,
+  layoutHint: string | null | undefined,
+) {
+  if (!currentPage) {
+    return [];
+  }
+
+  const currentPageWidth = currentPage.page_meta?.page_width ?? 0;
+  const currentPageHeight = currentPage.page_meta?.page_height ?? 0;
+  if (currentPageWidth <= 0 || currentPageHeight <= 0) {
+    return [];
+  }
+
+  const isVertical = String(layoutHint || "").toLowerCase() === "vertical";
+  const items: RenderParagraphItem[] = [];
+
+  for (const paragraph of currentPage.paragraphs ?? []) {
+    const bbox = paragraph.bbox;
+    if (!bbox) {
+      continue;
+    }
+
+    const visibleLeft = Math.max(bbox.x, 0);
+    const visibleTop = Math.max(bbox.y, 0);
+    const visibleRight = Math.min(bbox.x + bbox.width, currentPageWidth);
+    const visibleBottom = Math.min(bbox.y + bbox.height, currentPageHeight);
+    if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) {
+      continue;
+    }
+
+    items.push({
+      key: paragraphKey(currentPage, paragraph),
+      contextParagraph: buildContextParagraph(currentPage, paragraph),
+      paragraph,
+      source: "current",
+      textLeft: bbox.x,
+      textTop: bbox.y,
+      textWidth: bbox.width,
+      textHeight: bbox.height,
+      visibleLeft,
+      visibleTop,
+      visibleWidth: visibleRight - visibleLeft,
+      visibleHeight: visibleBottom - visibleTop,
+    });
+  }
+
+  const previousPageWidth = previousPage?.page_meta?.page_width ?? 0;
+  const previousPageHeight = previousPage?.page_meta?.page_height ?? 0;
+  if (previousPage && previousPageWidth > 0 && previousPageHeight > 0) {
+    for (const paragraph of previousPage.paragraphs ?? []) {
+      const bbox = paragraph.bbox;
+      if (!bbox) {
+        continue;
+      }
+
+      const overflowDetected = isVertical
+        ? bbox.x + bbox.width > previousPageWidth + PAGE_OVERFLOW_TOLERANCE
+        : bbox.y + bbox.height > previousPageHeight + PAGE_OVERFLOW_TOLERANCE;
+      if (!overflowDetected) {
+        continue;
+      }
+
+      const projectedLeft = isVertical ? bbox.x - previousPageWidth : bbox.x;
+      const projectedTop = isVertical ? bbox.y : bbox.y - previousPageHeight;
+      const visibleLeft = Math.max(projectedLeft, 0);
+      const visibleTop = Math.max(projectedTop, 0);
+      const visibleRight = Math.min(
+        projectedLeft + bbox.width,
+        currentPageWidth,
+      );
+      const visibleBottom = Math.min(
+        projectedTop + bbox.height,
+        currentPageHeight,
+      );
+      if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) {
+        continue;
+      }
+
+      items.push({
+        key: `${paragraphKey(previousPage, paragraph)}:spill-${currentPage.pdf_page_no ?? currentPage.page_no ?? "page"}`,
+        contextParagraph: buildContextParagraph(previousPage, paragraph),
+        paragraph,
+        source: "previous-spill",
+        textLeft: projectedLeft,
+        textTop: projectedTop,
+        textWidth: bbox.width,
+        textHeight: bbox.height,
+        visibleLeft,
+        visibleTop,
+        visibleWidth: visibleRight - visibleLeft,
+        visibleHeight: visibleBottom - visibleTop,
+      });
+    }
+  }
+
+  return items.sort((left, right) => {
+    if (isVertical) {
+      if (left.visibleLeft !== right.visibleLeft) {
+        return right.visibleLeft - left.visibleLeft;
+      }
+      return left.visibleTop - right.visibleTop;
+    }
+    if (left.visibleTop !== right.visibleTop) {
+      return left.visibleTop - right.visibleTop;
+    }
+    return left.visibleLeft - right.visibleLeft;
+  });
 }
 
 export function KnowledgePdfReader({
@@ -205,7 +365,9 @@ export function KnowledgePdfReader({
   const createDerivedMutation = useCreateUserDerivedKnowledge();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const translationBlockRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const translationBlockRefs = useRef<Record<string, HTMLDivElement | null>>(
+    {},
+  );
 
   const [mode, setMode] = useState<ReaderMode>("pdf");
   const [currentPdfPageNo, setCurrentPdfPageNo] = useState<number>(
@@ -213,6 +375,8 @@ export function KnowledgePdfReader({
   );
   const [pageInputValue, setPageInputValue] = useState("");
   const [pageState, setPageState] = useState<PageState>({ status: "loading" });
+  const [previousPageData, setPreviousPageData] =
+    useState<KnowledgeStructuredPage | null>(null);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [translationCache, setTranslationCache] = useState<
@@ -229,6 +393,7 @@ export function KnowledgePdfReader({
     setCurrentPdfPageNo(Math.max(initialPdfPageNo, 1));
     setPageInputValue("");
     setPageState({ status: "loading" });
+    setPreviousPageData(null);
     setContextMenu(null);
     setHoveredKey(null);
   }, [documentUrl, initialPdfPageNo]);
@@ -236,19 +401,32 @@ export function KnowledgePdfReader({
   useEffect(() => {
     let cancelled = false;
     setPageState({ status: "loading" });
+    setPreviousPageData(null);
     setContextMenu(null);
     setHoveredKey(null);
 
-    getKnowledgeStructuredPageForDocumentUrl(documentUrl, {
-      pdfPageNo: currentPdfPageNo,
-    })
-      .then((data) => {
+    const previousPagePromise =
+      currentPdfPageNo > 1
+        ? getKnowledgeStructuredPageForDocumentUrl(documentUrl, {
+            pdfPageNo: currentPdfPageNo - 1,
+          }).catch(() => null)
+        : Promise.resolve(null);
+
+    Promise.all([
+      getKnowledgeStructuredPageForDocumentUrl(documentUrl, {
+        pdfPageNo: currentPdfPageNo,
+      }),
+      previousPagePromise,
+    ])
+      .then(([data, previousPage]) => {
         if (!cancelled) {
+          setPreviousPageData(previousPage);
           setPageState({ status: "ready", data });
         }
       })
       .catch((error: Error) => {
         if (!cancelled) {
+          setPreviousPageData(null);
           setPageState({
             status: "error",
             message: error.message || "结构化页加载失败",
@@ -288,8 +466,12 @@ export function KnowledgePdfReader({
   const pageCount = pageData?.page_count ?? null;
   const pageWidth = pageData?.page_meta?.page_width ?? 0;
   const pageHeight = pageData?.page_meta?.page_height ?? 0;
+  const layoutHint = pageData?.layout_hint ?? null;
+  const isVerticalLayout =
+    String(layoutHint || "").toLowerCase() === "vertical";
   const pageImageUrl = useMemo(
-    () => buildKnowledgePageImageURLForDocumentUrl(documentUrl, currentPdfPageNo),
+    () =>
+      buildKnowledgePageImageURLForDocumentUrl(documentUrl, currentPdfPageNo),
     [currentPdfPageNo, documentUrl],
   );
 
@@ -301,20 +483,12 @@ export function KnowledgePdfReader({
   }, [pageData]);
 
   const translationMap = translationCacheKey
-    ? translationCache[translationCacheKey] ?? null
+    ? (translationCache[translationCacheKey] ?? null)
     : null;
 
-  const paragraphs = useMemo(
-    () =>
-      pageData
-        ? (pageData.paragraphs ?? [])
-            .filter((paragraph) => Boolean(paragraph.bbox))
-            .map((paragraph) => ({
-              contextParagraph: buildContextParagraph(pageData, paragraph),
-              paragraph,
-            }))
-        : [],
-    [pageData],
+  const renderParagraphItems = useMemo(
+    () => buildRenderableParagraphItems(pageData, previousPageData, layoutHint),
+    [layoutHint, pageData, previousPageData],
   );
 
   useEffect(() => {
@@ -348,7 +522,7 @@ export function KnowledgePdfReader({
       !pageData ||
       !translationCacheKey ||
       translationMap ||
-      paragraphs.length === 0
+      renderParagraphItems.length === 0
     ) {
       return;
     }
@@ -359,7 +533,7 @@ export function KnowledgePdfReader({
 
     translateKnowledgeParagraphsToChineseForDocumentUrl(
       documentUrl,
-      paragraphs.map((item) => ({
+      renderParagraphItems.map((item) => ({
         key: item.contextParagraph.key,
         text: item.contextParagraph.text,
       })),
@@ -392,7 +566,14 @@ export function KnowledgePdfReader({
     return () => {
       cancelled = true;
     };
-  }, [documentUrl, mode, pageData, paragraphs, translationCacheKey, translationMap]);
+  }, [
+    documentUrl,
+    mode,
+    pageData,
+    renderParagraphItems,
+    translationCacheKey,
+    translationMap,
+  ]);
 
   const activeKey = contextMenu?.paragraph.key ?? hoveredKey;
 
@@ -508,9 +689,8 @@ export function KnowledgePdfReader({
     );
   };
 
-  const displayScale = pageWidth > 0
-    ? Math.min((canvasWidth || pageWidth) / pageWidth, 1)
-    : 1;
+  const displayScale =
+    pageWidth > 0 ? Math.min((canvasWidth || pageWidth) / pageWidth, 1) : 1;
 
   const translationLayoutItems = useMemo(() => {
     if (!pageData || pageWidth <= 0 || pageHeight <= 0) {
@@ -518,47 +698,53 @@ export function KnowledgePdfReader({
     }
 
     const items: TranslationLayoutItem[] = [];
-    let extraOffset = 0;
+    let verticalOffset = 0;
 
-    for (const paragraph of pageData.paragraphs ?? []) {
-      const bbox = paragraph.bbox;
-      if (!bbox) {
-        continue;
-      }
-
-      const contextParagraph = buildContextParagraph(pageData, paragraph);
+    for (const renderItem of renderParagraphItems) {
+      const contextParagraph = renderItem.contextParagraph;
       const translatedText = translationMap
-        ? (translationMap[contextParagraph.key] ?? paragraph.text)
+        ? (translationMap[contextParagraph.key] ?? renderItem.paragraph.text)
         : "";
-      const textLeft = bbox.x * displayScale;
-      const textTop = bbox.y * displayScale + extraOffset;
-      const textWidth = bbox.width * displayScale;
-      const baseHeight = bbox.height * displayScale;
-      const blockHeight = translationBlockHeights[contextParagraph.key] ?? baseHeight;
+      const textLeft = renderItem.textLeft * displayScale;
+      const textTop =
+        renderItem.textTop * displayScale +
+        (isVerticalLayout ? 0 : verticalOffset);
+      const textWidth = renderItem.textWidth * displayScale;
+      const textHeight = renderItem.textHeight * displayScale;
+      const baseWidth = textWidth;
+      const baseHeight = textHeight;
+      const blockHeight =
+        translationBlockHeights[contextParagraph.key] ?? baseHeight;
       const overflowHeight = Math.max(0, blockHeight - baseHeight);
 
       items.push({
         contextParagraph,
-        paragraph,
+        paragraph: renderItem.paragraph,
+        source: renderItem.source,
+        baseWidth,
         baseHeight,
+        overflowWidth: 0,
         overflowHeight,
         textLeft,
         textTop,
         textWidth,
+        textHeight,
         translatedText,
       });
 
-      if (overflowHeight > 0) {
-        extraOffset += overflowHeight;
+      if (!isVerticalLayout && overflowHeight > 0) {
+        verticalOffset += overflowHeight;
       }
     }
 
     return items;
   }, [
     displayScale,
+    isVerticalLayout,
     pageData,
     pageHeight,
     pageWidth,
+    renderParagraphItems,
     translationBlockHeights,
     translationMap,
   ]);
@@ -568,14 +754,20 @@ export function KnowledgePdfReader({
       return 0;
     }
 
+    if (isVerticalLayout) {
+      return pageHeight * displayScale;
+    }
+
     return Math.max(
       pageHeight * displayScale,
-      ...translationLayoutItems.map((item) => item.textTop + item.baseHeight + item.overflowHeight),
+      ...translationLayoutItems.map(
+        (item) => item.textTop + item.baseHeight + item.overflowHeight,
+      ),
     );
-  }, [displayScale, pageHeight, translationLayoutItems]);
+  }, [displayScale, isVerticalLayout, pageHeight, translationLayoutItems]);
 
   useLayoutEffect(() => {
-    if (mode !== "translation") {
+    if (mode !== "translation" || isVerticalLayout) {
       return;
     }
 
@@ -596,7 +788,7 @@ export function KnowledgePdfReader({
     if (changed) {
       setTranslationBlockHeights(nextHeights);
     }
-  }, [mode, translationBlockHeights, translationLayoutItems]);
+  }, [isVerticalLayout, mode, translationBlockHeights, translationLayoutItems]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-[rgba(57,130,152,0.16)] bg-white">
@@ -616,7 +808,11 @@ export function KnowledgePdfReader({
               <Input
                 type="text"
                 className="h-8 w-14 rounded-lg border-[rgba(57,130,152,0.16)] text-center"
-                value={pageInputValue !== "" ? pageInputValue : String(currentPdfPageNo)}
+                value={
+                  pageInputValue !== ""
+                    ? pageInputValue
+                    : String(currentPdfPageNo)
+                }
                 onChange={(event) => setPageInputValue(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key !== "Enter") {
@@ -675,7 +871,9 @@ export function KnowledgePdfReader({
             </ToggleGroupItem>
           </ToggleGroup>
           <div className="hidden text-xs text-slate-500 md:block">
-            原页模式支持 hover 绿框与右键摘录
+            {isVerticalLayout
+              ? "竖排页按竖排节点重建，原页模式支持 hover 绿框与右键摘录"
+              : "原页模式支持 hover 绿框与右键摘录"}
           </div>
         </div>
       </div>
@@ -708,33 +906,37 @@ export function KnowledgePdfReader({
                 alt={`${pageState.data.title} 第 ${currentPdfPageNo} 页`}
                 className="block max-w-full rounded-md bg-white shadow-[0_24px_50px_-30px_rgba(15,23,42,0.45)]"
               />
-              <div className="absolute inset-0">
-                {paragraphs.map(({ contextParagraph, paragraph }) => {
-                  const bbox = paragraph.bbox;
-                  if (!bbox || pageWidth <= 0 || pageHeight <= 0) {
+              <div className="absolute inset-0 overflow-hidden">
+                {renderParagraphItems.map((item) => {
+                  if (pageWidth <= 0 || pageHeight <= 0) {
                     return null;
                   }
 
-                  const isActive = activeKey === contextParagraph.key;
+                  const isActive = activeKey === item.contextParagraph.key;
                   return (
                     <div
-                      key={contextParagraph.key}
+                      key={item.key}
                       className={cn(
                         "absolute rounded-[6px] border-2 transition-all",
                         isActive
                           ? "border-emerald-500 bg-emerald-400/12 shadow-[0_0_0_1px_rgba(16,185,129,0.12)]"
                           : "border-transparent bg-transparent hover:border-emerald-400/90 hover:bg-emerald-300/10",
+                        item.source === "previous-spill" && "border-dashed",
                       )}
                       style={{
-                        left: `${(bbox.x / pageWidth) * 100}%`,
-                        top: `${(bbox.y / pageHeight) * 100}%`,
-                        width: `${(bbox.width / pageWidth) * 100}%`,
-                        height: `${(bbox.height / pageHeight) * 100}%`,
+                        left: `${(item.visibleLeft / pageWidth) * 100}%`,
+                        top: `${(item.visibleTop / pageHeight) * 100}%`,
+                        width: `${(item.visibleWidth / pageWidth) * 100}%`,
+                        height: `${(item.visibleHeight / pageHeight) * 100}%`,
                       }}
-                      onMouseEnter={() => setHoveredKey(contextParagraph.key)}
+                      onMouseEnter={() =>
+                        setHoveredKey(item.contextParagraph.key)
+                      }
                       onMouseLeave={() =>
                         setHoveredKey((current) =>
-                          current === contextParagraph.key ? null : current,
+                          current === item.contextParagraph.key
+                            ? null
+                            : current,
                         )
                       }
                       onPointerDownCapture={(event) => {
@@ -743,7 +945,7 @@ export function KnowledgePdfReader({
                         }
                         event.preventDefault();
                         event.stopPropagation();
-                        openContextMenu(contextParagraph, {
+                        openContextMenu(item.contextParagraph, {
                           x: event.clientX,
                           y: event.clientY,
                         });
@@ -751,7 +953,7 @@ export function KnowledgePdfReader({
                       onContextMenuCapture={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
-                        openContextMenu(contextParagraph, {
+                        openContextMenu(item.contextParagraph, {
                           x: event.clientX,
                           y: event.clientY,
                         });
@@ -770,7 +972,7 @@ export function KnowledgePdfReader({
               <KnowledgePageSurface
                 width={pageWidth * displayScale}
                 height={translationCanvasHeight}
-                className="overflow-visible shadow-[0_24px_50px_-30px_rgba(15,23,42,0.28)]"
+                className="shadow-[0_24px_50px_-30px_rgba(15,23,42,0.28)]"
                 style={{
                   minHeight: `${translationCanvasHeight}px`,
                 }}
@@ -797,16 +999,23 @@ export function KnowledgePdfReader({
 
                   {translationLayoutItems.map((item) => {
                     const isActive = activeKey === item.contextParagraph.key;
+                    const content = item.translatedText || item.paragraph.text;
                     const fontSize = Math.max(
-                      Math.min(paragraphFontSize(item.paragraph) * displayScale, 20),
-                      12,
+                      Math.min(
+                        paragraphFontSize(item.paragraph, content, layoutHint) *
+                          displayScale,
+                        isVerticalLayout ? 24 : 20,
+                      ),
+                      isVerticalLayout ? 11 : 12,
                     );
 
                     return (
                       <div
                         key={item.contextParagraph.key}
                         ref={(node) => {
-                          translationBlockRefs.current[item.contextParagraph.key] = node;
+                          translationBlockRefs.current[
+                            item.contextParagraph.key
+                          ] = node;
                         }}
                         className={cn(
                           "absolute rounded-md border text-left transition-colors",
@@ -815,15 +1024,20 @@ export function KnowledgePdfReader({
                             : "border-transparent hover:border-emerald-300/70 hover:bg-emerald-50/35",
                         )}
                         style={{
-                          left: `${Math.max(item.textLeft - 4, 0)}px`,
-                          top: `${Math.max(item.textTop - 4, 0)}px`,
-                          width: `${item.textWidth + 8}px`,
+                          left: `${item.textLeft - 4}px`,
+                          top: `${item.textTop - 4}px`,
+                          width: `${item.baseWidth + 8}px`,
+                          minHeight: `${item.baseHeight + 8}px`,
                           padding: "4px",
                         }}
-                        onMouseEnter={() => setHoveredKey(item.contextParagraph.key)}
+                        onMouseEnter={() =>
+                          setHoveredKey(item.contextParagraph.key)
+                        }
                         onMouseLeave={() =>
                           setHoveredKey((current) =>
-                            current === item.contextParagraph.key ? null : current,
+                            current === item.contextParagraph.key
+                              ? null
+                              : current,
                           )
                         }
                         onPointerDownCapture={(event) => {
@@ -847,15 +1061,32 @@ export function KnowledgePdfReader({
                         }}
                       >
                         <div
-                          className="whitespace-pre-wrap break-words text-stone-800"
+                          className="break-words whitespace-pre-wrap text-stone-800"
                           style={{
                             minHeight: `${item.baseHeight}px`,
+                            minWidth: isVerticalLayout
+                              ? `${item.baseWidth}px`
+                              : undefined,
+                            width: isVerticalLayout
+                              ? `${item.baseWidth}px`
+                              : undefined,
+                            height: isVerticalLayout
+                              ? `${item.baseHeight}px`
+                              : undefined,
                             fontSize: `${fontSize}px`,
-                            lineHeight: TRANSLATION_LINE_HEIGHT,
+                            lineHeight: isVerticalLayout
+                              ? VERTICAL_TRANSLATION_LINE_HEIGHT
+                              : TRANSLATION_LINE_HEIGHT,
                             letterSpacing: "0.01em",
+                            writingMode: isVerticalLayout
+                              ? "vertical-rl"
+                              : undefined,
+                            textOrientation: isVerticalLayout
+                              ? "mixed"
+                              : undefined,
                           }}
                         >
-                          {item.translatedText}
+                          {content}
                         </div>
                       </div>
                     );

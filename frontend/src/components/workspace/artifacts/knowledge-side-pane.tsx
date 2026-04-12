@@ -2,7 +2,14 @@
 
 import { FileTextIcon, Loader2Icon } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -94,7 +101,9 @@ function buildContextParagraph(
 }
 
 function buildExcerptTitle(originTitle: string, paragraph: ContextParagraph) {
-  const location = paragraph.paragraphNo ? `第${paragraph.paragraphNo}段` : "摘录";
+  const location = paragraph.paragraphNo
+    ? `第${paragraph.paragraphNo}段`
+    : "摘录";
   return `${originTitle} ${location}摘录`;
 }
 
@@ -178,7 +187,11 @@ function paragraphFontSize(paragraph: KnowledgeStructuredParagraph) {
 
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
-    const estimatedHeight = estimateTextHeight(paragraph.text, availableWidth, mid);
+    const estimatedHeight = estimateTextHeight(
+      paragraph.text,
+      availableWidth,
+      mid,
+    );
     if (estimatedHeight <= availableHeight) {
       best = mid;
       low = mid + 1;
@@ -237,7 +250,10 @@ function buildCompareLayoutItems(
       if (!bbox) {
         continue;
       }
-      if (bbox.y + bbox.height <= previousPageHeight + PAGE_OVERFLOW_TOLERANCE) {
+      if (
+        bbox.y + bbox.height <=
+        previousPageHeight + PAGE_OVERFLOW_TOLERANCE
+      ) {
         continue;
       }
 
@@ -312,7 +328,6 @@ export function KnowledgeSidePane({
   const router = useRouter();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const translationBlockRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const createDerivedMutation = useCreateUserDerivedKnowledge();
   const [pageState, setPageState] = useState<PageState>({ status: "idle" });
   const [previousPageData, setPreviousPageData] =
@@ -330,9 +345,6 @@ export function KnowledgeSidePane({
   >({});
   const [translationLoading, setTranslationLoading] = useState(false);
   const [translationError, setTranslationError] = useState<string | null>(null);
-  const [translationBlockHeights, setTranslationBlockHeights] = useState<
-    Record<string, number>
-  >({});
   const isHighlightable = highlightable ?? interactive;
   const isExcerptable = excerptable ?? interactive;
 
@@ -408,13 +420,8 @@ export function KnowledgeSidePane({
   }, [pageData]);
 
   const translationMap = translationCacheKey
-    ? translationCache[translationCacheKey] ?? null
+    ? (translationCache[translationCacheKey] ?? null)
     : null;
-
-  useEffect(() => {
-    setTranslationBlockHeights({});
-    translationBlockRefs.current = {};
-  }, [translationCacheKey]);
 
   useEffect(() => {
     if (!pageData || !pageWidth || !pageHeight) {
@@ -702,14 +709,14 @@ export function KnowledgeSidePane({
     return (
       <div
         ref={viewportRef}
-        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 pl-2 pr-3"
+        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 pr-3 pl-2"
       >
         <KnowledgePageSurface
           height={canvasMetrics.height || pageHeight}
           width={canvasMetrics.width || pageWidth}
         >
           <div
-            className="absolute left-0 top-0 origin-top-left"
+            className="absolute top-0 left-0 origin-top-left"
             style={{
               width: `${pageWidth}px`,
               height: `${pageHeight}px`,
@@ -753,7 +760,9 @@ export function KnowledgeSidePane({
                       isHighlightable
                         ? () =>
                             setHoveredKey((current) =>
-                              current === item.contextParagraph.key ? null : current,
+                              current === item.contextParagraph.key
+                                ? null
+                                : current,
                             )
                         : undefined
                     }
@@ -785,7 +794,7 @@ export function KnowledgeSidePane({
                         : undefined
                     }
                   >
-                    <div className="pointer-events-none whitespace-pre-wrap break-words">
+                    <div className="pointer-events-none break-words whitespace-pre-wrap">
                       {item.paragraph.text}
                     </div>
                   </div>
@@ -826,202 +835,137 @@ export function KnowledgeSidePane({
   };
 
   const renderTranslationContent = () => {
-    if (!pageData || pageWidth <= 0 || pageHeight <= 0) {
+    if (!pageData) {
       return null;
     }
-
-    const scale = canvasMetrics.scaleX || 1;
-    const translationFontSize = 15;
-
-    const layoutItems: TranslationLayoutItem[] = [];
-    let extraOffset = 0;
-
-    for (const paragraph of pageData.paragraphs ?? []) {
-      const bbox = paragraph.bbox;
-      if (!bbox) {
-        continue;
-      }
-
+    const translationRows = (pageData.paragraphs ?? []).map((paragraph) => {
       const contextParagraph = buildContextParagraph(pageData, paragraph);
-      const translationText = translationMap?.[contextParagraph.key] ?? "";
-      const showTranslation = translationText.length > 0;
-      const textLeft = bbox.x * scale;
-      const textTop = bbox.y * scale + extraOffset;
-      const textWidth = bbox.width * scale;
-      const baseHeight = bbox.height * scale;
-      const blockHeight = translationBlockHeights[contextParagraph.key] ?? baseHeight;
-      const overflowHeight = Math.max(0, blockHeight - baseHeight);
-
-      layoutItems.push({
-        contextParagraph,
+      return {
         paragraph,
-        baseHeight,
-        overflowHeight,
-        showTranslation,
-        textLeft,
-        textTop,
-        textWidth,
-      });
-
-      if (overflowHeight > 0) {
-        extraOffset += overflowHeight;
-      }
-    }
-
-    const totalHeight = Math.max(
-      pageHeight * scale,
-      ...layoutItems.map((item) => item.textTop + item.baseHeight + item.overflowHeight),
-    );
+        contextParagraph,
+        translationText: translationMap?.[contextParagraph.key] ?? "",
+      };
+    });
 
     return (
       <div
         ref={viewportRef}
-        className="min-h-0 flex-1 overflow-y-auto p-4 pl-2 pr-3"
+        className="min-h-0 flex-1 overflow-y-auto p-4 pr-3 pl-2"
       >
-        <div className="flex min-w-0 justify-center">
-          <KnowledgePageSurface
-            width={canvasMetrics.width || pageWidth}
-            height={totalHeight}
-            className="overflow-visible"
-            style={{
-              minHeight: `${totalHeight}px`,
-            }}
-          >
-            <div className="relative" style={{ height: `${totalHeight}px` }}>
-              {translationError && !translationMap ? (
-                <div className="mx-4 mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {translationError}
-                </div>
-              ) : null}
+        <div className="mx-auto grid max-w-[1200px] min-w-0 gap-3 md:grid-cols-2">
+          <div className="sticky top-0 z-10 rounded-2xl border border-[rgba(57,130,152,0.14)] bg-[rgb(248,250,250)] px-4 py-3 text-sm font-medium text-slate-800 backdrop-blur">
+            原文结构
+          </div>
+          <div className="sticky top-0 z-10 rounded-2xl border border-[rgba(57,130,152,0.14)] bg-[rgb(240,249,244)] px-4 py-3 text-sm font-medium text-emerald-800 backdrop-blur">
+            中文翻译
+          </div>
 
-              {translationLoading && !translationMap ? (
-                <div className="mx-4 mt-4 flex min-h-[120px] items-center justify-center rounded-2xl border border-stone-200 bg-stone-50 text-sm text-stone-500">
-                  <Loader2Icon className="mr-2 size-4 animate-spin" />
-                  正在翻译本页为中文...
-                </div>
-              ) : null}
+          {translationRows.length === 0 ? (
+            <div className="md:col-span-2">
+              <div className="flex min-h-[180px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-sm text-slate-500">
+                当前页暂无结构化文本。
+              </div>
+            </div>
+          ) : (
+            translationRows.map(
+              ({ paragraph, contextParagraph, translationText }) => {
+                const isActive = activeKey === contextParagraph.key;
+                const interactionProps = {
+                  onMouseEnter: isHighlightable
+                    ? () => setHoveredKey(contextParagraph.key)
+                    : undefined,
+                  onMouseLeave: isHighlightable
+                    ? () =>
+                        setHoveredKey((current) =>
+                          current === contextParagraph.key ? null : current,
+                        )
+                    : undefined,
+                  onPointerDownCapture: isExcerptable
+                    ? (event: React.PointerEvent<HTMLDivElement>) => {
+                        if (event.button !== 2) {
+                          return;
+                        }
+                        event.preventDefault();
+                        event.stopPropagation();
+                        openContextMenu(contextParagraph, {
+                          x: event.clientX,
+                          y: event.clientY,
+                        });
+                      }
+                    : undefined,
+                  onContextMenuCapture: isExcerptable
+                    ? (event: React.MouseEvent<HTMLDivElement>) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        openContextMenu(contextParagraph, {
+                          x: event.clientX,
+                          y: event.clientY,
+                        });
+                      }
+                    : undefined,
+                };
 
-              {layoutItems.map((item) => {
-                const isActive = activeKey === item.contextParagraph.key;
                 return (
-                  <div
-                    key={item.contextParagraph.key}
-                    ref={(node) => {
-                      translationBlockRefs.current[item.contextParagraph.key] = node;
-                    }}
-                    className={cn(
-                      "absolute rounded-md border border-transparent text-left transition-colors",
-                      isActive
-                        ? "bg-emerald-50/55"
-                        : isHighlightable
-                          ? "hover:border-emerald-300/70 hover:bg-emerald-50/35"
-                          : "",
-                    )}
-                    style={{
-                      left: `${Math.max(item.textLeft - 4, 0)}px`,
-                      top: `${Math.max(item.textTop - 4, 0)}px`,
-                      width: `${item.textWidth + 8}px`,
-                      padding: "4px",
-                    }}
-                    onMouseEnter={
-                      isHighlightable
-                        ? () => setHoveredKey(item.contextParagraph.key)
-                        : undefined
-                    }
-                    onMouseLeave={
-                      isHighlightable
-                        ? () =>
-                            setHoveredKey((current) =>
-                              current === item.contextParagraph.key ? null : current,
-                            )
-                        : undefined
-                    }
-                    onPointerDownCapture={
-                      isExcerptable
-                        ? (event) => {
-                            if (event.button !== 2) {
-                              return;
-                            }
-                            event.preventDefault();
-                            event.stopPropagation();
-                            openContextMenu(item.contextParagraph, {
-                              x: event.clientX,
-                              y: event.clientY,
-                            });
-                          }
-                        : undefined
-                    }
-                    onContextMenuCapture={
-                      isExcerptable
-                        ? (event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                            openContextMenu(item.contextParagraph, {
-                              x: event.clientX,
-                              y: event.clientY,
-                            });
-                          }
-                        : undefined
-                    }
-                  >
+                  <Fragment key={contextParagraph.key}>
                     <div
-                      className="whitespace-pre-wrap break-words text-stone-800"
-                      style={{
-                        minHeight: `${item.baseHeight}px`,
-                        fontSize: `${paragraphFontSize(item.paragraph) * scale}px`,
-                        lineHeight: 1.42,
-                        letterSpacing: "0.01em",
-                      }}
+                      className={cn(
+                        "rounded-2xl border bg-white p-4 text-left transition-colors",
+                        isExcerptable && "cursor-context-menu",
+                        isActive
+                          ? "border-emerald-400/70 bg-emerald-50/40"
+                          : isHighlightable
+                            ? "border-slate-200 hover:border-emerald-300/70 hover:bg-emerald-50/20"
+                            : "border-slate-200",
+                      )}
+                      {...interactionProps}
                     >
-                      {item.paragraph.text}
+                      <div className="mb-2 text-xs font-medium text-slate-500">
+                        第 {paragraph.paragraph_no ?? 1} 段
+                      </div>
+                      <div className="text-sm leading-7 break-words whitespace-pre-wrap text-slate-800">
+                        {paragraph.text}
+                      </div>
                     </div>
 
-                    {item.showTranslation ? (
-                      <div
-                        className="whitespace-pre-wrap break-words text-emerald-700"
-                        style={{
-                          marginTop: `${TRANSLATION_BLOCK_MARGIN_TOP}px`,
-                          marginBottom: `${TRANSLATION_BLOCK_MARGIN_BOTTOM}px`,
-                          fontSize: `${translationFontSize}px`,
-                          lineHeight: `${TRANSLATION_LINE_HEIGHT}px`,
-                        }}
-                      >
-                        {translationMap?.[item.contextParagraph.key]}
+                    <div
+                      className={cn(
+                        "rounded-2xl border p-4 text-left transition-colors",
+                        isExcerptable && "cursor-context-menu",
+                        isActive
+                          ? "border-emerald-300/80 bg-emerald-50/70"
+                          : isHighlightable
+                            ? "border-emerald-100 hover:border-emerald-300/80 hover:bg-emerald-50/55"
+                            : "border-emerald-100 bg-emerald-50/40",
+                      )}
+                      {...interactionProps}
+                    >
+                      <div className="mb-2 text-xs font-medium text-emerald-700/80">
+                        第 {paragraph.paragraph_no ?? 1} 段译文
                       </div>
-                    ) : null}
-                  </div>
+                      {translationError && !translationMap ? (
+                        <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {translationError}
+                        </div>
+                      ) : translationLoading && !translationMap ? (
+                        <div className="flex min-h-[96px] items-center justify-center rounded-xl border border-emerald-200/70 bg-white/70 text-sm text-emerald-700">
+                          <Loader2Icon className="mr-2 size-4 animate-spin" />
+                          正在翻译本页为中文...
+                        </div>
+                      ) : (
+                        <div className="text-sm leading-7 break-words whitespace-pre-wrap text-emerald-900">
+                          {translationText || "该段翻译暂未返回结果。"}
+                        </div>
+                      )}
+                    </div>
+                  </Fragment>
                 );
-              })}
-            </div>
-          </KnowledgePageSurface>
+              },
+            )
+          )}
         </div>
       </div>
     );
   };
-
-  useLayoutEffect(() => {
-    if (mode !== "translation") {
-      return;
-    }
-
-    const nextHeights: Record<string, number> = {};
-    for (const [key, element] of Object.entries(translationBlockRefs.current)) {
-      if (!element) {
-        continue;
-      }
-      nextHeights[key] = Math.ceil(element.getBoundingClientRect().height);
-    }
-
-    const currentKeys = Object.keys(translationBlockHeights);
-    const nextKeys = Object.keys(nextHeights);
-    const changed =
-      currentKeys.length !== nextKeys.length ||
-      nextKeys.some((key) => translationBlockHeights[key] !== nextHeights[key]);
-
-    if (changed) {
-      setTranslationBlockHeights(nextHeights);
-    }
-  }, [mode, translationBlockHeights, translationMap, canvasMetrics.scaleX]);
 
   useEffect(() => {
     onPageDataChange?.(pageData);
@@ -1051,7 +995,9 @@ export function KnowledgeSidePane({
         )}
 
         {pageState.status === "ready" &&
-          (mode === "compare" ? renderCompareContent() : renderTranslationContent())}
+          (mode === "compare"
+            ? renderCompareContent()
+            : renderTranslationContent())}
       </div>
 
       {renderContextMenu()}

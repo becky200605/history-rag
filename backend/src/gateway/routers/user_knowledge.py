@@ -445,6 +445,7 @@ def _structured_page_payload(document: Any, *, page_no: int | None, pdf_page_no:
             "scope": document.scope,
             "filename": document.filename,
             "title": document.title,
+            "layout_hint": (document.payload.get("hints") or {}).get("layout_hint"),
             "page_count": len(list(document.payload.get("pages") or [])),
             "page_no": page.get("page_no"),
             "pdf_page_no": page.get("pdf_page_no"),

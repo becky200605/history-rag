@@ -16,7 +16,6 @@ import {
   KnowledgeSidePane,
   type KnowledgeSidePaneMode,
 } from "./knowledge-side-pane";
-import { KnowledgeTranslationWorkspace } from "./knowledge-translation-workspace";
 
 export function KnowledgeStructuredViewer({
   className,
@@ -49,9 +48,8 @@ export function KnowledgeStructuredViewer({
   const [translationSourceLanguage, setTranslationSourceLanguage] = useState<
     "en" | "ja" | "de"
   >("en");
-  const [internalCurrentPdfPageNo, setInternalCurrentPdfPageNo] = useState<number>(
-    Math.max(initialPdfPageNo, 1),
-  );
+  const [internalCurrentPdfPageNo, setInternalCurrentPdfPageNo] =
+    useState<number>(Math.max(initialPdfPageNo, 1));
   const [pageInputValue, setPageInputValue] = useState("");
   const [pageCount, setPageCount] = useState<number | null>(null);
   const resolvedCurrentPdfPageNo = Math.max(
@@ -122,7 +120,9 @@ export function KnowledgeStructuredViewer({
                   }
                 }}
                 onBlur={() => setPageInputValue("")}
-                onFocus={() => setPageInputValue(String(resolvedCurrentPdfPageNo))}
+                onFocus={() =>
+                  setPageInputValue(String(resolvedCurrentPdfPageNo))
+                }
               />
               <span className="text-slate-500">/ {pageCount ?? "?"}</span>
             </div>
@@ -131,7 +131,9 @@ export function KnowledgeStructuredViewer({
               size="icon"
               className="size-8 rounded-xl"
               onClick={() => goToPage(resolvedCurrentPdfPageNo + 1)}
-              disabled={pageCount ? resolvedCurrentPdfPageNo >= pageCount : false}
+              disabled={
+                pageCount ? resolvedCurrentPdfPageNo >= pageCount : false
+              }
             >
               <ChevronRightIcon className="size-4" />
             </Button>
@@ -148,6 +150,32 @@ export function KnowledgeStructuredViewer({
         </div>
 
         <div className="flex items-center gap-2">
+          {mode === "translation" && (
+            <div className="mr-2 flex items-center gap-2">
+              {(
+                [
+                  { value: "en", label: "英译中" },
+                  { value: "ja", label: "日译中" },
+                  { value: "de", label: "德译中" },
+                ] as const
+              ).map((option) => (
+                <Button
+                  key={option.value}
+                  variant={
+                    translationSourceLanguage === option.value
+                      ? "default"
+                      : "outline"
+                  }
+                  size="sm"
+                  className="h-8 rounded-xl"
+                  onClick={() => setTranslationSourceLanguage(option.value)}
+                >
+                  <LanguagesIcon className="mr-1.5 size-4" />
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          )}
           <Button
             variant={mode === "compare" ? "default" : "outline"}
             size="sm"
@@ -171,34 +199,23 @@ export function KnowledgeStructuredViewer({
       </div>
 
       <div className="min-h-0 flex-1">
-        {mode === "compare" ? (
-          <KnowledgeSidePane
-            currentPdfPageNo={resolvedCurrentPdfPageNo}
-            documentUrl={documentUrl}
-            mode={mode}
-            originFilename={originFilename}
-            originTitle={originTitle}
-            knowledgeSpaceId={knowledgeSpaceId}
-            interactive={interactive}
-            highlightable={highlightable}
-            excerptable={excerptable}
-            fluid
-            bordered={false}
-            onPageDataChange={(pageData) => {
-              setPageCount(pageData?.page_count ?? null);
-            }}
-          />
-        ) : (
-          <KnowledgeTranslationWorkspace
-            documentUrl={documentUrl}
-            currentPdfPageNo={resolvedCurrentPdfPageNo}
-            sourceLanguage={translationSourceLanguage}
-            onSourceLanguageChange={setTranslationSourceLanguage}
-            onPageDataChange={(pageData) => {
-              setPageCount(pageData?.page_count ?? null);
-            }}
-          />
-        )}
+        <KnowledgeSidePane
+          currentPdfPageNo={resolvedCurrentPdfPageNo}
+          documentUrl={documentUrl}
+          mode={mode}
+          originFilename={originFilename}
+          originTitle={originTitle}
+          knowledgeSpaceId={knowledgeSpaceId}
+          translationSourceLanguageHint={translationSourceLanguage}
+          interactive={interactive}
+          highlightable={highlightable}
+          excerptable={excerptable}
+          fluid
+          bordered={false}
+          onPageDataChange={(pageData) => {
+            setPageCount(pageData?.page_count ?? null);
+          }}
+        />
       </div>
     </div>
   );

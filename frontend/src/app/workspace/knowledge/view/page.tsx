@@ -4,7 +4,7 @@ import { ExternalLinkIcon, Loader2Icon } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import { KnowledgePdfReader } from "@/components/workspace/artifacts/knowledge-pdf-reader";
+import { KnowledgeDocumentDetail } from "@/components/workspace/artifacts/knowledge-document-detail";
 import {
   buildKnowledgeDocumentUrl,
   buildKnowledgePageImageURLForDocumentUrl,
@@ -80,14 +80,16 @@ function KnowledgeReaderPage({
   knowledgeSpaceId: string | null;
 }) {
   return (
-    <div className="h-screen bg-[rgb(247,251,252)] p-4 md:p-6">
+    <div className="h-screen bg-[rgb(247,251,252)] p-0">
       {!documentUrl ? (
-        <div className="mx-auto max-w-7xl rounded-xl bg-red-50 p-8 text-sm text-red-700 shadow-sm">
+        <div className="m-6 rounded-xl bg-red-50 p-8 text-sm text-red-700 shadow-sm">
           缺少文档地址，无法打开结构化阅读器。
         </div>
       ) : (
-        <div className="mx-auto h-full max-w-[1680px] min-h-0">
-          <KnowledgePdfReader
+        <div className="h-full min-h-0 w-full">
+          <KnowledgeDocumentDetail
+            className="h-full"
+            displayName={originFilename || filename}
             documentUrl={documentUrl}
             initialPdfPageNo={initialPdfPageNo}
             knowledgeSpaceId={knowledgeSpaceId ?? undefined}

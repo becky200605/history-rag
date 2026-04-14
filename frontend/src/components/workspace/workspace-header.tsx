@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpenTextIcon, MessageSquarePlus, NotebookPenIcon, Settings2Icon } from "lucide-react";
+import { MessageSquarePlus, NotebookPenIcon, Settings2Icon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -58,20 +58,6 @@ export function WorkspaceHeader({ className }: { className?: string }) {
             <Link className="text-muted-foreground" href="/workspace/chats/new">
               <MessageSquarePlus size={16} />
               <span>{t.sidebar.newChat}</span>
-            </Link>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            isActive={
-              pathname === "/workspace/knowledge" ||
-              pathname.startsWith("/workspace/knowledge/view")
-            }
-            asChild
-          >
-            <Link className="text-muted-foreground" href="/workspace/knowledge">
-              <BookOpenTextIcon size={16} />
-              <span>知识库</span>
             </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>

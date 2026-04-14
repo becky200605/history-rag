@@ -272,10 +272,10 @@ export function InputBox({
       <PromptInputAttachments>
         {(attachment) => <PromptInputAttachment data={attachment} />}
       </PromptInputAttachments>
-      <PromptInputBody className="absolute top-0 right-0 left-0 z-3">
+      <PromptInputBody className="z-3 w-full">
         <KnowledgeMentionTextarea
           autoFocus={autoFocus}
-          className={cn("size-full")}
+          className={cn("w-full")}
           disabled={disabled}
           mentionables={mentionables}
           placeholder={t.inputBox.placeholder}

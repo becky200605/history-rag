@@ -20,7 +20,6 @@ import {
   ArtifactHeader,
   ArtifactTitle,
 } from "@/components/ai-elements/artifact";
-import { Button } from "@/components/ui/button";
 import { Select, SelectItem } from "@/components/ui/select";
 import {
   SelectContent,
@@ -33,11 +32,6 @@ import { CodeEditor } from "@/components/workspace/code-editor";
 import { useArtifactContent } from "@/core/artifacts/hooks";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
-import {
-  getKnowledgeParagraphLocationForDocumentUrl,
-  type KnowledgeParagraphLocation,
-} from "@/core/knowledge/api";
-import { getKnowledgeCitationMeta } from "@/core/knowledge/citation-meta";
 import { installSkill } from "@/core/skills/api";
 import { streamdownPlugins } from "@/core/streamdown";
 import { checkCodeFile, getFileExtension, getFileName } from "@/core/utils/files";
@@ -48,7 +42,7 @@ import { CitationLink } from "../citations/citation-link";
 import { Tooltip } from "../tooltip";
 
 import { useArtifacts } from "./context";
-import { KnowledgePdfReader } from "./knowledge-pdf-reader";
+import { KnowledgeDocumentDetail } from "./knowledge-document-detail";
 
 type PreviewVariant = "rendered" | "original" | "split";
 
@@ -80,85 +74,6 @@ export function ArtifactFileDetail({
     if (!isKnowledgeDoc) return null;
     return filepathFromProps.slice("knowledge-doc:".length);
   }, [filepathFromProps, isKnowledgeDoc]);
-
-  const knowledgeCitationMeta = useMemo(() => {
-    if (!knowledgeUrl) {
-      return null;
-    }
-    return getKnowledgeCitationMeta(knowledgeUrl);
-  }, [knowledgeUrl]);
-
-  const knowledgeSnippet = useMemo(() => {
-    if (!isKnowledgeDoc || !knowledgeUrl) return null;
-    try {
-      const url = new URL(knowledgeUrl, window.location.origin);
-      const value = url.searchParams.get("snippet");
-      if (!value) return null;
-      return value.slice(0, 256);
-    } catch {
-      return null;
-    }
-  }, [isKnowledgeDoc, knowledgeUrl]);
-
-  const knowledgePdfPage = useMemo(() => {
-    if (!isKnowledgeDoc || !knowledgeUrl) return null;
-    try {
-      const url = new URL(knowledgeUrl, window.location.origin);
-      const pageStr = url.searchParams.get("page");
-      if (pageStr) {
-        const page = parseInt(pageStr, 10);
-        return Number.isNaN(page) ? null : page;
-      }
-      const pdfPageStr = url.searchParams.get("pdf_page_no");
-      if (pdfPageStr) {
-        const pdfPage = parseInt(pdfPageStr, 10);
-        return Number.isNaN(pdfPage) || pdfPage <= 0 ? null : pdfPage - 1;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }, [isKnowledgeDoc, knowledgeUrl]);
-
-  const isKnowledgePdf = useMemo(() => {
-    if (!isKnowledgeDoc || !knowledgeUrl) return false;
-    try {
-      const url = new URL(knowledgeUrl, window.location.origin);
-      return url.pathname.toLowerCase().endsWith(".pdf");
-    } catch {
-      return false;
-    }
-  }, [isKnowledgeDoc, knowledgeUrl]);
-
-  const knowledgePdfUrl = useMemo(() => {
-    if (!isKnowledgePdf || !knowledgeUrl) return null;
-    try {
-      const url = new URL(knowledgeUrl, window.location.origin);
-      url.searchParams.delete("snippet");
-      url.searchParams.delete("page");
-      url.searchParams.delete("page_no");
-      url.searchParams.delete("pdf_page_no");
-      url.searchParams.delete("paragraph_no");
-      return `${url.pathname}${url.search}`;
-    } catch {
-      return null;
-    }
-  }, [isKnowledgePdf, knowledgeUrl]);
-
-  const knowledgePdfLocator = useMemo(() => {
-    if (!isKnowledgePdf || !knowledgeUrl) return null;
-    try {
-      const url = new URL(knowledgeUrl, window.location.origin);
-      return {
-        filename: decodeURIComponent(url.pathname.split("/").pop() ?? ""),
-        pageNo: url.searchParams.get("page_no"),
-        pdfPageNo: url.searchParams.get("pdf_page_no"),
-        paragraphNo: url.searchParams.get("paragraph_no"),
-      };
-    } catch {
-      return null;
-    }
-  }, [isKnowledgePdf, knowledgeUrl]);
 
   const filepath = useMemo(() => {
     if (isWriteFile) {
@@ -205,12 +120,6 @@ export function ArtifactFileDetail({
   }, [filepath]);
 
   const { isCodeFile, language } = useMemo(() => {
-    if (isKnowledgeDoc) {
-      if (isKnowledgePdf) {
-        return { isCodeFile: false, language: "pdf" };
-      }
-      return { isCodeFile: true, language: "markdown" };
-    }
     if (isWriteFile) {
       let fileLanguage = checkCodeFile(filepath).language;
       fileLanguage ??= "text";
@@ -220,7 +129,7 @@ export function ArtifactFileDetail({
       return { isCodeFile: true, language: "markdown" };
     }
     return checkCodeFile(filepath);
-  }, [filepath, isWriteFile, isSkillFile, isKnowledgeDoc, isKnowledgePdf]);
+  }, [filepath, isWriteFile, isSkillFile]);
 
   const previewable = useMemo(() => {
     return (language === "html" && !isWriteFile) || language === "markdown";
@@ -235,64 +144,7 @@ export function ArtifactFileDetail({
   const extension = useMemo(() => getFileExtension(filepath), [filepath]);
   const isPdfFile = extension === "pdf";
 
-  const [knowledgeContent, setKnowledgeContent] = useState<string | null>(null);
-  const [isKnowledgeLoading, setIsKnowledgeLoading] = useState(false);
-  const [knowledgeError, setKnowledgeError] = useState<Error | null>(null);
-
-  useEffect(() => {
-    if (!isKnowledgeDoc || !knowledgeUrl || isKnowledgePdf) {
-      return;
-    }
-    let cancelled = false;
-    setIsKnowledgeLoading(true);
-    setKnowledgeError(null);
-    fetch(knowledgeUrl)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error("Failed to load knowledge document");
-        }
-        return response.text();
-      })
-      .then((text) => {
-        if (!cancelled) {
-          setKnowledgeContent(text);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.error("Failed to load knowledge document:", error);
-          setKnowledgeError(error as Error);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsKnowledgeLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isKnowledgeDoc, knowledgeUrl, isKnowledgePdf]);
-
-  const displayContent = useMemo(() => {
-    if (isKnowledgeDoc) {
-      if (knowledgeError) {
-        return knowledgeError.message;
-      }
-      if (isKnowledgeLoading) {
-        return "Loading knowledge document...";
-      }
-      return knowledgeContent ?? "";
-    }
-    return content ?? "";
-  }, [
-    content,
-    isKnowledgeDoc,
-    isKnowledgeLoading,
-    knowledgeContent,
-    knowledgeError,
-  ]);
+  const displayContent = useMemo(() => content ?? "", [content]);
 
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
   const [isInstalling, setIsInstalling] = useState(false);
@@ -333,6 +185,18 @@ export function ArtifactFileDetail({
     }
   }, [threadId, filepath, isInstalling]);
 
+  if (isKnowledgeDoc && knowledgeUrl) {
+    return (
+      <KnowledgeDocumentDetail
+        className={className}
+        displayName={getFileName(filepath)}
+        documentUrl={knowledgeUrl}
+        onClose={() => setOpen(false)}
+        onCompareToggle={onKnowledgeCompareToggle}
+      />
+    );
+  }
+
   return (
     <Artifact className={cn(className)}>
       <ArtifactHeader className="px-2">
@@ -359,7 +223,7 @@ export function ArtifactFileDetail({
           </ArtifactTitle>
         </div>
         <div className="flex min-w-0 grow items-center justify-center">
-          {!isKnowledgePdf && previewable && (
+          {previewable && (
             <ToggleGroup
               className="mx-auto"
               type="single"
@@ -393,7 +257,7 @@ export function ArtifactFileDetail({
                 />
               </Tooltip>
             )}
-            {!isWriteFile && !isKnowledgeDoc && (
+            {!isWriteFile && (
               <a href={urlOfArtifact({ filepath, threadId })} target="_blank" rel="noreferrer">
                 <ArtifactAction
                   icon={SquareArrowOutUpRightIcon}
@@ -419,7 +283,7 @@ export function ArtifactFileDetail({
                 tooltip={t.clipboard.copyToClipboard}
               />
             )}
-            {!isWriteFile && !isKnowledgeDoc && (
+            {!isWriteFile && (
               <a
                 href={urlOfArtifact({ filepath, threadId, download: true })}
                 target="_blank"
@@ -444,72 +308,36 @@ export function ArtifactFileDetail({
       <ArtifactContent
         className={cn(
           "p-0",
-          isKnowledgePdf &&
-            knowledgePdfLocator?.filename &&
-            (knowledgePdfLocator.pageNo ??
-              knowledgePdfLocator.pdfPageNo ??
-              knowledgePdfLocator.paragraphNo) &&
-            "overflow-hidden",
         )}
       >
-        {isKnowledgeDoc && knowledgeCitationMeta && (
-          <KnowledgeCitationSummary
-            originTitle={knowledgeCitationMeta.originTitle}
-            sourceLabel={knowledgeCitationMeta.sourceLabel}
-            sourceTitle={knowledgeCitationMeta.sourceTitle}
-          />
-        )}
-        {isKnowledgePdf && knowledgePdfUrl && (
-          knowledgePdfLocator?.filename &&
-          (knowledgePdfLocator.pageNo ||
-            knowledgePdfLocator.pdfPageNo ||
-            knowledgePdfLocator.paragraphNo) ? (
-            <KnowledgeCitationPdfViewer
-              documentUrl={knowledgePdfUrl}
-              pageNo={knowledgePdfLocator.pageNo}
-              pdfPageNo={knowledgePdfLocator.pdfPageNo}
-              paragraphNo={knowledgePdfLocator.paragraphNo}
-              onCompareToggle={onKnowledgeCompareToggle}
-            />
-          ) : (
-            <KnowledgeDocumentPdfViewer
-              documentUrl={knowledgePdfUrl}
-              initialPage={knowledgePdfPage ?? 0}
-              filename={filepath}
-              onCompareToggle={onKnowledgeCompareToggle}
-            />
-          )
-        )}
-        {!isKnowledgePdf && previewable && viewMode === "preview" && language === "markdown" && (
+        {previewable && viewMode === "preview" && language === "markdown" && (
           <MarkdownDualPreview
             filepath={filepath}
             threadId={threadId}
             content={displayContent}
-            highlightSnippet={knowledgeSnippet}
             mode={markdownPreviewVariant}
             onModeChange={setMarkdownPreviewVariant}
-            rawUrl={isKnowledgeDoc ? knowledgeUrl ?? undefined : undefined}
           />
         )}
-        {!isKnowledgePdf && previewable && viewMode === "preview" && language === "html" && (
+        {previewable && viewMode === "preview" && language === "html" && (
           <div className="space-y-2 border-t border-border/30 p-4">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               原文预览
             </p>
             <iframe
               className="size-full min-h-[360px] w-full rounded-xl border"
-              src={isKnowledgeDoc ? knowledgeUrl ?? undefined : urlOfArtifact({ filepath, threadId })}
+              src={urlOfArtifact({ filepath, threadId })}
             />
           </div>
         )}
-        {!isKnowledgePdf && isCodeFile && viewMode === "code" && (
+        {isCodeFile && viewMode === "code" && (
           <CodeEditor
             className="size-full resize-none rounded-none border-none"
             value={displayContent ?? ""}
             readonly
           />
         )}
-        {!isKnowledgeDoc && !isCodeFile && (
+        {!isCodeFile && (
           isPdfFile ? (
             <PdfDualPreview
               filepath={filepath}
@@ -525,104 +353,6 @@ export function ArtifactFileDetail({
         )}
       </ArtifactContent>
     </Artifact>
-  );
-}
-
-function KnowledgeDocumentPdfViewer({
-  documentUrl,
-  initialPage,
-  filename,
-  onCompareToggle,
-}: {
-  documentUrl: string;
-  initialPage: number;
-  filename: string;
-  onCompareToggle?: (open: boolean) => void;
-}) {
-  useEffect(() => {
-    onCompareToggle?.(false);
-    return () => onCompareToggle?.(false);
-  }, [onCompareToggle]);
-
-  return (
-    <KnowledgePdfReader
-      documentUrl={documentUrl}
-      initialPdfPageNo={initialPage + 1}
-      originFilename={filename}
-      originTitle={filename.replace(/\.pdf$/i, "")}
-    />
-  );
-}
-
-function KnowledgeCitationPdfViewer({
-  documentUrl,
-  pageNo,
-  pdfPageNo,
-  paragraphNo,
-  onCompareToggle,
-}: {
-  documentUrl: string;
-  pageNo: string | null;
-  pdfPageNo: string | null;
-  paragraphNo: string | null;
-  onCompareToggle?: (open: boolean) => void;
-}) {
-  const [state, setState] = useState<
-    | { status: "loading" }
-    | { status: "error"; message: string }
-    | { status: "ready"; data: KnowledgeParagraphLocation }
-  >({ status: "loading" });
-
-  useEffect(() => {
-    onCompareToggle?.(false);
-    return () => onCompareToggle?.(false);
-  }, [onCompareToggle]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: "loading" });
-    getKnowledgeParagraphLocationForDocumentUrl(documentUrl, { pageNo, pdfPageNo, paragraphNo })
-      .then((data) => {
-        if (!cancelled) {
-          setState({ status: "ready", data });
-        }
-      })
-      .catch((error: Error) => {
-        if (!cancelled) {
-          setState({
-            status: "error",
-            message: error.message || "定位信息加载失败",
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [documentUrl, pageNo, pdfPageNo, paragraphNo]);
-
-  if (state.status === "loading") {
-    return (
-      <div className="flex size-full items-center justify-center bg-muted/30 p-4 text-sm text-muted-foreground">
-        正在加载 citation 定位...
-      </div>
-    );
-  }
-
-  if (state.status === "error") {
-    return (
-      <div className="flex size-full items-center justify-center bg-red-50 p-4 text-sm text-red-700">
-        {state.message}
-      </div>
-    );
-  }
-
-  return (
-    <KnowledgePdfReader
-      documentUrl={documentUrl}
-      initialPdfPageNo={state.data.pdf_page_no ?? 1}
-      originFilename={state.data.filename}
-      originTitle={state.data.title}
-    />
   );
 }
 
@@ -696,39 +426,6 @@ function MarkdownDualPreview({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function KnowledgeCitationSummary({
-  sourceLabel,
-  sourceTitle,
-  originTitle,
-}: {
-  sourceLabel: string | null;
-  sourceTitle: string | null;
-  originTitle: string | null;
-}) {
-  if ((!sourceLabel || sourceLabel === "知识库文档") && !originTitle) {
-    return null;
-  }
-
-  return (
-    <div className="border-b border-border/40 bg-amber-50/55 px-4 py-3">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-900/70">
-        引用来源
-      </p>
-      {sourceLabel && (
-        <p className="mt-1 text-sm text-stone-900">
-          这条 citation 来自{sourceLabel}
-          {sourceTitle ? `《${sourceTitle}》` : ""}
-        </p>
-      )}
-      {originTitle && originTitle !== sourceTitle && (
-        <p className="mt-1 text-xs text-stone-600">
-          原始出处：{originTitle}
-        </p>
-      )}
     </div>
   );
 }

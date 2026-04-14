@@ -47,17 +47,6 @@ type ContextMenuState = {
   paragraph: ContextParagraph;
 };
 
-type TranslationLayoutItem = {
-  contextParagraph: ContextParagraph;
-  paragraph: KnowledgeStructuredParagraph;
-  baseHeight: number;
-  overflowHeight: number;
-  showTranslation: boolean;
-  textLeft: number;
-  textTop: number;
-  textWidth: number;
-};
-
 type CompareLayoutItem = {
   key: string;
   contextParagraph: ContextParagraph;
@@ -72,9 +61,6 @@ type CompareLayoutItem = {
   continuesToNextPage: boolean;
 };
 
-const TRANSLATION_BLOCK_MARGIN_TOP = 10;
-const TRANSLATION_BLOCK_MARGIN_BOTTOM = 16;
-const TRANSLATION_LINE_HEIGHT = 22;
 const COMPARE_TEXT_PADDING_X = 8;
 const COMPARE_TEXT_PADDING_Y = 4;
 const COMPARE_LINE_HEIGHT = 1.42;
@@ -709,7 +695,7 @@ export function KnowledgeSidePane({
     return (
       <div
         ref={viewportRef}
-        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 pr-3 pl-2"
+        className="flex min-h-0 flex-1 items-start justify-center overflow-auto p-4 pr-3 pl-2"
       >
         <KnowledgePageSurface
           height={canvasMetrics.height || pageHeight}
@@ -729,15 +715,15 @@ export function KnowledgeSidePane({
                 <div key={item.key}>
                   <div
                     className={cn(
-                      "absolute overflow-hidden rounded-sm border text-left transition-colors select-none",
+                      "absolute overflow-hidden rounded-md border text-left transition-all duration-200 select-none",
                       isExcerptable && "cursor-context-menu",
                       item.source === "previous-spill"
                         ? "border-dashed"
                         : "border-solid",
                       isActive
-                        ? "border-emerald-500/95 bg-emerald-50/70"
+                        ? "border-emerald-400 bg-emerald-50/80 shadow-[0_4px_12px_-2px_rgba(16,185,129,0.12)]"
                         : isHighlightable
-                          ? "border-transparent bg-transparent hover:border-emerald-400/90 hover:bg-emerald-50/45"
+                          ? "border-transparent bg-transparent hover:border-emerald-200/60 hover:bg-emerald-50/40"
                           : "border-transparent bg-transparent",
                     )}
                     style={{
@@ -853,10 +839,10 @@ export function KnowledgeSidePane({
         className="min-h-0 flex-1 overflow-y-auto p-4 pr-3 pl-2"
       >
         <div className="mx-auto grid max-w-[1200px] min-w-0 gap-3 md:grid-cols-2">
-          <div className="sticky top-0 z-10 rounded-2xl border border-[rgba(57,130,152,0.14)] bg-[rgb(248,250,250)] px-4 py-3 text-sm font-medium text-slate-800 backdrop-blur">
+          <div className="sticky top-0 z-10 rounded-xl border border-slate-200 bg-white/90 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 backdrop-blur-sm">
             原文结构
           </div>
-          <div className="sticky top-0 z-10 rounded-2xl border border-[rgba(57,130,152,0.14)] bg-[rgb(240,249,244)] px-4 py-3 text-sm font-medium text-emerald-800 backdrop-blur">
+          <div className="sticky top-0 z-10 rounded-xl border border-emerald-200 bg-white/90 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-emerald-600 backdrop-blur-sm">
             中文翻译
           </div>
 
@@ -909,12 +895,12 @@ export function KnowledgeSidePane({
                   <Fragment key={contextParagraph.key}>
                     <div
                       className={cn(
-                        "rounded-2xl border bg-white p-4 text-left transition-colors",
+                        "rounded-xl border bg-white p-4 text-left transition-all duration-200 shadow-sm",
                         isExcerptable && "cursor-context-menu",
                         isActive
-                          ? "border-emerald-400/70 bg-emerald-50/40"
+                          ? "border-emerald-300 ring-1 ring-emerald-300 bg-emerald-50/20"
                           : isHighlightable
-                            ? "border-slate-200 hover:border-emerald-300/70 hover:bg-emerald-50/20"
+                            ? "border-slate-200 hover:border-emerald-200/60 hover:shadow-md"
                             : "border-slate-200",
                       )}
                       {...interactionProps}
@@ -929,13 +915,13 @@ export function KnowledgeSidePane({
 
                     <div
                       className={cn(
-                        "rounded-2xl border p-4 text-left transition-colors",
+                        "rounded-xl border p-4 text-left transition-all duration-200 shadow-[0_4px_12px_rgba(16,185,129,0.03)]",
                         isExcerptable && "cursor-context-menu",
                         isActive
-                          ? "border-emerald-300/80 bg-emerald-50/70"
+                          ? "border-emerald-400/60 bg-emerald-100/30 ring-1 ring-emerald-300/50 shadow-md"
                           : isHighlightable
-                            ? "border-emerald-100 hover:border-emerald-300/80 hover:bg-emerald-50/55"
-                            : "border-emerald-100 bg-emerald-50/40",
+                            ? "border-emerald-100 bg-emerald-50/30 hover:border-emerald-300/60 hover:bg-emerald-50/60"
+                            : "border-emerald-100 bg-emerald-50/30",
                       )}
                       {...interactionProps}
                     >
@@ -974,7 +960,7 @@ export function KnowledgeSidePane({
   return (
     <div
       className={cn(
-        "relative min-h-0 bg-[#f6f1e8]",
+        "relative min-h-0 bg-zinc-50/50",
         fluid ? "w-full" : "shrink-0",
         bordered && "border-l",
       )}

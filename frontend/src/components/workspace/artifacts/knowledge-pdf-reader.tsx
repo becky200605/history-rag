@@ -6,7 +6,7 @@ import {
   FileTextIcon,
   LanguagesIcon,
   Loader2Icon,
-  ScanSearchIcon,
+  ScrollTextIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
@@ -21,7 +21,6 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   buildKnowledgePageImageURLForDocumentUrl,
   getKnowledgeStructuredPageForDocumentUrl,
@@ -34,6 +33,7 @@ import { useCreateUserDerivedKnowledge } from "@/core/knowledge/user-hooks";
 import { cn } from "@/lib/utils";
 
 import { KnowledgePageSurface } from "./knowledge-page-surface";
+import { KnowledgeSidePane } from "./knowledge-side-pane";
 
 type ReaderMode = "pdf" | "translation";
 
@@ -216,7 +216,7 @@ function paragraphFontSize(
     14,
   );
   const maxSize = Math.max(9, Math.min(28, Math.floor(availableHeight * 0.72)));
-  const isVertical = String(layoutHint || "").toLowerCase() === "vertical";
+  const isVertical = String(layoutHint ?? "").toLowerCase() === "vertical";
   let low = 8;
   let high = maxSize;
   let best = 8;
@@ -252,7 +252,7 @@ function buildRenderableParagraphItems(
     return [];
   }
 
-  const isVertical = String(layoutHint || "").toLowerCase() === "vertical";
+  const isVertical = String(layoutHint ?? "").toLowerCase() === "vertical";
   const items: RenderParagraphItem[] = [];
 
   for (const paragraph of currentPage.paragraphs ?? []) {
@@ -370,6 +370,7 @@ export function KnowledgePdfReader({
   );
 
   const [mode, setMode] = useState<ReaderMode>("pdf");
+  const [showStructure, setShowStructure] = useState(true);
   const [currentPdfPageNo, setCurrentPdfPageNo] = useState<number>(
     Math.max(initialPdfPageNo, 1),
   );
@@ -468,7 +469,7 @@ export function KnowledgePdfReader({
   const pageHeight = pageData?.page_meta?.page_height ?? 0;
   const layoutHint = pageData?.layout_hint ?? null;
   const isVerticalLayout =
-    String(layoutHint || "").toLowerCase() === "vertical";
+    String(layoutHint ?? "").toLowerCase() === "vertical";
   const pageImageUrl = useMemo(
     () =>
       buildKnowledgePageImageURLForDocumentUrl(documentUrl, currentPdfPageNo),
@@ -791,8 +792,8 @@ export function KnowledgePdfReader({
   }, [isVerticalLayout, mode, translationBlockHeights, translationLayoutItems]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-[rgba(57,130,152,0.16)] bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[rgba(57,130,152,0.14)] bg-[rgb(249,252,252)] px-4 py-3">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-zinc-50/50 shadow-sm">
+      <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/80 px-4 py-2.5 backdrop-blur-md">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex items-center gap-1">
             <Button
@@ -804,10 +805,10 @@ export function KnowledgePdfReader({
             >
               <ChevronLeftIcon className="size-4" />
             </Button>
-            <div className="flex items-center gap-1 text-sm text-slate-700">
+            <div className="flex items-center gap-1.5 px-2 text-sm font-medium text-slate-600">
               <Input
                 type="text"
-                className="h-8 w-14 rounded-lg border-[rgba(57,130,152,0.16)] text-center"
+                className="h-7 w-12 rounded-md border-slate-200 bg-white px-1 text-center text-xs shadow-sm focus-visible:ring-emerald-500/30"
                 value={
                   pageInputValue !== ""
                     ? pageInputValue
@@ -826,7 +827,7 @@ export function KnowledgePdfReader({
                 onBlur={() => setPageInputValue("")}
                 onFocus={() => setPageInputValue(String(currentPdfPageNo))}
               />
-              <span className="text-slate-500">/ {pageCount ?? "?"}</span>
+              <span className="text-slate-400">/ {pageCount ?? "?"}</span>
             </div>
             <Button
               variant="ghost"
@@ -849,42 +850,42 @@ export function KnowledgePdfReader({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <ToggleGroup
-            type="single"
-            variant="outline"
+        <div className="flex items-center gap-2">
+          <Button
+            variant={showStructure ? "secondary" : "ghost"}
             size="sm"
-            value={mode}
-            onValueChange={(value) => {
-              if (value === "pdf" || value === "translation") {
-                setMode(value);
-              }
-            }}
+            className={cn(
+              "h-8 rounded-lg px-3 transition-all",
+              showStructure ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "text-slate-600 hover:bg-slate-100"
+            )}
+            onClick={() => setShowStructure((current) => !current)}
           >
-            <ToggleGroupItem value="pdf">
-              <ScanSearchIcon className="mr-1.5 size-4" />
-              原页
-            </ToggleGroupItem>
-            <ToggleGroupItem value="translation">
-              <LanguagesIcon className="mr-1.5 size-4" />
-              中文译文
-            </ToggleGroupItem>
-          </ToggleGroup>
-          <div className="hidden text-xs text-slate-500 md:block">
-            {isVerticalLayout
-              ? "竖排页按竖排节点重建，原页模式支持 hover 绿框与右键摘录"
-              : "原页模式支持 hover 绿框与右键摘录"}
+            <ScrollTextIcon className="mr-1.5 size-3.5" />
+            原文结构
+          </Button>
+          <Button
+            variant={mode === "translation" ? "secondary" : "ghost"}
+            size="sm"
+            className={cn(
+              "h-8 rounded-lg px-3 transition-all",
+              mode === "translation" ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "text-slate-600 hover:bg-slate-100"
+            )}
+            onClick={() =>
+              setMode((current) =>
+                current === "translation" ? "pdf" : "translation",
+              )
+            }
+          >
+            <LanguagesIcon className="mr-1.5 size-3.5" />
+            中文译文
+          </Button>
+          <div className="hidden border-l border-slate-200 pl-3 text-[11px] font-medium text-slate-400 md:block">
+            双栏对照模式
           </div>
         </div>
       </div>
 
-      <div
-        ref={viewportRef}
-        className={cn(
-          "relative min-h-0 flex-1 overflow-auto",
-          mode === "pdf" ? "bg-[rgb(243,246,248)]" : "bg-[#f6f1e8]",
-        )}
-      >
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {pageState.status === "loading" && (
           <div className="flex h-full items-center justify-center text-sm text-stone-500">
             <Loader2Icon className="mr-2 size-4 animate-spin" />
@@ -898,202 +899,239 @@ export function KnowledgePdfReader({
           </div>
         )}
 
-        {pageState.status === "ready" && mode === "pdf" && (
-          <div className="flex min-h-full items-start justify-center p-4 md:p-6">
-            <div className="relative max-w-full">
-              <img
-                src={pageImageUrl}
-                alt={`${pageState.data.title} 第 ${currentPdfPageNo} 页`}
-                className="block max-w-full rounded-md bg-white shadow-[0_24px_50px_-30px_rgba(15,23,42,0.45)]"
-              />
-              <div className="absolute inset-0 overflow-hidden">
-                {renderParagraphItems.map((item) => {
-                  if (pageWidth <= 0 || pageHeight <= 0) {
-                    return null;
-                  }
+        {pageState.status === "ready" && (
+          <div
+            className={cn(
+              "grid h-full min-h-0 grid-cols-1",
+              showStructure && mode === "translation" && "xl:grid-cols-3",
+              (showStructure || mode === "translation") &&
+                !(showStructure && mode === "translation") &&
+                "xl:grid-cols-2",
+            )}
+          >
+            <div className="min-h-0 overflow-auto bg-zinc-900 shadow-inner">
+              <div className="flex min-h-full items-start justify-center p-6 lg:p-10">
+                <div className="relative max-w-full">
+                  <img
+                    src={pageImageUrl}
+                    alt={`${pageState.data.title} 第 ${currentPdfPageNo} 页`}
+                    className="block max-w-full rounded-sm bg-white shadow-[0_30px_60px_-15px_rgba(0,0,0,0.5)]"
+                  />
+                  <div className="absolute inset-0 overflow-hidden">
+                    {renderParagraphItems.map((item) => {
+                      if (pageWidth <= 0 || pageHeight <= 0) {
+                        return null;
+                      }
 
-                  const isActive = activeKey === item.contextParagraph.key;
-                  return (
-                    <div
-                      key={item.key}
-                      className={cn(
-                        "absolute rounded-[6px] border-2 transition-all",
-                        isActive
-                          ? "border-emerald-500 bg-emerald-400/12 shadow-[0_0_0_1px_rgba(16,185,129,0.12)]"
-                          : "border-transparent bg-transparent hover:border-emerald-400/90 hover:bg-emerald-300/10",
-                        item.source === "previous-spill" && "border-dashed",
-                      )}
-                      style={{
-                        left: `${(item.visibleLeft / pageWidth) * 100}%`,
-                        top: `${(item.visibleTop / pageHeight) * 100}%`,
-                        width: `${(item.visibleWidth / pageWidth) * 100}%`,
-                        height: `${(item.visibleHeight / pageHeight) * 100}%`,
-                      }}
-                      onMouseEnter={() =>
-                        setHoveredKey(item.contextParagraph.key)
-                      }
-                      onMouseLeave={() =>
-                        setHoveredKey((current) =>
-                          current === item.contextParagraph.key
-                            ? null
-                            : current,
-                        )
-                      }
-                      onPointerDownCapture={(event) => {
-                        if (event.button !== 2) {
-                          return;
-                        }
-                        event.preventDefault();
-                        event.stopPropagation();
-                        openContextMenu(item.contextParagraph, {
-                          x: event.clientX,
-                          y: event.clientY,
-                        });
-                      }}
-                      onContextMenuCapture={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        openContextMenu(item.contextParagraph, {
-                          x: event.clientX,
-                          y: event.clientY,
-                        });
-                      }}
-                    />
-                  );
-                })}
+                      const isActive = activeKey === item.contextParagraph.key;
+                      return (
+                        <div
+                          key={item.key}
+                          className={cn(
+                            "absolute rounded-[4px] border-2 transition-all duration-200",
+                            isActive
+                              ? "border-emerald-500 bg-emerald-400/15 shadow-[0_0_12px_rgba(16,185,129,0.2)]"
+                              : "border-transparent bg-transparent hover:border-emerald-400/80 hover:bg-emerald-300/10",
+                            item.source === "previous-spill" && "border-dashed",
+                          )}
+                          style={{
+                            left: `${(item.visibleLeft / pageWidth) * 100}%`,
+                            top: `${(item.visibleTop / pageHeight) * 100}%`,
+                            width: `${(item.visibleWidth / pageWidth) * 100}%`,
+                            height: `${(item.visibleHeight / pageHeight) * 100}%`,
+                          }}
+                          onMouseEnter={() =>
+                            setHoveredKey(item.contextParagraph.key)
+                          }
+                          onMouseLeave={() =>
+                            setHoveredKey((current) =>
+                              current === item.contextParagraph.key
+                                ? null
+                                : current,
+                            )
+                          }
+                          onPointerDownCapture={(event) => {
+                            if (event.button !== 2) {
+                              return;
+                            }
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openContextMenu(item.contextParagraph, {
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }}
+                          onContextMenuCapture={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openContextMenu(item.contextParagraph, {
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        )}
 
-        {pageState.status === "ready" && mode === "translation" && (
-          <div className="min-h-full p-4 md:p-6">
-            <div className="flex justify-center">
-              <KnowledgePageSurface
-                width={pageWidth * displayScale}
-                height={translationCanvasHeight}
-                className="shadow-[0_24px_50px_-30px_rgba(15,23,42,0.28)]"
-                style={{
-                  minHeight: `${translationCanvasHeight}px`,
-                }}
+            {showStructure && (
+              <div className="min-h-0 overflow-hidden border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l">
+                <KnowledgeSidePane
+                  currentPdfPageNo={currentPdfPageNo}
+                  documentUrl={documentUrl}
+                  mode="compare"
+                  originFilename={originFilename}
+                  originTitle={originTitle}
+                  knowledgeSpaceId={knowledgeSpaceId}
+                  fluid
+                  bordered={false}
+                />
+              </div>
+            )}
+
+            {mode === "translation" && (
+              <div
+                ref={viewportRef}
+                className="min-h-0 overflow-auto border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l"
               >
-                <div
-                  className="relative"
-                  style={{
-                    width: `${pageWidth * displayScale}px`,
-                    height: `${translationCanvasHeight}px`,
-                  }}
-                >
-                  {translationError && !translationMap ? (
-                    <div className="mx-4 mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                      {translationError}
-                    </div>
-                  ) : null}
-
-                  {translationLoading && !translationMap ? (
-                    <div className="mx-4 mt-4 flex min-h-[120px] items-center justify-center rounded-2xl border border-stone-200 bg-stone-50 text-sm text-stone-500">
-                      <Loader2Icon className="mr-2 size-4 animate-spin" />
-                      正在翻译本页为中文...
-                    </div>
-                  ) : null}
-
-                  {translationLayoutItems.map((item) => {
-                    const isActive = activeKey === item.contextParagraph.key;
-                    const content = item.translatedText || item.paragraph.text;
-                    const fontSize = Math.max(
-                      Math.min(
-                        paragraphFontSize(item.paragraph, content, layoutHint) *
-                          displayScale,
-                        isVerticalLayout ? 24 : 20,
-                      ),
-                      isVerticalLayout ? 11 : 12,
-                    );
-
-                    return (
+                <div className="min-h-full p-4 md:p-6">
+                  <div className="flex items-start justify-center">
+                    <KnowledgePageSurface
+                      width={pageWidth * displayScale}
+                      height={translationCanvasHeight}
+                      className="shadow-[0_24px_50px_-30px_rgba(15,23,42,0.28)]"
+                      style={{
+                        minHeight: `${translationCanvasHeight}px`,
+                      }}
+                    >
                       <div
-                        key={item.contextParagraph.key}
-                        ref={(node) => {
-                          translationBlockRefs.current[
-                            item.contextParagraph.key
-                          ] = node;
-                        }}
-                        className={cn(
-                          "absolute rounded-md border text-left transition-colors",
-                          isActive
-                            ? "border-emerald-400/70 bg-emerald-50/60"
-                            : "border-transparent hover:border-emerald-300/70 hover:bg-emerald-50/35",
-                        )}
+                        className="relative"
                         style={{
-                          left: `${item.textLeft - 4}px`,
-                          top: `${item.textTop - 4}px`,
-                          width: `${item.baseWidth + 8}px`,
-                          minHeight: `${item.baseHeight + 8}px`,
-                          padding: "4px",
-                        }}
-                        onMouseEnter={() =>
-                          setHoveredKey(item.contextParagraph.key)
-                        }
-                        onMouseLeave={() =>
-                          setHoveredKey((current) =>
-                            current === item.contextParagraph.key
-                              ? null
-                              : current,
-                          )
-                        }
-                        onPointerDownCapture={(event) => {
-                          if (event.button !== 2) {
-                            return;
-                          }
-                          event.preventDefault();
-                          event.stopPropagation();
-                          openContextMenu(item.contextParagraph, {
-                            x: event.clientX,
-                            y: event.clientY,
-                          });
-                        }}
-                        onContextMenuCapture={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          openContextMenu(item.contextParagraph, {
-                            x: event.clientX,
-                            y: event.clientY,
-                          });
+                          width: `${pageWidth * displayScale}px`,
+                          height: `${translationCanvasHeight}px`,
                         }}
                       >
-                        <div
-                          className="break-words whitespace-pre-wrap text-stone-800"
-                          style={{
-                            minHeight: `${item.baseHeight}px`,
-                            minWidth: isVerticalLayout
-                              ? `${item.baseWidth}px`
-                              : undefined,
-                            width: isVerticalLayout
-                              ? `${item.baseWidth}px`
-                              : undefined,
-                            height: isVerticalLayout
-                              ? `${item.baseHeight}px`
-                              : undefined,
-                            fontSize: `${fontSize}px`,
-                            lineHeight: isVerticalLayout
-                              ? VERTICAL_TRANSLATION_LINE_HEIGHT
-                              : TRANSLATION_LINE_HEIGHT,
-                            letterSpacing: "0.01em",
-                            writingMode: isVerticalLayout
-                              ? "vertical-rl"
-                              : undefined,
-                            textOrientation: isVerticalLayout
-                              ? "mixed"
-                              : undefined,
-                          }}
-                        >
-                          {content}
-                        </div>
+                        {translationError && !translationMap ? (
+                          <div className="mx-4 mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                            {translationError}
+                          </div>
+                        ) : null}
+
+                        {translationLoading && !translationMap ? (
+                          <div className="mx-4 mt-4 flex min-h-[120px] items-center justify-center rounded-2xl border border-stone-200 bg-stone-50 text-sm text-stone-500">
+                            <Loader2Icon className="mr-2 size-4 animate-spin" />
+                            正在翻译本页为中文...
+                          </div>
+                        ) : null}
+
+                        {translationLayoutItems.map((item) => {
+                          const isActive =
+                            activeKey === item.contextParagraph.key;
+                          const content =
+                            item.translatedText || item.paragraph.text;
+                          const fontSize = Math.max(
+                            Math.min(
+                              paragraphFontSize(
+                                item.paragraph,
+                                content,
+                                layoutHint,
+                              ) * displayScale,
+                              isVerticalLayout ? 24 : 20,
+                            ),
+                            isVerticalLayout ? 11 : 12,
+                          );
+
+                          return (
+                            <div
+                              key={item.contextParagraph.key}
+                              ref={(node) => {
+                                translationBlockRefs.current[
+                                  item.contextParagraph.key
+                                ] = node;
+                              }}
+                              className={cn(
+                                "absolute rounded-lg border text-left transition-all duration-200",
+                                isActive
+                                  ? "border-emerald-300 bg-emerald-50/80 shadow-[0_4px_12px_-2px_rgba(16,185,129,0.12)]"
+                                  : "border-transparent hover:border-emerald-200/60 hover:bg-emerald-50/40",
+                              )}
+                              style={{
+                                left: `${item.textLeft - 4}px`,
+                                top: `${item.textTop - 4}px`,
+                                width: `${item.baseWidth + 8}px`,
+                                minHeight: `${item.baseHeight + 8}px`,
+                                padding: "4px",
+                              }}
+                              onMouseEnter={() =>
+                                setHoveredKey(item.contextParagraph.key)
+                              }
+                              onMouseLeave={() =>
+                                setHoveredKey((current) =>
+                                  current === item.contextParagraph.key
+                                    ? null
+                                    : current,
+                                )
+                              }
+                              onPointerDownCapture={(event) => {
+                                if (event.button !== 2) {
+                                  return;
+                                }
+                                event.preventDefault();
+                                event.stopPropagation();
+                                openContextMenu(item.contextParagraph, {
+                                  x: event.clientX,
+                                  y: event.clientY,
+                                });
+                              }}
+                              onContextMenuCapture={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                openContextMenu(item.contextParagraph, {
+                                  x: event.clientX,
+                                  y: event.clientY,
+                                });
+                              }}
+                            >
+                              <div
+                                className="break-words whitespace-pre-wrap text-stone-800"
+                                style={{
+                                  minHeight: `${item.baseHeight}px`,
+                                  minWidth: isVerticalLayout
+                                    ? `${item.baseWidth}px`
+                                    : undefined,
+                                  width: isVerticalLayout
+                                    ? `${item.baseWidth}px`
+                                    : undefined,
+                                  height: isVerticalLayout
+                                    ? `${item.baseHeight}px`
+                                    : undefined,
+                                  fontSize: `${fontSize}px`,
+                                  lineHeight: isVerticalLayout
+                                    ? VERTICAL_TRANSLATION_LINE_HEIGHT
+                                    : TRANSLATION_LINE_HEIGHT,
+                                  letterSpacing: "0.01em",
+                                  writingMode: isVerticalLayout
+                                    ? "vertical-rl"
+                                    : undefined,
+                                  textOrientation: isVerticalLayout
+                                    ? "mixed"
+                                    : undefined,
+                                }}
+                              >
+                                {content}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    </KnowledgePageSurface>
+                  </div>
                 </div>
-              </KnowledgePageSurface>
-            </div>
+              </div>
+            )}
           </div>
         )}
       </div>

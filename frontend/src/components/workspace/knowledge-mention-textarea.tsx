@@ -266,7 +266,7 @@ export function KnowledgeMentionTextarea({
   }, [selectedMaterials]);
 
   return (
-    <div className="relative">
+    <div className="relative w-full self-stretch">
       {activeMention && (
         <div className="absolute right-0 bottom-[calc(100%+8px)] left-0 z-40">
           <div className="overflow-hidden rounded-2xl border border-[rgba(57,130,152,0.18)] bg-white/97 shadow-lg backdrop-blur-sm">
@@ -362,7 +362,7 @@ export function KnowledgeMentionTextarea({
       <InputGroupTextarea
         ref={textareaRef}
         className={cn(
-          "field-sizing-content max-h-48 min-h-16",
+          "field-sizing-content max-h-48 min-h-16 w-full text-left",
           selectedSummary && "pt-2",
           className,
         )}

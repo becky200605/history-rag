@@ -20,9 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  KnowledgeStructuredViewer,
-} from "@/components/workspace/artifacts/knowledge-structured-viewer";
+import { KnowledgeDocumentDetail } from "@/components/workspace/artifacts/knowledge-document-detail";
 import { UserKnowledgeSpaceSwitcher } from "@/components/workspace/user-knowledge-space-switcher";
 import {
   WorkspaceBody,
@@ -525,19 +523,12 @@ export default function KnowledgeLibraryPage() {
               </div>
             ) : (
               <div className="min-h-0 flex-1 p-4 md:p-6">
-                <div className="mb-3 flex items-center gap-2 px-1">
-                  <div className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">
-                    {selectedItem.sourceLabel}
-                  </div>
-                  <div className="text-sm text-slate-500">{selectedItem.subtitle}</div>
-                </div>
-                <KnowledgeStructuredViewer
+                <KnowledgeDocumentDetail
                   className="h-full min-h-[640px]"
+                  displayName={selectedItem.originFilename}
                   documentUrl={selectedItem.previewUrl}
                   initialPdfPageNo={selectedItem.initialPdfPageNo}
-                  excerptable
                   knowledgeSpaceId={activeSpaceId ?? undefined}
-                  highlightable={false}
                   originFilename={selectedItem.originFilename}
                   originTitle={selectedItem.originTitle}
                 />

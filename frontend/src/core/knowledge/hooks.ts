@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 
 import {
+  createKnowledgeFolder,
+  deleteKnowledgeFolder,
   deleteKnowledgeDocument,
   deleteKnowledgeFile,
   listKnowledgeDocuments,
   listKnowledgeFiles,
   loadKnowledgeStatus,
+  renameKnowledgeFolder,
   regenerateKnowledgeFileMetadata,
   retryKnowledgeFileIndexing,
   triggerReindex,
@@ -76,6 +79,37 @@ export function useDeleteKnowledgeFile() {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
+    },
+  });
+}
+
+export function useCreateKnowledgeFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) => createKnowledgeFolder(path),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+    },
+  });
+}
+
+export function useRenameKnowledgeFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { path: string; newPath: string }) =>
+      renameKnowledgeFolder(payload.path, payload.newPath),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+    },
+  });
+}
+
+export function useDeleteKnowledgeFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) => deleteKnowledgeFolder(path),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
     },
   });
 }

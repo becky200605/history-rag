@@ -6,8 +6,16 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
+from src.community.knowledge_base.book_metadata import normalize_folder_path
 from src.community.knowledge_base.common import derive_global_doc_id, get_user_collection_name, resolve_project_path
 from src.community.knowledge_base.document_parsers import OFFICE_EXTENSIONS, PDF_EXTENSIONS
+from src.community.knowledge_base.folder_registry import (
+    delete_folder_path,
+    ensure_folder_path,
+    ensure_folder_paths,
+    list_folder_paths,
+    rename_folder_path,
+)
 from src.community.knowledge_base.indexer import (
     delete_user_knowledge_records,
     upsert_user_knowledge_records,
@@ -39,7 +47,7 @@ from src.community.knowledge_base.user_store import (
     mark_user_record_failed,
     mark_user_record_parsed,
     mark_user_records_indexed,
-    move_user_record_to_space,
+    move_user_record_to_folder,
     persist_user_structured_document,
     persist_user_text_document,
     remove_user_record,
@@ -67,11 +75,17 @@ class CreateUserDerivedKnowledgeRequest(BaseModel):
     derived_from_id: str | None = None
     hints: dict[str, str] | None = None
     knowledge_space_id: str | None = None
+    folder_path: str | None = None
 
 
 class CreateUserKnowledgeSpaceRequest(BaseModel):
     name: str
     description: str = ""
+
+
+class FolderMutationRequest(BaseModel):
+    path: str
+    new_path: str | None = None
 
 
 class UpdateUserKnowledgeContentRequest(BaseModel):
@@ -80,7 +94,8 @@ class UpdateUserKnowledgeContentRequest(BaseModel):
 
 
 class MoveUserKnowledgeRecordRequest(BaseModel):
-    knowledge_space_id: str
+    knowledge_space_id: str | None = None
+    folder_path: str | None = None
 
 
 class TranslationBlockRequest(BaseModel):
@@ -120,6 +135,29 @@ def _serialize_space(space: dict[str, Any], *, stats: dict[str, Any] | None = No
     return payload
 
 
+def _personal_folder_registry_path(user_id: str) -> Path:
+    return get_user_docs_dir(user_id).parent / ".folders.json"
+
+
+def _legacy_personal_folder_path(
+    record: dict[str, Any],
+    *,
+    knowledge_space_map: dict[str, dict[str, Any]] | None = None,
+) -> str | None:
+    explicit_folder = normalize_folder_path(record.get("folder_path"))
+    if explicit_folder:
+        return explicit_folder
+
+    space_map = knowledge_space_map or get_user_knowledge_space_map(str(record.get("user_id") or ""))
+    knowledge_space_id = str(record.get("knowledge_space_id") or "")
+    if not knowledge_space_id or knowledge_space_id == DEFAULT_KNOWLEDGE_SPACE_ID:
+        return None
+    space = space_map.get(knowledge_space_id)
+    if not space or bool(space.get("readonly", False)):
+        return None
+    return normalize_folder_path(space.get("name"))
+
+
 def _serialize_record(
     record: dict[str, Any],
     *,
@@ -149,6 +187,10 @@ def _serialize_record(
         "origin_anchor": record.get("origin_anchor"),
         "knowledge_space_id": knowledge_space_id,
         "knowledge_space_name": knowledge_space.get("name") if knowledge_space else None,
+        "folder_path": _legacy_personal_folder_path(
+            record,
+            knowledge_space_map=space_map,
+        ),
         "retrieval_enabled": record.get("retrieval_enabled", False),
         "filename": source_filename,
         "size": record.get("source_size", 0),
@@ -208,6 +250,23 @@ def _build_space_stats(records: list[dict[str, Any]]) -> dict[str, dict[str, Any
         if updated_at and (not stat["latest_updated_at"] or str(updated_at) > str(stat["latest_updated_at"])):
             stat["latest_updated_at"] = updated_at
     return stats
+
+
+def _list_personal_folder_paths(
+    user_id: str,
+    *,
+    records: list[dict[str, Any]] | None = None,
+    knowledge_space_map: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
+    records = records if records is not None else list_user_records(user_id)
+    knowledge_space_map = knowledge_space_map or get_user_knowledge_space_map(user_id)
+    registry_path = _personal_folder_registry_path(user_id)
+    explicit_folders = list_folder_paths(registry_path)
+    implicit_folders = [
+        _legacy_personal_folder_path(record, knowledge_space_map=knowledge_space_map)
+        for record in records
+    ]
+    return ensure_folder_paths(registry_path, [*explicit_folders, *implicit_folders])
 
 
 def _build_global_doc_id(filename: str) -> str:
@@ -498,6 +557,11 @@ def list_user_knowledge_records(
             _serialize_record(record, knowledge_space_map=knowledge_space_map)
             for record in records
         ],
+        "folders": _list_personal_folder_paths(
+            user_id,
+            records=records,
+            knowledge_space_map=knowledge_space_map,
+        ),
         "count": len(records),
         "indexed_count": indexed_count,
         "doc_count": doc_count,
@@ -514,6 +578,88 @@ def get_user_knowledge_spaces(user_id: str) -> dict:
             _serialize_space(space, stats=stats_by_space.get(str(space.get("id"))))
             for space in spaces
         ]
+    }
+
+
+@router.post("/folders", response_model=dict)
+def create_user_knowledge_folder(
+    user_id: str,
+    payload: FolderMutationRequest,
+) -> dict:
+    try:
+        folders = ensure_folder_path(_personal_folder_registry_path(user_id), payload.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "success": True,
+        "folders": folders,
+        "path": normalize_folder_path(payload.path),
+        "message": "Created personal knowledge folder",
+    }
+
+
+@router.patch("/folders", response_model=dict)
+def rename_user_knowledge_folder(
+    user_id: str,
+    payload: FolderMutationRequest,
+) -> dict:
+    normalized_old = normalize_folder_path(payload.path)
+    normalized_new = normalize_folder_path(payload.new_path)
+    if not normalized_old or not normalized_new:
+        raise HTTPException(status_code=400, detail="Both path and new_path are required")
+
+    records = list_user_records(user_id)
+    knowledge_space_map = get_user_knowledge_space_map(user_id)
+    for record in records:
+        current = _legacy_personal_folder_path(record, knowledge_space_map=knowledge_space_map)
+        if current == normalized_old or (current and current.startswith(f"{normalized_old}/")):
+            suffix = current[len(normalized_old) :] if current else ""
+            record["folder_path"] = f"{normalized_new}{suffix}"
+            save_user_record(user_id, record)
+
+    try:
+        folders = rename_folder_path(
+            _personal_folder_registry_path(user_id),
+            normalized_old,
+            normalized_new,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "success": True,
+        "folders": folders,
+        "path": normalized_new,
+        "message": "Renamed personal knowledge folder",
+    }
+
+
+@router.delete("/folders", response_model=dict)
+def delete_user_knowledge_folder(
+    user_id: str,
+    path: str = Query(..., description="Logical folder path to delete"),
+) -> dict:
+    normalized_path = normalize_folder_path(path)
+    if not normalized_path:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    records = list_user_records(user_id)
+    knowledge_space_map = get_user_knowledge_space_map(user_id)
+    for record in records:
+        current = _legacy_personal_folder_path(record, knowledge_space_map=knowledge_space_map)
+        if current == normalized_path or (current and current.startswith(f"{normalized_path}/")):
+            raise HTTPException(status_code=400, detail="Folder is not empty")
+
+    try:
+        folders = delete_folder_path(_personal_folder_registry_path(user_id), normalized_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "success": True,
+        "folders": folders,
+        "deleted_path": normalized_path,
+        "message": "Deleted personal knowledge folder",
     }
 
 
@@ -585,6 +731,7 @@ async def upload_user_knowledge_files(
     layout_hint: str | None = Form(default=None),
     document_type_hint: str | None = Form(default=None),
     knowledge_space_id: str | None = Form(default=None),
+    folder_path: str | None = Form(default=None),
 ) -> dict:
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -594,6 +741,9 @@ async def upload_user_knowledge_files(
     indexed_record_ids: list[str] = []
     resolved_space_id = _resolve_personal_knowledge_space_id(user_id, knowledge_space_id)
     knowledge_space_map = get_user_knowledge_space_map(user_id)
+    normalized_folder_path = normalize_folder_path(folder_path)
+    if normalized_folder_path:
+        ensure_folder_path(_personal_folder_registry_path(user_id), normalized_folder_path)
     hints = {
         key: value
         for key, value in {
@@ -622,6 +772,7 @@ async def upload_user_knowledge_files(
             content_type=file.content_type,
             hints=hints,
             knowledge_space_id=resolved_space_id,
+            folder_path=normalized_folder_path,
         )
 
         file_ext = file_path.suffix.lower()
@@ -666,6 +817,11 @@ async def upload_user_knowledge_files(
     return {
         "success": True,
         "records": uploaded,
+        "folders": _list_personal_folder_paths(
+            user_id,
+            records=list_user_records(user_id),
+            knowledge_space_map=knowledge_space_map,
+        ),
         "message": f"Successfully uploaded {len(uploaded)} personal knowledge file(s)",
     }
 
@@ -675,12 +831,16 @@ def import_global_document_reference(
     user_id: str,
     payload: UserKnowledgeImportRequest,
     knowledge_space_id: str | None = Query(default=None),
+    folder_path: str | None = Query(default=None),
 ) -> dict:
     filename = Path(payload.filename).name
     if not filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     resolved_space_id = _resolve_personal_knowledge_space_id(user_id, knowledge_space_id)
+    normalized_folder_path = normalize_folder_path(folder_path)
+    if normalized_folder_path:
+        ensure_folder_path(_personal_folder_registry_path(user_id), normalized_folder_path)
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
     file_path = docs_root / filename
     if not file_path.exists() or not file_path.is_file():
@@ -707,6 +867,7 @@ def import_global_document_reference(
         origin_doc_id=_build_global_doc_id(filename),
         origin_filename=filename,
         knowledge_space_id=resolved_space_id,
+        folder_path=normalized_folder_path,
     )
     save_user_record(user_id, record)
     return {
@@ -743,7 +904,15 @@ def move_user_knowledge_record(
     payload: MoveUserKnowledgeRecordRequest,
 ) -> dict:
     resolved_space_id = _resolve_personal_knowledge_space_id(user_id, payload.knowledge_space_id)
-    record = move_user_record_to_space(user_id, record_id, resolved_space_id)
+    normalized_folder_path = normalize_folder_path(payload.folder_path)
+    if normalized_folder_path:
+        ensure_folder_path(_personal_folder_registry_path(user_id), normalized_folder_path)
+    record = move_user_record_to_folder(
+        user_id,
+        record_id,
+        knowledge_space_id=resolved_space_id,
+        folder_path=normalized_folder_path,
+    )
     if not record:
         raise HTTPException(status_code=404, detail="Personal knowledge record not found")
     return {
@@ -857,6 +1026,10 @@ def create_user_derived_knowledge_record(
         raise HTTPException(status_code=400, detail="content is required")
 
     persisted_content = _build_note_markdown(title=title, content=content) if source_kind == "note" else trimmed_content
+    resolved_space_id = _resolve_personal_knowledge_space_id(user_id, payload.knowledge_space_id)
+    normalized_folder_path = normalize_folder_path(payload.folder_path)
+    if normalized_folder_path:
+        ensure_folder_path(_personal_folder_registry_path(user_id), normalized_folder_path)
 
     temp_record = build_user_derived_record(
         user_id=user_id,
@@ -870,7 +1043,8 @@ def create_user_derived_knowledge_record(
         origin_anchor=payload.origin_anchor,
         derived_from_id=payload.derived_from_id,
         hints=payload.hints,
-        knowledge_space_id=_resolve_personal_knowledge_space_id(user_id, payload.knowledge_space_id),
+        knowledge_space_id=resolved_space_id,
+        folder_path=normalized_folder_path,
     )
     source_filename = f"{temp_record['id']}.md"
     encoded_content = persisted_content.encode("utf-8")
@@ -886,7 +1060,8 @@ def create_user_derived_knowledge_record(
         origin_anchor=payload.origin_anchor,
         derived_from_id=payload.derived_from_id,
         hints=payload.hints,
-        knowledge_space_id=_resolve_personal_knowledge_space_id(user_id, payload.knowledge_space_id),
+        knowledge_space_id=resolved_space_id,
+        folder_path=normalized_folder_path,
     )
     record["id"] = temp_record["id"]
     record["created_at"] = temp_record["created_at"]

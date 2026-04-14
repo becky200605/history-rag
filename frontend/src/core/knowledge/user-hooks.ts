@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  createUserKnowledgeFolder,
   createUserKnowledgeSpace,
   createUserDerivedKnowledge,
+  deleteUserKnowledgeFolder,
   deleteUserKnowledgeSpace,
   deleteUserKnowledgeRecord,
   getUserKnowledgeRecordContent,
@@ -10,6 +12,7 @@ import {
   listUserKnowledgeSpaces,
   listUserKnowledgeRecords,
   moveUserKnowledgeRecord,
+  renameUserKnowledgeFolder,
   type CreateUserDerivedKnowledgeInput,
   type UserKnowledgeRecordContentResponse,
   type UserKnowledgeListResponse,
@@ -64,6 +67,7 @@ export function useUploadUserKnowledgeFiles() {
         layoutHint?: string;
         documentTypeHint?: string;
         knowledgeSpaceId?: string | null;
+        folderPath?: string | null;
       };
     }
   >({
@@ -94,6 +98,37 @@ export function useCreateUserKnowledgeSpace() {
       createUserKnowledgeSpace(payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+    },
+  });
+}
+
+export function useCreateUserKnowledgeFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) => createUserKnowledgeFolder(path),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+    },
+  });
+}
+
+export function useRenameUserKnowledgeFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { path: string; newPath: string }) =>
+      renameUserKnowledgeFolder(payload.path, payload.newPath),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+    },
+  });
+}
+
+export function useDeleteUserKnowledgeFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) => deleteUserKnowledgeFolder(path),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
     },
   });
@@ -136,8 +171,15 @@ export function useDeleteUserKnowledgeRecord() {
 export function useMoveUserKnowledgeRecord() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { recordId: string; knowledgeSpaceId: string }) =>
-      moveUserKnowledgeRecord(payload.recordId, { knowledgeSpaceId: payload.knowledgeSpaceId }),
+    mutationFn: (payload: {
+      recordId: string;
+      knowledgeSpaceId?: string | null;
+      folderPath?: string | null;
+    }) =>
+      moveUserKnowledgeRecord(payload.recordId, {
+        knowledgeSpaceId: payload.knowledgeSpaceId,
+        folderPath: payload.folderPath,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });

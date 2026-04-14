@@ -26,7 +26,7 @@ export function KnowledgePageSurface({
   return (
     <div
       className={cn(
-        "relative shrink-0 overflow-hidden rounded-md bg-white shadow-lg",
+        "relative shrink-0 overflow-hidden rounded-xl bg-white shadow-[0_8px_30px_rgb(0,0,0,0.04)] ring-1 ring-slate-200/50",
         className,
       )}
       style={resolvedStyle}

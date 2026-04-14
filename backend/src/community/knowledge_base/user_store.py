@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
+from src.community.knowledge_base.book_metadata import normalize_folder_path
 from src.community.knowledge_base.document_parsers import infer_parse_method as infer_document_parse_method
 from src.community.knowledge_base.structured_document import save_structured_document
 from src.community.knowledge_base.user_spaces import (
@@ -115,6 +116,7 @@ def _base_user_record(
     origin_filename: str | None = None,
     origin_anchor: dict[str, Any] | None = None,
     knowledge_space_id: str | None = None,
+    folder_path: str | None = None,
 ) -> dict[str, Any]:
     if source_kind not in USER_SOURCE_KINDS:
         raise ValueError(f"Unsupported user knowledge source kind: {source_kind}")
@@ -131,6 +133,7 @@ def _base_user_record(
         "origin_filename": origin_filename,
         "origin_anchor": origin_anchor,
         "knowledge_space_id": knowledge_space_id or DEFAULT_KNOWLEDGE_SPACE_ID,
+        "folder_path": normalize_folder_path(folder_path),
         "derived_from_id": None,
         "retrieval_enabled": retrieval_enabled,
         "created_at": now,
@@ -146,6 +149,7 @@ def build_user_upload_record(
     content_type: str | None = None,
     hints: dict[str, str] | None = None,
     knowledge_space_id: str | None = None,
+    folder_path: str | None = None,
 ) -> dict[str, Any]:
     parse_method, indexable = infer_parse_method(source_filename)
     urls = build_user_doc_urls(user_id, source_filename)
@@ -156,6 +160,7 @@ def build_user_upload_record(
         title=Path(source_filename).stem,
         retrieval_enabled=True,
         knowledge_space_id=knowledge_space_id,
+        folder_path=folder_path,
     )
     record.update(
         {
@@ -192,6 +197,7 @@ def build_user_import_ref_record(
     origin_doc_id: str | None,
     origin_filename: str,
     knowledge_space_id: str | None = None,
+    folder_path: str | None = None,
 ) -> dict[str, Any]:
     record = _base_user_record(
         user_id=user_id,
@@ -202,6 +208,7 @@ def build_user_import_ref_record(
         origin_doc_id=origin_doc_id,
         origin_filename=origin_filename,
         knowledge_space_id=knowledge_space_id,
+        folder_path=folder_path,
     )
     record.update(
         {
@@ -245,6 +252,7 @@ def build_user_derived_record(
     derived_from_id: str | None = None,
     hints: dict[str, str] | None = None,
     knowledge_space_id: str | None = None,
+    folder_path: str | None = None,
 ) -> dict[str, Any]:
     parse_method, indexable = infer_parse_method(source_filename)
     urls = build_user_doc_urls(user_id, source_filename)
@@ -258,6 +266,7 @@ def build_user_derived_record(
         origin_filename=origin_filename,
         origin_anchor=origin_anchor,
         knowledge_space_id=knowledge_space_id,
+        folder_path=folder_path,
     )
     record["derived_from_id"] = derived_from_id
     record.update(
@@ -335,6 +344,23 @@ def move_user_record_to_space(user_id: str, record_id: str, knowledge_space_id: 
     if record is None:
         return None
     record["knowledge_space_id"] = knowledge_space_id
+    save_user_record(user_id, record)
+    return record
+
+
+def move_user_record_to_folder(
+    user_id: str,
+    record_id: str,
+    *,
+    folder_path: str | None = None,
+    knowledge_space_id: str | None = None,
+) -> dict[str, Any] | None:
+    record = load_user_record(user_id, record_id)
+    if record is None:
+        return None
+    if knowledge_space_id:
+        record["knowledge_space_id"] = knowledge_space_id
+    record["folder_path"] = normalize_folder_path(folder_path)
     save_user_record(user_id, record)
     return record
 

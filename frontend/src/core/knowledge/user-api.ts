@@ -12,6 +12,7 @@ export interface UserKnowledgeRecord {
   origin_anchor?: Record<string, unknown> | null;
   knowledge_space_id?: string | null;
   knowledge_space_name?: string | null;
+  folder_path?: string | null;
   retrieval_enabled: boolean;
   filename?: string | null;
   size: number;
@@ -49,6 +50,7 @@ export interface UserKnowledgeSpace {
 
 export interface UserKnowledgeListResponse {
   records: UserKnowledgeRecord[];
+  folders?: string[];
   count: number;
   indexed_count: number;
   doc_count: number;
@@ -84,6 +86,7 @@ export interface CreateUserDerivedKnowledgeInput {
   derivedFromId?: string | null;
   hints?: Record<string, string> | null;
   knowledgeSpaceId?: string | null;
+  folderPath?: string | null;
 }
 
 export async function listUserKnowledgeRecords(
@@ -111,6 +114,7 @@ export async function uploadUserKnowledgeFiles(
     layoutHint?: string;
     documentTypeHint?: string;
     knowledgeSpaceId?: string | null;
+    folderPath?: string | null;
   },
 ): Promise<UserKnowledgeUploadResponse> {
   const formData = new FormData();
@@ -128,6 +132,9 @@ export async function uploadUserKnowledgeFiles(
   }
   if (options?.knowledgeSpaceId) {
     formData.append("knowledge_space_id", options.knowledgeSpaceId);
+  }
+  if (options?.folderPath) {
+    formData.append("folder_path", options.folderPath);
   }
 
   const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/upload`, {
@@ -246,6 +253,7 @@ export async function createUserDerivedKnowledge(
       derived_from_id: payload.derivedFromId,
       hints: payload.hints,
       knowledge_space_id: payload.knowledgeSpaceId,
+      folder_path: payload.folderPath ?? undefined,
     }),
   });
   if (!response.ok) {
@@ -278,7 +286,7 @@ export async function deleteUserKnowledgeRecord(recordId: string): Promise<{
 
 export async function moveUserKnowledgeRecord(
   recordId: string,
-  payload: { knowledgeSpaceId: string },
+  payload: { knowledgeSpaceId?: string | null; folderPath?: string | null },
 ): Promise<{
   success: boolean;
   record: UserKnowledgeRecord;
@@ -291,6 +299,7 @@ export async function moveUserKnowledgeRecord(
     },
     body: JSON.stringify({
       knowledge_space_id: payload.knowledgeSpaceId,
+      folder_path: payload.folderPath,
     }),
   });
   if (!response.ok) {
@@ -302,6 +311,55 @@ export async function moveUserKnowledgeRecord(
     record: UserKnowledgeRecord;
     message: string;
   };
+}
+
+export async function createUserKnowledgeFolder(
+  path: string,
+): Promise<{ success: boolean; folders: string[]; path?: string; message: string }> {
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/folders`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Failed to create personal folder" }));
+    throw new Error(error.message ?? error.detail ?? "Failed to create personal folder");
+  }
+  return (await response.json()) as { success: boolean; folders: string[]; path?: string; message: string };
+}
+
+export async function renameUserKnowledgeFolder(
+  path: string,
+  newPath: string,
+): Promise<{ success: boolean; folders: string[]; path?: string; message: string }> {
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/folders`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ path, new_path: newPath }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Failed to rename personal folder" }));
+    throw new Error(error.message ?? error.detail ?? "Failed to rename personal folder");
+  }
+  return (await response.json()) as { success: boolean; folders: string[]; path?: string; message: string };
+}
+
+export async function deleteUserKnowledgeFolder(
+  path: string,
+): Promise<{ success: boolean; folders: string[]; deleted_path?: string; message: string }> {
+  const params = new URLSearchParams({ path });
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/folders?${params.toString()}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Failed to delete personal folder" }));
+    throw new Error(error.message ?? error.detail ?? "Failed to delete personal folder");
+  }
+  return (await response.json()) as { success: boolean; folders: string[]; deleted_path?: string; message: string };
 }
 
 export async function getUserKnowledgeRecordContent(

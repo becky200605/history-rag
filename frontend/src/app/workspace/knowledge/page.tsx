@@ -1,7 +1,5 @@
-"use client";
-
-import KnowledgeLibraryPage from "@/components/workspace/knowledge-library-page";
+import { redirect } from "next/navigation";
 
 export default function WorkspaceKnowledgePage() {
-  return <KnowledgeLibraryPage />;
+  redirect("/workspace/knowledge-manage");
 }

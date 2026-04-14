@@ -157,18 +157,21 @@ export function KnowledgeTranslationWorkspace({
   }, [documentUrl, pageData?.pdf_page_no]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[rgb(248,250,250)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[rgba(57,130,152,0.14)] bg-white px-4 py-3">
+    <div className="flex h-full min-h-0 flex-col bg-zinc-50/50">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/80 px-4 py-2.5 backdrop-blur-md">
         <div className="flex flex-wrap items-center gap-2">
         {LANGUAGE_OPTIONS.map((option) => (
             <Button
               key={option.value}
-              variant={sourceLanguage === option.value ? "default" : "outline"}
+              variant={sourceLanguage === option.value ? "secondary" : "ghost"}
               size="sm"
-              className="h-8 rounded-xl"
+              className={cn(
+                "h-8 rounded-lg px-3 transition-all",
+                sourceLanguage === option.value ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "text-slate-600 hover:bg-slate-100"
+              )}
               onClick={() => onSourceLanguageChange(option.value)}
             >
-              <LanguagesIcon className="mr-1.5 size-4" />
+              <LanguagesIcon className="mr-1.5 size-3.5" />
               {option.label}
             </Button>
           ))}
@@ -198,11 +201,11 @@ export function KnowledgeTranslationWorkspace({
             icon={<FileSearchIcon className="size-4" />}
           >
             {imageUrl ? (
-              <div className="overflow-auto rounded-2xl bg-[rgb(247,243,236)] p-3">
+              <div className="overflow-auto rounded-xl bg-zinc-900 p-6 lg:p-10 shadow-inner">
                 <img
                   src={imageUrl}
                   alt={`${pageData.title} PDF 第 ${pageData.pdf_page_no ?? currentPdfPageNo} 页`}
-                  className="mx-auto max-w-full rounded-xl bg-white shadow-sm"
+                  className="mx-auto max-w-full rounded-sm bg-white shadow-[0_30px_60px_-15px_rgba(0,0,0,0.5)]"
                 />
               </div>
             ) : (
@@ -294,8 +297,8 @@ function ColumnCard({
   children: ReactNode;
 }) {
   return (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded-[24px] border border-[rgba(57,130,152,0.14)] bg-white">
-      <div className="flex items-center gap-2 border-b border-[rgba(57,130,152,0.12)] px-4 py-3 text-sm font-medium text-slate-800">
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md">
+      <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/50 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
         {icon}
         {title}
       </div>

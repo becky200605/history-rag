@@ -60,6 +60,7 @@ export interface KnowledgeUploadOptions {
   languageHint?: string;
   layoutHint?: string;
   documentTypeHint?: string;
+  folderPath?: string | null;
 }
 
 export interface KnowledgeUploadResponse {
@@ -70,6 +71,7 @@ export interface KnowledgeUploadResponse {
 
 export interface KnowledgeListResponse {
   files: KnowledgeFileInfo[];
+  folders?: string[];
   count: number;
 }
 
@@ -239,6 +241,9 @@ export async function uploadKnowledgeFiles(
   if (options?.documentTypeHint) {
     formData.append("document_type_hint", options.documentTypeHint);
   }
+  if (options?.folderPath) {
+    formData.append("folder_path", options.folderPath);
+  }
 
   const response = await fetch(`${getBackendBaseURL()}/api/knowledge/uploads`, {
     method: "POST",
@@ -260,6 +265,55 @@ export async function listKnowledgeFiles(): Promise<KnowledgeListResponse> {
     throw new Error(error.detail ?? "Failed to list files");
   }
   return (await response.json()) as KnowledgeListResponse;
+}
+
+export async function createKnowledgeFolder(
+  path: string,
+): Promise<{ success: boolean; folders: string[]; path?: string; message: string }> {
+  const response = await fetch(`${getBackendBaseURL()}/api/knowledge/folders`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to create folder" }));
+    throw new Error(error.detail ?? "Failed to create folder");
+  }
+  return (await response.json()) as { success: boolean; folders: string[]; path?: string; message: string };
+}
+
+export async function renameKnowledgeFolder(
+  path: string,
+  newPath: string,
+): Promise<{ success: boolean; folders: string[]; path?: string; message: string }> {
+  const response = await fetch(`${getBackendBaseURL()}/api/knowledge/folders`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ path, new_path: newPath }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to rename folder" }));
+    throw new Error(error.detail ?? "Failed to rename folder");
+  }
+  return (await response.json()) as { success: boolean; folders: string[]; path?: string; message: string };
+}
+
+export async function deleteKnowledgeFolder(
+  path: string,
+): Promise<{ success: boolean; folders: string[]; deleted_path?: string; message: string }> {
+  const params = new URLSearchParams({ path });
+  const response = await fetch(`${getBackendBaseURL()}/api/knowledge/folders?${params.toString()}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to delete folder" }));
+    throw new Error(error.detail ?? "Failed to delete folder");
+  }
+  return (await response.json()) as { success: boolean; folders: string[]; deleted_path?: string; message: string };
 }
 
 export async function deleteKnowledgeFile(

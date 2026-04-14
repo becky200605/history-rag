@@ -30,6 +30,13 @@ from src.community.knowledge_base.citations import (
 )
 from src.community.knowledge_base.common import resolve_project_path
 from src.community.knowledge_base.document_parsers import OFFICE_EXTENSIONS, PDF_EXTENSIONS
+from src.community.knowledge_base.folder_registry import (
+    delete_folder_path,
+    ensure_folder_path,
+    ensure_folder_paths,
+    list_folder_paths,
+    rename_folder_path,
+)
 from src.community.knowledge_base.indexer import (
     _get_upsert_batch_size,
     delete_global_knowledge_documents,
@@ -260,6 +267,11 @@ class KnowledgeMetadataUpdateRequest(BaseModel):
     document_type_hint: str | None = None
 
 
+class FolderMutationRequest(BaseModel):
+    path: str
+    new_path: str | None = None
+
+
 class TranslationBlockRequest(BaseModel):
     key: str
     text: str
@@ -327,6 +339,10 @@ def get_global_ingestion_dir() -> Path:
     ingestion_dir = get_global_docs_dir() / ".ingestion"
     ingestion_dir.mkdir(parents=True, exist_ok=True)
     return ingestion_dir
+
+
+def _global_folder_registry_path() -> Path:
+    return get_global_docs_dir() / ".folders.json"
 
 
 def _global_record_path(filename: str) -> Path:
@@ -465,7 +481,10 @@ def _load_global_book_metadata(filename: str) -> dict[str, Any]:
     for value in [*categories, *eras, *regions, *keywords]:
         if value and value not in tags:
             tags.append(value)
-    folder = _resolve_metadata_folder(suggestion, fallback_tags=tags)
+    folder = normalize_folder_path((ingestion_record or {}).get("folder_path")) or _resolve_metadata_folder(
+        suggestion,
+        fallback_tags=tags,
+    )
     return {
         "type": book_type,
         "folder": folder,
@@ -479,6 +498,12 @@ def _load_global_book_metadata(filename: str) -> dict[str, Any]:
         "layout_hint": (ingestion_record or {}).get("hints", {}).get("layout_hint"),
         "document_type_hint": (ingestion_record or {}).get("hints", {}).get("document_type_hint"),
     }
+
+
+def _list_global_folder_paths(files: list[dict[str, Any]] | None = None) -> list[str]:
+    explicit_folders = list_folder_paths(_global_folder_registry_path())
+    implicit_folders = [item.get("folder") for item in files or []]
+    return ensure_folder_paths(_global_folder_registry_path(), [*explicit_folders, *implicit_folders])
 
 
 def _load_structured_payload_for_metadata(filename: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Path]:
@@ -530,6 +555,7 @@ def _build_global_ingestion_record(
     size: int,
     content_type: str | None,
     hints: dict[str, str],
+    folder_path: str | None = None,
 ) -> dict[str, Any]:
     suffix = Path(filename).suffix.lower()
     parse_method = "binary_only"
@@ -559,6 +585,7 @@ def _build_global_ingestion_record(
         "index_target_artifact_url": None,
         "index_target_format": None,
         "hints": hints,
+        "folder_path": normalize_folder_path(folder_path),
         "error": None,
         "replace_existing_index": False,
         "embedding_checkpoint": None,
@@ -981,6 +1008,7 @@ async def upload_global_knowledge_files(
     language_hint: str | None = Form(default=None),
     layout_hint: str | None = Form(default=None),
     document_type_hint: str | None = Form(default=None),
+    folder_path: str | None = Form(default=None),
 ) -> KnowledgeUploadResponse:
     """Upload files into the global knowledge base and reindex them."""
     _ = background_tasks
@@ -993,6 +1021,9 @@ async def upload_global_knowledge_files(
     docs_dir = get_global_docs_dir()
     uploaded_files: list[dict[str, Any]] = []
     queued_filenames: list[str] = []
+    normalized_folder_path = normalize_folder_path(folder_path)
+    if normalized_folder_path:
+        ensure_folder_path(_global_folder_registry_path(), normalized_folder_path)
     hints = {
         key: value
         for key, value in {
@@ -1024,6 +1055,7 @@ async def upload_global_knowledge_files(
                 size=file_size,
                 content_type=file.content_type,
                 hints=hints,
+                folder_path=normalized_folder_path,
             )
             if existing_record and existing_record.get("index_target_path"):
                 record["replace_existing_index"] = True
@@ -1043,8 +1075,18 @@ async def upload_global_knowledge_files(
                 "index_target_artifact_url": record.get("index_target_artifact_url"),
                 "hints": hints,
             }
+            if normalized_folder_path:
+                file_info["folder"] = normalized_folder_path
 
             _save_global_record(safe_filename, record)
+            if normalized_folder_path:
+                try:
+                    await update_global_knowledge_metadata(
+                        safe_filename,
+                        KnowledgeMetadataUpdateRequest(folder=normalized_folder_path),
+                    )
+                except HTTPException:
+                    pass
             uploaded_files.append(file_info)
             if record.get("indexable"):
                 queued_filenames.append(safe_filename)
@@ -1151,7 +1193,88 @@ def list_global_knowledge_files() -> dict:
             )
         files.append(entry)
 
-    return {"files": files, "count": len(files)}
+    return {"files": files, "folders": _list_global_folder_paths(files), "count": len(files)}
+
+
+@router.post("/folders", response_model=dict, summary="Create Global Knowledge Folder")
+def create_global_knowledge_folder(payload: FolderMutationRequest) -> dict:
+    try:
+        folders = ensure_folder_path(_global_folder_registry_path(), payload.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "success": True,
+        "folders": folders,
+        "path": normalize_folder_path(payload.path),
+        "message": "Created global knowledge folder",
+    }
+
+
+@router.patch("/folders", response_model=dict, summary="Rename Global Knowledge Folder")
+async def rename_global_knowledge_folder(payload: FolderMutationRequest) -> dict:
+    normalized_old = normalize_folder_path(payload.path)
+    normalized_new = normalize_folder_path(payload.new_path)
+    if not normalized_old or not normalized_new:
+        raise HTTPException(status_code=400, detail="Both path and new_path are required")
+
+    current_files = list_global_knowledge_files().get("files", [])
+    for file_info in current_files:
+        current_folder = normalize_folder_path(file_info.get("folder"))
+        if current_folder == normalized_old or (
+            current_folder and current_folder.startswith(f"{normalized_old}/")
+        ):
+            suffix = current_folder[len(normalized_old) :] if current_folder else ""
+            filename = str(file_info.get("filename") or "")
+            if not filename:
+                continue
+            updated_folder = f"{normalized_new}{suffix}"
+            await update_global_knowledge_metadata(
+                filename,
+                KnowledgeMetadataUpdateRequest(folder=updated_folder),
+            )
+
+    try:
+        folders = rename_folder_path(
+            _global_folder_registry_path(),
+            normalized_old,
+            normalized_new,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "success": True,
+        "folders": folders,
+        "path": normalized_new,
+        "message": "Renamed global knowledge folder",
+    }
+
+
+@router.delete("/folders", response_model=dict, summary="Delete Global Knowledge Folder")
+def delete_global_knowledge_folder(path: str = Query(..., description="Logical folder path to delete")) -> dict:
+    normalized_path = normalize_folder_path(path)
+    if not normalized_path:
+        raise HTTPException(status_code=400, detail="path is required")
+
+    current_files = list_global_knowledge_files().get("files", [])
+    for file_info in current_files:
+        current_folder = normalize_folder_path(file_info.get("folder"))
+        if current_folder == normalized_path or (
+            current_folder and current_folder.startswith(f"{normalized_path}/")
+        ):
+            raise HTTPException(status_code=400, detail="Folder is not empty")
+
+    try:
+        folders = delete_folder_path(_global_folder_registry_path(), normalized_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "success": True,
+        "folders": folders,
+        "deleted_path": normalized_path,
+        "message": "Deleted global knowledge folder",
+    }
 
 
 @router.patch("/uploads/{filename}/metadata", response_model=dict, summary="Update Global Knowledge Metadata")
@@ -1242,6 +1365,10 @@ async def update_global_knowledge_metadata(
     save_book_metadata(docs_dir, filename, book_metadata_record)
     if record is not None:
         next_hints = dict(record.get("hints") or {})
+        if "folder" in provided_fields:
+            record["folder_path"] = normalize_folder_path(payload.folder)
+            if payload.folder:
+                ensure_folder_path(_global_folder_registry_path(), payload.folder)
         if "language_hint" in provided_fields:
             if payload.language_hint:
                 next_hints["language_hint"] = payload.language_hint

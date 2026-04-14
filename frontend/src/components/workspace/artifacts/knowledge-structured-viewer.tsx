@@ -12,10 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-import {
-  KnowledgeSidePane,
-  type KnowledgeSidePaneMode,
-} from "./knowledge-side-pane";
+import { KnowledgeSidePane } from "./knowledge-side-pane";
 
 export function KnowledgeStructuredViewer({
   className,
@@ -44,7 +41,7 @@ export function KnowledgeStructuredViewer({
   onCurrentPdfPageNoChange?: (page: number) => void;
   toolbarExtra?: ReactNode;
 }) {
-  const [mode, setMode] = useState<KnowledgeSidePaneMode>("compare");
+  const [showTranslation, setShowTranslation] = useState(false);
   const [translationSourceLanguage, setTranslationSourceLanguage] = useState<
     "en" | "ja" | "de"
   >("en");
@@ -150,7 +147,7 @@ export function KnowledgeStructuredViewer({
         </div>
 
         <div className="flex items-center gap-2">
-          {mode === "translation" && (
+          {showTranslation && (
             <div className="mr-2 flex items-center gap-2">
               {(
                 [
@@ -177,19 +174,19 @@ export function KnowledgeStructuredViewer({
             </div>
           )}
           <Button
-            variant={mode === "compare" ? "default" : "outline"}
+            variant="default"
             size="sm"
             className="h-8 rounded-xl"
-            onClick={() => setMode("compare")}
+            disabled
           >
             <ScrollTextIcon className="mr-1.5 size-4" />
             原文结构
           </Button>
           <Button
-            variant={mode === "translation" ? "default" : "outline"}
+            variant={showTranslation ? "default" : "outline"}
             size="sm"
             className="h-8 rounded-xl"
-            onClick={() => setMode("translation")}
+            onClick={() => setShowTranslation((current) => !current)}
           >
             <LanguagesIcon className="mr-1.5 size-4" />
             中文翻译
@@ -198,24 +195,49 @@ export function KnowledgeStructuredViewer({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1">
-        <KnowledgeSidePane
-          currentPdfPageNo={resolvedCurrentPdfPageNo}
-          documentUrl={documentUrl}
-          mode={mode}
-          originFilename={originFilename}
-          originTitle={originTitle}
-          knowledgeSpaceId={knowledgeSpaceId}
-          translationSourceLanguageHint={translationSourceLanguage}
-          interactive={interactive}
-          highlightable={highlightable}
-          excerptable={excerptable}
-          fluid
-          bordered={false}
-          onPageDataChange={(pageData) => {
-            setPageCount(pageData?.page_count ?? null);
-          }}
-        />
+      <div
+        className={cn(
+          "min-h-0 flex-1",
+          showTranslation && "grid min-h-0 grid-cols-1 md:grid-cols-2",
+        )}
+      >
+        <div className="min-h-0 min-w-0">
+          <KnowledgeSidePane
+            currentPdfPageNo={resolvedCurrentPdfPageNo}
+            documentUrl={documentUrl}
+            mode="compare"
+            originFilename={originFilename}
+            originTitle={originTitle}
+            knowledgeSpaceId={knowledgeSpaceId}
+            translationSourceLanguageHint={translationSourceLanguage}
+            interactive={interactive}
+            highlightable={highlightable}
+            excerptable={excerptable}
+            fluid
+            bordered={false}
+            onPageDataChange={(pageData) => {
+              setPageCount(pageData?.page_count ?? null);
+            }}
+          />
+        </div>
+        {showTranslation && (
+          <div className="min-h-0 min-w-0 border-t border-[rgba(57,130,152,0.14)] md:border-t-0 md:border-l">
+            <KnowledgeSidePane
+              currentPdfPageNo={resolvedCurrentPdfPageNo}
+              documentUrl={documentUrl}
+              mode="translation"
+              originFilename={originFilename}
+              originTitle={originTitle}
+              knowledgeSpaceId={knowledgeSpaceId}
+              translationSourceLanguageHint={translationSourceLanguage}
+              interactive={interactive}
+              highlightable={highlightable}
+              excerptable={excerptable}
+              fluid
+              bordered={false}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

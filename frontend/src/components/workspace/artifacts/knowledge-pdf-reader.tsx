@@ -36,6 +36,16 @@ import { KnowledgePageSurface } from "./knowledge-page-surface";
 import { KnowledgeSidePane } from "./knowledge-side-pane";
 
 type ReaderMode = "pdf" | "translation";
+type TranslationSourceLanguage = "en" | "ja" | "de";
+
+const LANGUAGE_OPTIONS: Array<{
+  value: TranslationSourceLanguage;
+  label: string;
+}> = [
+  { value: "en", label: "英译中" },
+  { value: "ja", label: "日译中" },
+  { value: "de", label: "德译中" },
+];
 
 type PageState =
   | { status: "loading" }
@@ -370,6 +380,8 @@ export function KnowledgePdfReader({
   );
 
   const [mode, setMode] = useState<ReaderMode>("pdf");
+  const [sourceLanguage, setSourceLanguage] =
+    useState<TranslationSourceLanguage>("en");
   const [showStructure, setShowStructure] = useState(true);
   const [currentPdfPageNo, setCurrentPdfPageNo] = useState<number>(
     Math.max(initialPdfPageNo, 1),
@@ -480,8 +492,8 @@ export function KnowledgePdfReader({
     if (!pageData) {
       return null;
     }
-    return `${pageData.filename}:${pageData.pdf_page_no ?? pageData.page_no ?? "page"}`;
-  }, [pageData]);
+    return `${pageData.filename}:${pageData.pdf_page_no ?? pageData.page_no ?? "page"}:${sourceLanguage}`;
+  }, [pageData, sourceLanguage]);
 
   const translationMap = translationCacheKey
     ? (translationCache[translationCacheKey] ?? null)
@@ -500,7 +512,7 @@ export function KnowledgePdfReader({
     }
 
     const updateCanvasWidth = () => {
-      const availableWidth = Math.max(viewport.clientWidth - 24, 1);
+      const availableWidth = Math.max(viewport.clientWidth - 48, 1);
       setCanvasWidth(Math.min(availableWidth, pageWidth));
     };
 
@@ -538,6 +550,9 @@ export function KnowledgePdfReader({
         key: item.contextParagraph.key,
         text: item.contextParagraph.text,
       })),
+      {
+        sourceLanguageHint: sourceLanguage,
+      },
     )
       .then((items) => {
         if (cancelled) {
@@ -851,34 +866,61 @@ export function KnowledgePdfReader({
         </div>
 
         <div className="flex items-center gap-2">
-          <Button
-            variant={showStructure ? "secondary" : "ghost"}
-            size="sm"
-            className={cn(
-              "h-8 rounded-lg px-3 transition-all",
-              showStructure ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "text-slate-600 hover:bg-slate-100"
-            )}
-            onClick={() => setShowStructure((current) => !current)}
-          >
-            <ScrollTextIcon className="mr-1.5 size-3.5" />
-            原文结构
-          </Button>
-          <Button
-            variant={mode === "translation" ? "secondary" : "ghost"}
-            size="sm"
-            className={cn(
-              "h-8 rounded-lg px-3 transition-all",
-              mode === "translation" ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "text-slate-600 hover:bg-slate-100"
-            )}
-            onClick={() =>
-              setMode((current) =>
-                current === "translation" ? "pdf" : "translation",
-              )
-            }
-          >
-            <LanguagesIcon className="mr-1.5 size-3.5" />
-            中文译文
-          </Button>
+          {mode === "translation" && (
+            <div className="mr-4 flex items-center gap-1 rounded-xl bg-slate-100/50 p-1 ring-1 ring-slate-200/50">
+              {LANGUAGE_OPTIONS.map((option) => (
+                <Button
+                  key={option.value}
+                  variant="ghost"
+                  size="sm"
+                  className={cn(
+                    "h-7 rounded-lg px-2.5 text-[11px] font-bold transition-all",
+                    sourceLanguage === option.value
+                      ? "bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200/30"
+                      : "text-slate-500 hover:text-slate-700",
+                  )}
+                  onClick={() => setSourceLanguage(option.value)}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center gap-1.5 overflow-hidden rounded-xl bg-slate-100/30 p-1 ring-1 ring-slate-200/50">
+            <Button
+              variant={showStructure ? "secondary" : "ghost"}
+              size="sm"
+              className={cn(
+                "h-7 rounded-lg px-3 text-[11px] font-bold transition-all",
+                showStructure
+                  ? "bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200/30"
+                  : "text-slate-500 hover:text-slate-700",
+              )}
+              onClick={() => setShowStructure((current) => !current)}
+            >
+              <ScrollTextIcon className="mr-1.5 size-3" />
+              原文结构
+            </Button>
+            <Button
+              variant={mode === "translation" ? "secondary" : "ghost"}
+              size="sm"
+              className={cn(
+                "h-7 rounded-lg px-3 text-[11px] font-bold transition-all",
+                mode === "translation"
+                  ? "bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200/30"
+                  : "text-slate-500 hover:text-slate-700",
+              )}
+              onClick={() =>
+                setMode((current) =>
+                  current === "translation" ? "pdf" : "translation",
+                )
+              }
+            >
+              <LanguagesIcon className="mr-1.5 size-3" />
+              中文译文
+            </Button>
+          </div>
           <div className="hidden border-l border-slate-200 pl-3 text-[11px] font-medium text-slate-400 md:block">
             双栏对照模式
           </div>
@@ -909,13 +951,17 @@ export function KnowledgePdfReader({
                 "xl:grid-cols-2",
             )}
           >
-            <div className="min-h-0 overflow-auto bg-zinc-900 shadow-inner">
-              <div className="flex min-h-full items-start justify-center p-6 lg:p-10">
-                <div className="relative max-w-full">
+            <div className="min-h-0 overflow-auto bg-zinc-50/30">
+              <div className="flex min-h-full items-start justify-center p-6">
+                <div className="relative">
                   <img
                     src={pageImageUrl}
                     alt={`${pageState.data.title} 第 ${currentPdfPageNo} 页`}
-                    className="block max-w-full rounded-sm bg-white shadow-[0_30px_60px_-15px_rgba(0,0,0,0.5)]"
+                    className="block rounded-sm bg-white shadow-[0_18px_36px_-18px_rgba(15,23,42,0.24)]"
+                    style={{
+                      width: `${pageWidth * displayScale}px`,
+                      height: `${pageHeight * displayScale}px`,
+                    }}
                   />
                   <div className="absolute inset-0 overflow-hidden">
                     {renderParagraphItems.map((item) => {
@@ -988,6 +1034,10 @@ export function KnowledgePdfReader({
                   knowledgeSpaceId={knowledgeSpaceId}
                   fluid
                   bordered={false}
+                  forceScale={displayScale}
+                  translationSourceLanguageHint={sourceLanguage}
+                  externalHoveredKey={hoveredKey}
+                  onHoveredKeyChange={setHoveredKey}
                 />
               </div>
             )}
@@ -997,7 +1047,7 @@ export function KnowledgePdfReader({
                 ref={viewportRef}
                 className="min-h-0 overflow-auto border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l"
               >
-                <div className="min-h-full p-4 md:p-6">
+                <div className="min-h-full p-6">
                   <div className="flex items-start justify-center">
                     <KnowledgePageSurface
                       width={pageWidth * displayScale}

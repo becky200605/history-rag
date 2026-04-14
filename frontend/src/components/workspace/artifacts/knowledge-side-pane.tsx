@@ -294,6 +294,9 @@ export function KnowledgeSidePane({
   onPageDataChange,
   fluid = false,
   bordered = true,
+  forceScale,
+  externalHoveredKey,
+  onHoveredKeyChange,
 }: {
   currentPdfPageNo: number | null;
   documentUrl: string;
@@ -310,6 +313,9 @@ export function KnowledgeSidePane({
   onPageDataChange?: (page: KnowledgeStructuredPage | null) => void;
   fluid?: boolean;
   bordered?: boolean;
+  forceScale?: number;
+  externalHoveredKey?: string | null;
+  onHoveredKeyChange?: (key: string | null) => void;
 }) {
   const router = useRouter();
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -426,8 +432,18 @@ export function KnowledgeSidePane({
     }
 
     const updateScale = () => {
-      const availableWidth = Math.max(viewport.clientWidth - 8, 1);
-      const availableHeight = Math.max(viewport.clientHeight - 8, 1);
+      if (forceScale) {
+        setCanvasMetrics({
+          width: pageWidth * forceScale,
+          height: pageHeight * forceScale,
+          scaleX: forceScale,
+          scaleY: forceScale,
+        });
+        return;
+      }
+
+      const availableWidth = Math.max(viewport.clientWidth - 48, 1);
+      const availableHeight = Math.max(viewport.clientHeight - 48, 1);
 
       if (mode === "translation") {
         const referenceWidth = referencePageWidth ?? pageWidth;
@@ -579,8 +595,18 @@ export function KnowledgeSidePane({
   ]);
 
   const activeKey = useMemo(
-    () => contextMenu?.paragraph.key ?? (isHighlightable ? hoveredKey : null),
-    [contextMenu?.paragraph.key, hoveredKey, isHighlightable],
+    () =>
+      contextMenu?.paragraph.key ??
+      (isHighlightable ? (externalHoveredKey ?? hoveredKey) : null),
+    [contextMenu?.paragraph.key, externalHoveredKey, hoveredKey, isHighlightable],
+  );
+
+  const setEffectiveHoveredKey = useCallback(
+    (key: string | null) => {
+      setHoveredKey(key);
+      onHoveredKeyChange?.(key);
+    },
+    [onHoveredKeyChange],
   );
 
   const openContextMenu = useCallback(
@@ -695,7 +721,7 @@ export function KnowledgeSidePane({
     return (
       <div
         ref={viewportRef}
-        className="flex min-h-0 flex-1 items-start justify-center overflow-auto p-4 pr-3 pl-2"
+        className="flex min-h-0 flex-1 items-start justify-center overflow-auto p-6"
       >
         <KnowledgePageSurface
           height={canvasMetrics.height || pageHeight}
@@ -739,13 +765,13 @@ export function KnowledgeSidePane({
                     }}
                     onMouseEnter={
                       isHighlightable
-                        ? () => setHoveredKey(item.contextParagraph.key)
+                        ? () => setEffectiveHoveredKey(item.contextParagraph.key)
                         : undefined
                     }
                     onMouseLeave={
                       isHighlightable
                         ? () =>
-                            setHoveredKey((current) =>
+                            setEffectiveHoveredKey((current) =>
                               current === item.contextParagraph.key
                                 ? null
                                 : current,
@@ -836,7 +862,7 @@ export function KnowledgeSidePane({
     return (
       <div
         ref={viewportRef}
-        className="min-h-0 flex-1 overflow-y-auto p-4 pr-3 pl-2"
+        className="min-h-0 flex-1 overflow-y-auto p-6"
       >
         <div className="mx-auto grid max-w-[1200px] min-w-0 gap-3 md:grid-cols-2">
           <div className="sticky top-0 z-10 rounded-xl border border-slate-200 bg-white/90 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 backdrop-blur-sm">
@@ -858,11 +884,11 @@ export function KnowledgeSidePane({
                 const isActive = activeKey === contextParagraph.key;
                 const interactionProps = {
                   onMouseEnter: isHighlightable
-                    ? () => setHoveredKey(contextParagraph.key)
+                    ? () => setEffectiveHoveredKey(contextParagraph.key)
                     : undefined,
                   onMouseLeave: isHighlightable
                     ? () =>
-                        setHoveredKey((current) =>
+                        setEffectiveHoveredKey((current) =>
                           current === contextParagraph.key ? null : current,
                         )
                     : undefined,

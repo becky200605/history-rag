@@ -587,6 +587,7 @@ export function KnowledgePdfReader({
     mode,
     pageData,
     renderParagraphItems,
+    sourceLanguage,
     translationCacheKey,
     translationMap,
   ]);

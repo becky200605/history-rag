@@ -501,6 +501,7 @@ export function KnowledgeSidePane({
       observer.disconnect();
     };
   }, [
+    forceScale,
     mode,
     pageData,
     pageHeight,
@@ -770,12 +771,7 @@ export function KnowledgeSidePane({
                     }
                     onMouseLeave={
                       isHighlightable
-                        ? () =>
-                            setEffectiveHoveredKey((current) =>
-                              current === item.contextParagraph.key
-                                ? null
-                                : current,
-                            )
+                        ? () => setEffectiveHoveredKey(null)
                         : undefined
                     }
                     onPointerDownCapture={
@@ -887,10 +883,7 @@ export function KnowledgeSidePane({
                     ? () => setEffectiveHoveredKey(contextParagraph.key)
                     : undefined,
                   onMouseLeave: isHighlightable
-                    ? () =>
-                        setEffectiveHoveredKey((current) =>
-                          current === contextParagraph.key ? null : current,
-                        )
+                    ? () => setEffectiveHoveredKey(null)
                     : undefined,
                   onPointerDownCapture: isExcerptable
                     ? (event: React.PointerEvent<HTMLDivElement>) => {

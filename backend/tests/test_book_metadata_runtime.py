@@ -71,7 +71,7 @@ def test_generate_book_metadata_record_persists_model_output(monkeypatch, tmp_pa
 ```
 """.strip()
     fake_models = ModuleType("src.models")
-    fake_models.create_chat_model = lambda name=None, thinking_enabled=False: _FakeModel(response_text)
+    fake_models.create_chat_model = lambda name=None, thinking_enabled=False, **kwargs: _FakeModel(response_text)
     monkeypatch.setitem(sys.modules, "src.models", fake_models)
 
     record, saved_path = generate_book_metadata_record(
@@ -92,6 +92,32 @@ def test_generate_book_metadata_record_persists_model_output(monkeypatch, tmp_pa
     assert loaded.suggestion is not None
     assert loaded.suggestion.folder is not None
     assert loaded.suggestion.folder.value == "财政史"
+
+
+def test_generate_book_metadata_record_explicitly_disables_provider_thinking(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_create_chat_model(name=None, thinking_enabled=False, **kwargs):
+        captured["name"] = name
+        captured["thinking_enabled"] = thinking_enabled
+        captured["kwargs"] = kwargs
+        return _FakeModel('{"title":"Demo Book","categories":[],"eras":[],"regions":[],"keywords":[],"notes":null}')
+
+    fake_models = ModuleType("src.models")
+    fake_models.create_chat_model = _fake_create_chat_model
+    monkeypatch.setitem(sys.modules, "src.models", fake_models)
+
+    generate_book_metadata_record(
+        structured_payload=_structured_payload(),
+        source_filename="demo.pdf",
+        title="Demo Book",
+        output_dir=tmp_path,
+        config=BookMetadataConfig(enabled=True, model_name="demo-model"),
+    )
+
+    assert captured["name"] == "demo-model"
+    assert captured["thinking_enabled"] is False
+    assert captured["kwargs"] == {"extra_body": {"enable_thinking": False}}
 
 
 def test_maybe_generate_book_metadata_returns_none_when_disabled(tmp_path) -> None:
@@ -121,7 +147,7 @@ def test_generate_book_metadata_record_retries_transient_invoke_failure(monkeypa
         ]
     )
     fake_models = ModuleType("src.models")
-    fake_models.create_chat_model = lambda name=None, thinking_enabled=False: flaky_model
+    fake_models.create_chat_model = lambda name=None, thinking_enabled=False, **kwargs: flaky_model
     monkeypatch.setitem(sys.modules, "src.models", fake_models)
     monkeypatch.setattr(
         "src.community.knowledge_base.book_metadata_runtime.sleep",

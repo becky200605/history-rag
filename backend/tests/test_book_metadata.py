@@ -132,6 +132,36 @@ def test_parse_book_metadata_suggestion_coerces_scalar_fields() -> None:
     assert suggestion.ocr_quality.value == "0.8"
 
 
+def test_parse_book_metadata_suggestion_ignores_mapping_with_null_value() -> None:
+    suggestion = parse_book_metadata_suggestion(
+        {
+            "title": "户部奏稿第9册",
+            "author": {"value": None, "confidence": 0.2, "evidence": "unknown"},
+            "summary": {"value": "", "confidence": 0.2, "evidence": "unknown"},
+            "type": {"value": "specialized", "confidence": 0.8, "evidence": "奏稿"},
+        }
+    )
+
+    assert suggestion.author is None
+    assert suggestion.summary is None
+    assert suggestion.type is not None
+    assert suggestion.type.value == "specialized"
+
+
+def test_parse_book_metadata_suggestion_filters_null_items_from_arrays() -> None:
+    suggestion = parse_book_metadata_suggestion(
+        {
+            "categories": [
+                {"value": None, "confidence": 0.1, "evidence": "unknown"},
+                {"value": "财政史", "confidence": 0.9, "evidence": "军饷"},
+                {"value": "  ", "confidence": 0.1, "evidence": "unknown"},
+            ],
+        }
+    )
+
+    assert [field.value for field in suggestion.categories] == ["财政史"]
+
+
 def test_book_metadata_persistence_uses_dedicated_subdirectory(tmp_path) -> None:
     payload = _build_structured_payload()
     prompt_input = build_book_metadata_prompt_bundle(payload).prompt_input

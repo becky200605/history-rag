@@ -109,7 +109,14 @@ def _coerce_metadata_field(value: Any) -> MetadataField | None:
     if isinstance(value, MetadataField):
         return value
     if isinstance(value, Mapping):
-        return MetadataField.model_validate(value)
+        raw_value = value.get("value")
+        normalized_value = str(raw_value).strip() if raw_value is not None else ""
+        if not normalized_value:
+            return None
+        payload = dict(value)
+        payload["value"] = normalized_value
+        payload.setdefault("confidence", 0.0)
+        return MetadataField.model_validate(payload)
 
     normalized = str(value).strip()
     if not normalized:

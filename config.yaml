@@ -21,6 +21,14 @@ models:
     base_url: https://api.univibe.cc/openai/v1
     supports_thinking: true
 
+  - name: gpt-5.4-mini
+    display_name: gpt-5.4-mini
+    use: langchain_openai:ChatOpenAI
+    model: gpt-5.4-mini
+    api_key: sk-tjPmJVSJ1aN5SHplCNvOMhsRCQjulrkn
+    base_url: https://api.univibe.cc/openai/v1
+    supports_thinking: true
+
   # Example: Anthropic Claude model
   # - name: claude-3-5-sonnet
   #   display_name: Claude 3.5 Sonnet
@@ -381,7 +389,7 @@ knowledge_base:
 
   book_metadata:
     enabled: true
-    model_name: qwen3.5-27b-4bit
+    model_name: gpt-5.4-mini
     front_page_limit: 10
     max_excerpt_chars: 1200
 

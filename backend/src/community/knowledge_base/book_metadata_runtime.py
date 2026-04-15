@@ -9,7 +9,7 @@ from time import sleep
 from typing import Any, Mapping
 
 import httpx
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from src.community.knowledge_base.book_metadata import (
     BookMetadataRecord,
@@ -41,6 +41,73 @@ def _strip_markdown_fences(text: str) -> str:
     else:
         lines = lines[1:]
     return "\n".join(lines).strip()
+
+
+def _extract_first_json_object(text: str) -> str | None:
+    """Extract the first top-level JSON object from mixed model output."""
+    normalized = _strip_markdown_fences(text)
+    if not normalized:
+        return None
+    if normalized.startswith("{"):
+        return normalized
+
+    start = normalized.find("{")
+    if start < 0:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(normalized)):
+        char = normalized[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return normalized[start : index + 1]
+
+    return None
+
+
+def _extract_response_text(response: Any) -> str:
+    """Extract the best candidate JSON text from an AI response object."""
+    content = str(getattr(response, "content", "") or "").strip()
+    content_candidate = _extract_first_json_object(content) or _strip_markdown_fences(content)
+    if content_candidate:
+        return content_candidate
+
+    reasoning = ""
+    if isinstance(response, AIMessage):
+        reasoning = str(
+            response.additional_kwargs.get("reasoning_content")
+            or response.additional_kwargs.get("reasoning")
+            or ""
+        ).strip()
+
+    reasoning_candidate = _extract_first_json_object(reasoning)
+    if reasoning_candidate:
+        logger.warning("Book metadata model returned JSON in reasoning instead of content")
+        return reasoning_candidate
+
+    if reasoning:
+        excerpt = reasoning[:400].replace("\n", " ")
+        raise ValueError(
+            "Book metadata model returned empty content and reasoning-only analysis "
+            f"(reasoning starts with: {excerpt!r})"
+        )
+    raise ValueError("Book metadata model returned empty content")
 
 
 def _is_retryable_metadata_error(exc: Exception) -> bool:
@@ -137,9 +204,7 @@ def generate_book_metadata_record(
     for attempt in range(1, BOOK_METADATA_RETRY_ATTEMPTS + 1):
         try:
             response = model.invoke(messages)
-            response_text = _strip_markdown_fences(str(response.content or ""))
-            if not response_text:
-                raise ValueError("Book metadata model returned empty content")
+            response_text = _extract_response_text(response)
             suggestion = parse_book_metadata_suggestion(response_text)
             break
         except Exception as exc:

@@ -51,6 +51,8 @@ models:
     model: mlx-community/Qwen3.5-27B-4bit
     base_url: https://model.kbkbk.xyz/v1
     api_key: dummy
+    max_tokens: 8192
+    request_timeout: 18000
     supports_thinking: true
     supports_vision: true
 
@@ -69,6 +71,8 @@ models:
     model: qwen/qwen3.5-27b
     base_url: https://openrouter.ai/api/v1
     api_key: $OPENAI_API_KEY
+    max_tokens: 8192
+    request_timeout: 18000
     supports_thinking: true
     supports_vision: true
 

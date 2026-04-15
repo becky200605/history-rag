@@ -2,9 +2,12 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 import httpx
+import pytest
+from langchain_core.messages import AIMessage
 
 from src.community.knowledge_base.book_metadata import load_book_metadata_for_source, save_book_metadata
 from src.community.knowledge_base.book_metadata_runtime import (
+    _extract_response_text,
     build_existing_folder_tree,
     generate_book_metadata_record,
     maybe_generate_book_metadata,
@@ -188,3 +191,36 @@ def test_build_existing_folder_tree_renders_nested_paths(tmp_path) -> None:
     assert "a.pdf" in tree
     assert "制度史/" in tree
     assert "b.pdf" in tree
+
+
+def test_extract_response_text_accepts_prefixed_json_in_content() -> None:
+    response = SimpleNamespace(content='下面是结果：\n{"title":"Demo Book","categories":[],"eras":[],"regions":[],"keywords":[],"notes":null}')
+
+    text = _extract_response_text(response)
+
+    assert text.startswith('{"title":"Demo Book"')
+
+
+def test_extract_response_text_uses_json_in_reasoning_when_content_empty() -> None:
+    response = AIMessage(
+        content="",
+        additional_kwargs={
+            "reasoning": '先分析一下。\n{"title":"Demo Book","categories":[],"eras":[],"regions":[],"keywords":[],"notes":null}'
+        },
+    )
+
+    text = _extract_response_text(response)
+
+    assert text.startswith('{"title":"Demo Book"')
+
+
+def test_extract_response_text_raises_for_reasoning_only_analysis() -> None:
+    response = AIMessage(
+        content="",
+        additional_kwargs={
+            "reasoning": "The user wants me to classify a book based on provided excerpts."
+        },
+    )
+
+    with pytest.raises(ValueError, match="reasoning-only analysis"):
+        _extract_response_text(response)

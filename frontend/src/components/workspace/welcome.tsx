@@ -7,7 +7,7 @@ import { useI18n } from "@/core/i18n/hooks";
 import type { AgentScenario, AgentTier } from "@/core/settings/local";
 import { cn } from "@/lib/utils";
 
-import { motion } from "motion/react";
+import { motion, type Variants } from "motion/react";
 
 let waved = false;
 
@@ -21,7 +21,7 @@ export function Welcome({
   const { t } = useI18n();
   const searchParams = useSearchParams();
 
-  const containerVariants = {
+  const containerVariants: Variants = {
     hidden: { opacity: 0 },
     visible: {
       opacity: 1,
@@ -31,22 +31,22 @@ export function Welcome({
     },
   };
 
-  const itemVariants = {
+  const itemVariants: Variants = {
     hidden: { opacity: 0, filter: "blur(10px)", y: 15 },
-    visible: { 
-      opacity: 1, 
-      filter: "blur(0px)", 
+    visible: {
+      opacity: 1,
+      filter: "blur(0px)",
       y: 0,
-      transition: { duration: 1.5, ease: [0.22, 1, 0.36, 1] }
+      transition: { duration: 1.5, ease: [0.22, 1, 0.36, 1] as const },
     },
   };
 
-  const strokeVariants = {
+  const strokeVariants: Variants = {
     hidden: { width: 0, opacity: 0 },
-    visible: { 
-      width: 96, 
+    visible: {
+      width: 96,
       opacity: 0.2,
-      transition: { duration: 1.2, ease: "easeInOut", delay: 0.5 }
+      transition: { duration: 1.2, ease: "easeInOut" as const, delay: 0.5 },
     },
   };
 

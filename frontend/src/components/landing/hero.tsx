@@ -2,14 +2,14 @@
 
 import { ChevronRightIcon } from "lucide-react";
 import Link from "next/link";
-import { motion } from "motion/react";
+import { motion, type Variants } from "motion/react";
 
 import { Button } from "@/components/ui/button";
 import { SilkRibbon } from "@/components/workspace/silk-ribbon";
 import { cn } from "@/lib/utils";
 
 export function Hero({ className }: { className?: string }) {
-  const containerVariants = {
+  const containerVariants: Variants = {
     hidden: { opacity: 0 },
     visible: {
       opacity: 1,
@@ -19,13 +19,13 @@ export function Hero({ className }: { className?: string }) {
     },
   };
 
-  const itemVariants = {
+  const itemVariants: Variants = {
     hidden: { opacity: 0, filter: "blur(10px)", y: 20 },
-    visible: { 
-      opacity: 1, 
-      filter: "blur(0px)", 
+    visible: {
+      opacity: 1,
+      filter: "blur(0px)",
       y: 0,
-      transition: { duration: 1.2, ease: [0.22, 1, 0.36, 1] }
+      transition: { duration: 1.2, ease: [0.22, 1, 0.36, 1] as const },
     },
   };
 

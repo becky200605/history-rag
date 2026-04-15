@@ -47,13 +47,13 @@ export const zhCN: Translations = {
 
   // Welcome
   welcome: {
-    greeting: "你好，欢迎回来！",
+    greeting: "海内博雅，久仰大名。",
     description:
-      "欢迎使用财政历史智能知识库，基于大语言模型的财政历史智能分析平台。通过内置和自定义的 Skills，\n财政历史智能知识库可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n图片、视频、播客及网页等，几乎可以做任何事情。",
+      "欢迎步入财政史阁。此地广纳百代财政之典籍，旨在助君考经据典，探赜索隐。凡所欲考，皆可垂询。",
 
-    createYourOwnSkill: "创建你自己的 Agent Skill",
+    createYourOwnSkill: "辟新径 · 营建策",
     createYourOwnSkillDescription:
-      "创建你的 Agent Skill 来释放财政历史智能知识库的潜力。通过自定义技能，财政历史智能知识库\n可以帮你搜索网络、分析数据，还能为你生成幻灯片、\n网页等作品，几乎可以做任何事情。",
+      "欲启新思，可自行营建专属之策。助君统合经纬，剖析万象，成一家之言。",
   },
 
   // Clipboard
@@ -66,9 +66,9 @@ export const zhCN: Translations = {
 
   // Input Box
   inputBox: {
-    placeholder: "今天我能为你做些什么？",
+    placeholder: "欲考何事？敢请赐教。",
     createSkillPrompt:
-      "我们一起用 skill-creator 技能来创建一个技能吧。先问问我希望这个技能能做什么。",
+      "敢请阁下示其规制，我当效犬马之劳，助君共营此策。",
     addAttachments: "添加附件",
     mode: "模式",
     flashMode: "闪速",

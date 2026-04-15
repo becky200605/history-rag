@@ -103,6 +103,7 @@ import src.community.knowledge_base.user_spaces as user_spaces_module
 import src.community.knowledge_base.user_store as user_store_module
 import src.config.paths as paths_module
 from src.config.paths import Paths
+from src.community.knowledge_base.catalog import BookCatalogEntry
 
 _USER_KNOWLEDGE_ROUTER_SPEC = importlib.util.spec_from_file_location(
     "test_user_knowledge_router_module",
@@ -504,6 +505,73 @@ def test_retriever_applies_doc_ids_filter_to_each_collection(monkeypatch) -> Non
         "knowledge_base",
     }
     assert all(doc_ids == ["uk-1", "thread-book.pdf", "global/book.md"] for _, _, doc_ids in seen_calls)
+
+
+def test_retriever_converts_folder_paths_to_doc_ids(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            retrieval=SimpleNamespace(top_k=3, score_threshold=0.0),
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
+    monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        retriever_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="uk_qing",
+                title="清代财政",
+                filename="qing.md",
+                scope="user",
+                source_path="/tmp/qing.md",
+                source_url="/tmp/qing.md",
+                original_url=None,
+                preview="",
+                search_text="清代 财政",
+                search_tokens=["清代", "财政"],
+                type="user",
+                folder_path="财政史/清代",
+            ),
+            BookCatalogEntry(
+                doc_id="uk_song",
+                title="宋代财政",
+                filename="song.md",
+                scope="user",
+                source_path="/tmp/song.md",
+                source_url="/tmp/song.md",
+                original_url=None,
+                preview="",
+                search_text="宋代 财政",
+                search_tokens=["宋代", "财政"],
+                type="user",
+                folder_path="财政史/宋代",
+            ),
+        ],
+    )
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
+    seen_calls: list[tuple[str, str, list[str] | None]] = []
+
+    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
+        seen_calls.append((collection_name, query, doc_ids))
+        return []
+
+    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+
+    retriever.search(
+        "财政史",
+        user_id="user-1",
+        scopes=["user"],
+        folder_paths=["财政史/清代"],
+    )
+
+    assert seen_calls
+    assert all(doc_ids == ["uk_qing"] for _, _, doc_ids in seen_calls)
 
 
 def test_retriever_returns_at_least_minimum_results_when_doc_ids_are_provided(monkeypatch) -> None:

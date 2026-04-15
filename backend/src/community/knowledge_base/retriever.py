@@ -5,6 +5,7 @@ from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client import models
 
+from src.community.knowledge_base.catalog import filter_book_catalog_entries, list_book_catalog
 from src.community.knowledge_base.common import get_thread_collection_name
 from src.community.knowledge_base.common import get_user_collection_name
 from src.community.knowledge_base.lexical_search import lexical_search_documents
@@ -369,6 +370,28 @@ class KnowledgeBaseRetriever:
 
         return formatted_results
 
+    def _resolve_effective_doc_ids(
+        self,
+        *,
+        thread_id: str | None,
+        user_id: str | None,
+        doc_ids: list[str] | None,
+        scopes: list[str] | None,
+        folder_paths: list[str] | None,
+    ) -> list[str] | None:
+        if not folder_paths:
+            return doc_ids
+
+        visible_entries = filter_book_catalog_entries(
+            list_book_catalog(thread_id=thread_id, user_id=user_id),
+            doc_ids=doc_ids,
+            scopes=scopes,
+            folder_paths=folder_paths,
+        )
+        if not visible_entries:
+            return []
+        return [entry.doc_id for entry in visible_entries]
+
     def _merge_duplicate_results(self, results: list[dict]) -> list[dict]:
         deduped: dict[tuple[str, int | None, int | None, str, str], dict] = {}
         for result in results:
@@ -449,14 +472,25 @@ class KnowledgeBaseRetriever:
         user_id: str | None = None,
         doc_ids: list[str] | None = None,
         scopes: list[str] | None = None,
+        folder_paths: list[str] | None = None,
     ) -> list[dict]:
         """Search for relevant documents."""
         enabled_scopes = scopes or list(DEFAULT_SEARCH_SCOPES)
-        query_variants = _select_query_variants(query, doc_ids=doc_ids)
+        effective_doc_ids = self._resolve_effective_doc_ids(
+            thread_id=thread_id,
+            user_id=user_id,
+            doc_ids=doc_ids,
+            scopes=enabled_scopes,
+            folder_paths=folder_paths,
+        )
+        if effective_doc_ids == []:
+            return []
+
+        query_variants = _select_query_variants(query, doc_ids=effective_doc_ids)
         per_query_top_k = max(self.config.retrieval.top_k, MIN_PER_QUERY_TOP_K)
         final_limit = max(
             self.config.retrieval.top_k,
-            MIN_RESULT_LIMIT if len(query_variants) > 1 or doc_ids else self.config.retrieval.top_k,
+            MIN_RESULT_LIMIT if len(query_variants) > 1 or effective_doc_ids else self.config.retrieval.top_k,
         )
         collections: list[str] = []
         if user_id and "user" in enabled_scopes:
@@ -488,7 +522,7 @@ class KnowledgeBaseRetriever:
                     results = self._search_collection(
                         collection_name,
                         variant_query,
-                        doc_ids=doc_ids,
+                        doc_ids=effective_doc_ids,
                         top_k=per_query_top_k,
                     )
                 except Exception:
@@ -504,7 +538,7 @@ class KnowledgeBaseRetriever:
                     variant_query,
                     thread_id=thread_id,
                     user_id=user_id,
-                    doc_ids=doc_ids,
+                    doc_ids=effective_doc_ids,
                     scopes=enabled_scopes,
                     top_k=per_query_top_k,
                 )

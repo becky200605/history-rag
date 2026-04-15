@@ -113,16 +113,16 @@ class MineruConfig(BaseModel):
         description="Model version passed to MinerU (e.g. 'vlm').",
     )
     request_timeout: int = Field(
-        default=3600,
-        description="Timeout in seconds for the MinerU gRPC request.",
+        default=14400,
+        description="Timeout in seconds for the MinerU gRPC request, tuned for large OCR jobs.",
     )
     keepalive_time_ms: int = Field(
-        default=120000,
+        default=180000,
         ge=1,
-        description="Interval in milliseconds between gRPC keepalive pings for MinerU.",
+        description="Interval in milliseconds between gRPC keepalive pings for MinerU during long OCR jobs.",
     )
     keepalive_timeout_ms: int = Field(
-        default=60000,
+        default=180000,
         ge=1,
         description="Timeout in milliseconds for gRPC keepalive ping acknowledgements from MinerU.",
     )
@@ -134,6 +134,25 @@ class MineruConfig(BaseModel):
         default=512 * 1024 * 1024,
         ge=1,
         description="Maximum gRPC request/response size in bytes for MinerU.",
+    )
+    enable_pdf_chunking: bool = Field(
+        default=True,
+        description="Whether oversized PDFs should be auto-split into smaller OCR chunks before sending to MinerU.",
+    )
+    pdf_split_page_threshold: int = Field(
+        default=1200,
+        ge=1,
+        description="Automatically split PDFs when page count exceeds this threshold.",
+    )
+    pdf_chunk_page_count: int = Field(
+        default=250,
+        ge=1,
+        description="Maximum number of pages per auto-split PDF chunk sent to MinerU.",
+    )
+    pdf_split_size_threshold_bytes: int = Field(
+        default=256 * 1024 * 1024,
+        ge=1,
+        description="Automatically split PDFs when file size exceeds this threshold in bytes.",
     )
 
 

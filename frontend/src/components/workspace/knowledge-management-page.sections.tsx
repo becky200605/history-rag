@@ -4,6 +4,7 @@ import {
   BookmarkPlusIcon,
   BookOpenIcon,
   CheckSquareIcon,
+  CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   FileIcon,
@@ -20,6 +21,16 @@ import { useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -62,10 +73,10 @@ export function FolderTreeBranch({
       <button
         type="button"
         className={cn(
-          "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition",
+          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition font-serif",
           isSelected
-            ? "bg-[rgb(241,248,249)] text-[rgb(23,89,108)]"
-            : "text-slate-700 hover:bg-slate-50",
+            ? "bg-primary/10 text-primary font-bold"
+            : "text-stone-700 hover:bg-stone-50",
         )}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
         onClick={() => onSelect(node.path)}
@@ -85,9 +96,9 @@ export function FolderTreeBranch({
             <span className="size-3.5" />
           )}
         </span>
-        <FolderIcon className="size-4 shrink-0 text-[rgb(57,130,152)]" />
+        <FolderIcon className="size-4 shrink-0 text-accent/80" />
         <span className="min-w-0 flex-1 truncate">{node.name}</span>
-        <span className="shrink-0 text-xs text-slate-400">{node.fileCount}</span>
+        <span className="shrink-0 text-[10px] text-stone-400 font-sans">({node.fileCount})</span>
       </button>
 
       {hasChildren && isExpanded ? (
@@ -123,37 +134,34 @@ export function KnowledgeManagementHero({
   onSelectFolder: (path: string) => void;
 }) {
   return (
-    <section className="relative w-full shrink-0 overflow-hidden bg-white px-6 pb-2 pt-6">
-      <div className="absolute inset-x-0 top-0 h-px bg-slate-100"></div>
+    <section className="relative w-full shrink-0 overflow-hidden bg-transparent px-6 pb-2 pt-6">
+      <div className="absolute inset-x-0 top-0 h-px bg-primary/5"></div>
       
       <div className="z-10 flex w-full min-w-0 flex-col">
-
-        <div className="w-full overflow-hidden rounded-lg border border-slate-200 bg-white/80 shadow-sm backdrop-blur-sm transition-all focus-within:shadow-md">
+        <div className="w-full overflow-hidden rounded-md border border-accent/20 bg-white/40 shadow-sm backdrop-blur-sm transition-all focus-within:border-accent/40 focus-within:shadow-md">
           <div className="relative h-12">
-              <SearchIcon className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+              <SearchIcon className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-accent/60" />
               <Input
                 value={searchQuery}
                 onChange={(event) => onSearchQueryChange(event.target.value)}
                 placeholder="请输入书名、标签或文件名进行馆藏检索..."
-                className="h-full border-none bg-transparent pl-11 text-sm shadow-none focus-visible:ring-0"
+                className="h-full border-none bg-transparent pl-11 text-sm font-serif shadow-none focus-visible:ring-0 placeholder:text-stone-400"
               />
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-slate-100 bg-[#fdfdfd] p-3 px-6 select-none overflow-x-auto">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 border-t border-accent/10 bg-white/10 p-4 px-8 select-none overflow-x-auto">
             <CategoryCheckbox
               active={selectedFolderPath === "all"}
               label="全部属性"
               onClick={() => onSelectFolder("all")}
             />
+            <div className="h-4 w-px bg-accent/20 mx-2" />
             {systemFolderTree.map((folderNode) => (
-              <CategoryCheckbox
+              <CategoryFolderFilter
                 key={folderNode.path}
-                active={
-                  selectedFolderPath === folderNode.path ||
-                  selectedFolderPath.startsWith(`${folderNode.path}/`)
-                }
-                label={folderNode.name}
-                onClick={() => onSelectFolder(folderNode.path)}
+                node={folderNode}
+                selectedPath={selectedFolderPath}
+                onSelectFolder={onSelectFolder}
               />
             ))}
           </div>
@@ -187,14 +195,14 @@ export function KnowledgeManagementSidebar({
           type="button"
           onClick={() => onSelectFolder("all")}
           className={cn(
-            "flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition",
+            "flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition font-serif",
             selectedFolderPath === "all"
-              ? "bg-[rgb(241,248,249)] text-[rgb(23,89,108)]"
-              : "text-slate-700 hover:bg-slate-50",
+              ? "bg-primary/10 text-primary font-bold shadow-sm"
+              : "text-stone-700 hover:bg-stone-50",
           )}
         >
-          <span className="font-medium">全部资料</span>
-          <span className="text-xs text-slate-400">根目录</span>
+          <span>全部资料</span>
+          <span className="text-[10px] text-stone-400 font-sans">根目录</span>
         </button>
       </div>
 
@@ -212,23 +220,23 @@ export function KnowledgeManagementSidebar({
       </div>
 
       {selectedFolderNode ? (
-        <div className="border-t border-slate-100 px-4 py-4">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <div className="text-sm font-medium text-slate-900">
+        <div className="border-t border-accent/10 px-4 py-4">
+          <div className="rounded-md border border-accent/20 bg-accent/5 p-3">
+            <div className="text-sm font-bold text-stone-900 font-serif">
               {getFolderDisplayName(selectedFolderNode.name)}
             </div>
-            <div className="mt-1 text-xs text-slate-500">
+            <div className="mt-1 text-[10px] text-stone-500 font-sans">
               当前目录共 {selectedFolderNode.fileCount} 份资料
             </div>
             {selectedFolderNode.deletable ? (
               <Button
                 type="button"
                 variant="outline"
-                className="mt-3 w-full rounded-md border-red-200 text-red-700 hover:bg-red-50"
+                className="mt-3 w-full rounded-sm border-red-200 text-red-700 hover:bg-red-50 text-xs font-serif"
                 onClick={onDeleteFolder}
               >
-                <Trash2Icon className="mr-1.5 size-4" />
-                删除当前个人文件夹
+                <Trash2Icon className="mr-1.5 size-3.5" />
+                删除文件夹
               </Button>
             ) : null}
           </div>
@@ -262,21 +270,22 @@ export function KnowledgeManagementToolbar({
   allVisibleSelected: boolean;
 }) {
   return (
-    <div className="sticky top-0 z-20 flex flex-col gap-3 border-b border-slate-100 bg-white px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
-      <div className="flex flex-wrap items-center gap-3 text-sm">
+    <div className="sticky top-0 z-20 flex flex-col gap-4 border-b border-primary/5 bg-white/40 backdrop-blur-xl px-8 py-5 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-wrap items-center gap-4 text-sm font-serif">
         <button
           type="button"
-          className="font-bold text-[#398298] transition hover:opacity-80"
+          className="font-bold text-primary transition hover:opacity-80 flex items-center gap-2"
           onClick={() => onSelectFolder("all")}
         >
+          <div className="size-1.5 rounded-full bg-primary" />
           全部馆藏
         </button>
         {breadcrumbs.map((breadcrumb) => (
-          <div key={breadcrumb.path} className="flex items-center gap-2">
-            <ChevronRightIcon className="size-4 text-slate-300" />
+          <div key={breadcrumb.path} className="flex items-center gap-3">
+            <span className="text-[10px] text-accent/40 font-sans">/</span>
             <button
               type="button"
-              className="text-slate-700 transition hover:text-[rgb(57,130,152)]"
+              className="text-stone-700 transition hover:text-primary decoration-primary/20 hover:underline underline-offset-4"
               onClick={() => onSelectFolder(breadcrumb.path)}
             >
               {getFolderDisplayName(breadcrumb.name)}
@@ -285,59 +294,60 @@ export function KnowledgeManagementToolbar({
         ))}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-4">
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="h-8 rounded-md border-[#398298]/30 px-3 text-xs text-[#23596c] hover:bg-[#398298]/10"
+          className="h-9 rounded-sm border-primary/40 bg-white shadow-[2px_2px_0_rgba(126,51,46,0.1)] px-4 text-xs text-primary hover:bg-primary hover:text-white transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none font-serif font-bold tracking-widest"
           onClick={onOpenUpload}
         >
-          <PlusIcon className="mr-1.5 size-3.5" />
+          <PlusIcon className="mr-2 size-4" />
           上传档案
         </Button>
         <Button 
           type="button" 
           variant="outline" 
           size="sm" 
-          className="h-8 rounded-md border-[#398298]/30 px-3 text-xs text-[#23596c] hover:bg-[#398298]/10"
+          className="h-9 rounded-sm border-primary/40 bg-white shadow-[2px_2px_0_rgba(126,51,46,0.1)] px-4 text-xs text-primary hover:bg-primary hover:text-white transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none font-serif font-bold tracking-widest"
           onClick={onOpenCreateFolder}
         >
-          <FolderIcon className="mr-1.5 size-3.5" />
-          新建文件夹
+          <FolderIcon className="mr-2 size-4" />
+          新刻文件夹
         </Button>
         <Button 
           type="button" 
           variant="outline" 
           size="icon" 
-          className="h-8 w-8 shrink-0 rounded-md border-[#398298]/30 text-[#23596c] hover:bg-[#398298]/10"
+          className="h-9 w-9 shrink-0 rounded-sm border-primary/40 bg-white shadow-[2px_2px_0_rgba(126,51,46,0.1)] text-primary hover:bg-primary hover:text-white transition-all"
           onClick={onRefresh} 
           disabled={isRefreshing}
         >
-          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
+          <RefreshCwIcon className={cn("size-4", isRefreshing && "animate-spin")} />
         </Button>
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="h-8 rounded-md border-[#398298]/30 px-3 text-xs text-[#23596c] hover:bg-[#398298]/10"
+          className="h-9 rounded-sm border-accent/40 bg-accent/5 px-4 text-xs text-accent hover:bg-accent hover:text-white shadow-[2px_2px_0_rgba(163,138,82,0.1)] transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none font-serif font-bold tracking-widest"
           onClick={onStartChat}
           disabled={selectedCount === 0}
         >
-          <BookmarkPlusIcon className="mr-1.5 size-3.5" />
+          <BookmarkPlusIcon className="mr-2 size-4" />
           选中提问 ({selectedCount})
         </Button>
         <button
           type="button"
-          className="flex h-8 items-center gap-1.5 px-2 text-xs font-medium text-slate-500 transition hover:text-[#398298]"
+          className="flex h-9 items-center gap-2 px-3 text-xs font-medium text-stone-500 transition hover:text-primary group"
           onClick={onToggleAllVisible}
         >
-          {allVisibleSelected ? (
-            <CheckSquareIcon className="size-3.5 text-[#398298]" />
-          ) : (
-            <SquareIcon className="size-3.5" />
-          )}
-          全选文档
+          <div className={cn(
+            "size-3.5 border transition-colors",
+            allVisibleSelected ? "border-primary bg-primary" : "border-stone-300 group-hover:border-primary"
+          )}>
+            {allVisibleSelected && <CheckIcon className="size-3 text-white" />}
+          </div>
+          全选馆藏
         </button>
       </div>
     </div>
@@ -367,14 +377,14 @@ export function KnowledgeFolderGrid({
           onContextMenu={(event) => onOpenFolderMenu(folder, event)}
           className="group flex flex-row items-center gap-2 transition hover:opacity-80 active:scale-95"
         >
-          <div className="flex size-8 shrink-0 items-center justify-center text-[rgb(57,130,152)] group-hover:text-[#398298]">
+          <div className="flex size-8 shrink-0 items-center justify-center text-accent/80 group-hover:text-primary">
             <FolderIcon className="size-4.5 stroke-[1.5]" />
           </div>
-          <div className="flex flex-row items-baseline gap-2">
-            <span className="text-sm font-semibold text-slate-700 group-hover:text-[rgb(57,130,152)]">
+          <div className="flex flex-row items-baseline gap-2 font-serif">
+            <span className="text-sm font-bold text-stone-700 group-hover:text-primary">
               {getFolderDisplayName(folder.name)}
             </span>
-            <span className="text-[10px] font-medium text-slate-400">
+            <span className="text-[10px] font-medium text-stone-400 font-sans">
               ({folder.fileCount})
             </span>
           </div>
@@ -420,27 +430,39 @@ export function KnowledgeFileCard({
   return (
     <article
       className={cn(
-        "group relative flex overflow-hidden rounded-lg border bg-white shadow-sm transition hover:shadow-md",
-        isSelected ? "border-[rgb(57,130,152)] ring-1 ring-[rgb(57,130,152)]/15" : "border-slate-200",
+        "group relative flex overflow-hidden rounded-md border bg-white/40 shadow-sm transition hover:shadow-md backdrop-blur-sm",
+        isSelected ? "border-primary ring-1 ring-primary/15" : "border-accent/20",
       )}
     >
       <div className="flex w-full flex-col lg:flex-row">
-        {/* Pseudo-Book Cover Area */}
+        {/* Thread-bound Cover Area */}
         <div
           className={cn(
-            "relative flex w-full shrink-0 cursor-pointer flex-col items-center justify-center p-3 lg:w-[132px]",
+            "relative flex w-full shrink-0 cursor-pointer flex-col items-center justify-center p-3 lg:w-[132px] overflow-hidden",
             coverTone,
           )}
           onClick={onToggleSelection}
         >
-           {/* Minimal spine effect */}
-           <div className="absolute inset-y-0 left-0 w-1 bg-white/20" />
+           {/* Thread-bound Stitching Details (线装孔位) */}
+           <div className="absolute inset-y-0 left-2 flex flex-col justify-between py-4 opacity-40 pointer-events-none">
+             {[...Array(4)].map((_, i) => (
+               <div key={i} className="size-1 rounded-full bg-black/40 shadow-[0_0_0_1px_rgba(255,255,255,0.1)]" />
+             ))}
+           </div>
+           <div className="absolute inset-y-0 left-2.5 w-px bg-black/20 opacity-30 pointer-events-none" />
            
+           {/* Cover Label Strip (书签/签子) */}
+           <div className="absolute right-3 top-0 h-16 w-6 bg-white shadow-[1px_1px_3px_rgba(0,0,0,0.1)] flex items-center justify-center">
+             <span className="writing-vertical text-[10px] font-bold text-stone-800 font-serif tracking-widest">
+               {file.extension?.replace(".", "").toUpperCase() ?? "馆藏"}
+             </span>
+           </div>
+
            <button
              type="button"
              className={cn(
-               "absolute left-2 top-2 z-20 flex size-5 items-center justify-center rounded-sm bg-white shadow-sm transition",
-               isSelected ? "text-[rgb(57,130,152)]" : "text-slate-400 hover:text-[rgb(57,130,152)]",
+               "absolute left-4 top-4 z-20 flex size-5 items-center justify-center rounded-sm bg-white/90 shadow-sm transition",
+               isSelected ? "text-primary" : "text-stone-400 hover:text-primary",
              )}
              onClick={(event) => {
                event.stopPropagation();
@@ -451,7 +473,7 @@ export function KnowledgeFileCard({
            </button>
 
            {showCoverImage && coverImageUrl ? (
-             <div className="relative mb-0 h-[96px] w-[68px] overflow-hidden rounded-sm border border-white/10 bg-white/10 shadow-lg">
+             <div className="relative mb-0 h-[96px] w-[68px] overflow-hidden rounded-sm border border-black/10 shadow-lg">
                <img
                  src={coverImageUrl}
                  alt={`${file.title} 封面预览`}
@@ -460,142 +482,128 @@ export function KnowledgeFileCard({
                />
              </div>
            ) : (
-             <div className="relative mb-0 flex size-12 items-center justify-center rounded-sm bg-white/5 text-2xl font-light text-white/50">
+             <div className="relative mb-0 flex size-12 items-center justify-center rounded-sm bg-white/5 text-2xl font-light text-white/50 border border-white/10">
                {file.title?.charAt(0) ?? "?"}
              </div>
            )}
-           
-           <div className="mt-1 text-center">
-             <div className="line-clamp-1 px-2 text-[9px] font-bold uppercase tracking-tighter text-white/60">
-                {file.extension?.replace(".", "") ?? "DOC"}
-             </div>
-           </div>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col p-4 pr-5">
-           <div className="relative flex min-w-0 flex-col gap-2.5">
-              {/* Actions shifted to Top Right */}
-              <div className="absolute right-0 top-0 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
-                {file.source === "global" ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 rounded-md text-slate-400 hover:bg-slate-100 hover:text-[rgb(57,130,152)]"
-                    onClick={onOpenMetadata}
-                  >
-                    <PencilIcon className="size-3.5" />
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 rounded-md text-slate-400 hover:bg-slate-100 hover:text-[rgb(57,130,152)]"
-                    onClick={onMoveFile}
-                    disabled={personalSpacesCount <= 1}
-                  >
-                    <FolderIcon className="size-3.5" />
-                  </Button>
-                )}
-
-                {canRetry ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 rounded-md text-slate-400 hover:bg-slate-100 hover:text-[rgb(57,130,152)]"
-                    onClick={onRetry}
-                    disabled={isRetrying}
-                  >
-                    {isRetrying ? <Loader2Icon className="size-3.5 animate-spin" /> : <RefreshCwIcon className="size-3.5" />}
-                  </Button>
-                ) : null}
-
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
-                  onClick={onDelete}
-                  disabled={isDeleting}
-                >
-                  {isDeleting ? <Loader2Icon className="size-3.5 animate-spin" /> : <Trash2Icon className="size-3.5" />}
-                </Button>
-
-                {readerHref && (
-                  <a
-                    href={readerHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex size-7 items-center justify-center rounded-md bg-slate-50 text-slate-400 transition hover:bg-[rgb(57,130,152)] hover:text-white"
-                  >
-                    <BookOpenIcon className="size-3.5" />
-                  </a>
-                ) }
-              </div>
-
-              <div className="min-w-0 space-y-1.5 pr-28"> {/* Room for buttons */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={statusVariant(file.parseStatus)} className="h-4 px-1.5 text-[9px] font-medium tracking-tight">{statusLabel(file.parseStatus)}</Badge>
-                  <Badge variant="outline" className="h-4 px-1.5 text-[9px] font-medium tracking-tight">{knowledgeTypeLabel(file.type)}</Badge>
-                </div>
-
+        <div className="flex min-w-0 flex-1 flex-col p-5">
+           <div className="relative flex h-full min-w-0 flex-col justify-between gap-4">
                 <div className="min-w-0">
-                  {canOpenReader && readerHref ? (
-                    <a
-                      href={readerHref}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="line-clamp-1 text-base font-bold text-slate-900 leading-snug transition hover:text-[rgb(57,130,152)]"
+                  <div className="absolute right-0 top-0 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100 p-2">
+                    {file.source === "global" ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 rounded-sm text-stone-400 hover:bg-stone-100 hover:text-primary"
+                        onClick={onOpenMetadata}
+                      >
+                        <PencilIcon className="size-3.5" />
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 rounded-sm text-stone-400 hover:bg-stone-100 hover:text-primary"
+                        onClick={onMoveFile}
+                        disabled={personalSpacesCount <= 1}
+                      >
+                        <FolderIcon className="size-3.5" />
+                      </Button>
+                    )}
+
+                    {canRetry ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 rounded-sm text-stone-400 hover:bg-stone-100 hover:text-primary"
+                        onClick={onRetry}
+                        disabled={isRetrying}
+                      >
+                        {isRetrying ? <Loader2Icon className="size-3.5 animate-spin" /> : <RefreshCwIcon className="size-3.5" />}
+                      </Button>
+                    ) : null}
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 rounded-sm text-stone-400 hover:bg-red-50 hover:text-red-600"
+                      onClick={onDelete}
+                      disabled={isDeleting}
                     >
-                      {file.title}
-                    </a>
-                  ) : (
-                    <div className="line-clamp-1 text-base font-bold text-slate-900 leading-snug">{file.title}</div>
-                  )}
-                  <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-slate-500/80">
-                    <span className="font-medium text-slate-600">摘要：</span>
-                    {file.summary?.trim() ?? "无"}
-                  </p>
-                </div>
-              </div>
+                      {isDeleting ? <Loader2Icon className="size-3.5 animate-spin" /> : <Trash2Icon className="size-3.5" />}
+                    </Button>
 
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[10px] text-slate-400">
-                 <div className="flex items-center gap-1.5">
-                   <span className="shrink-0">来源:</span>
-                   <span className="font-medium text-slate-600">{file.source === "global" ? "系统" : "个人"}</span>
-                 </div>
-                 <div className="flex items-center gap-1.5">
-                   <span className="shrink-0">收录于:</span>
-                   <span className="font-medium text-slate-600">{formatCompactTime(file.modified)}</span>
-                 </div>
-                 <div className="flex items-center gap-1.5">
-                   <span className="shrink-0">目录:</span>
-                   <span className="font-semibold text-[#398298]">{file.folderDisplay}</span>
-                 </div>
-              </div>
+                    {readerHref && (
+                      <a
+                        href={readerHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex size-7 items-center justify-center rounded-sm bg-stone-50 text-stone-400 transition hover:bg-primary hover:text-white"
+                      >
+                        <BookOpenIcon className="size-3.5" />
+                      </a>
+                    ) }
+                  </div>
 
-              {tags.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {tags.slice(0, 10).map((tag) => (
-                    <Badge key={tag} variant="secondary" className="bg-slate-50/50 text-[9px] text-slate-400 border-none px-1 h-3.5">
-                      {tag}
-                    </Badge>
-                  ))}
+                  <div className="min-w-0">
+                    {canOpenReader && readerHref ? (
+                      <a
+                        href={readerHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="line-clamp-1 block text-lg font-bold text-stone-900 leading-tight transition hover:text-primary font-serif pr-24"
+                      >
+                        {file.title}
+                      </a>
+                    ) : (
+                      <div className="line-clamp-1 text-lg font-bold text-stone-900 leading-tight font-serif pr-24">{file.title}</div>
+                    )}
+                    <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-stone-500/80 font-serif">
+                      <span className="font-bold text-primary/60 mr-1.5">摘要：</span>
+                      {file.summary?.trim() ?? "无"}
+                    </p>
+                  </div>
                 </div>
-              )}
-           </div>
+
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[10px] text-stone-401 font-sans border-t border-accent/5 pt-2">
+                   <div className="flex items-center gap-1">
+                     <span className="text-stone-400">来源:</span>
+                     <span className="font-medium text-stone-600 font-serif">{file.source === "global" ? "系统" : "个人"}</span>
+                   </div>
+                   <div className="flex items-center gap-1">
+                     <span className="text-stone-400">入库:</span>
+                     <span className="font-medium text-stone-600">{formatCompactTime(file.modified)}</span>
+                   </div>
+                   <div className="flex items-center gap-1 font-serif">
+                     <span className="text-stone-400">馆藏目录:</span>
+                     <span className="font-bold text-accent">{file.folderDisplay}</span>
+                   </div>
+                   <div className="flex items-center gap-1 font-serif">
+                     <span className="text-stone-400">类型:</span>
+                     <span className="font-bold text-accent">{knowledgeTypeLabel(file.type)}</span>
+                   </div>
+                   <div className="flex items-center gap-1 font-serif">
+                     <span className="text-stone-400">状态:</span>
+                     <span className="font-bold text-primary">{statusLabel(file.parseStatus)}</span>
+                   </div>
+                </div>
+             </div>
+          </div>
         </div>
-      </div>
     </article>
   );
 }
 
 export function KnowledgeLoadingState() {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-slate-200 bg-white py-16 text-slate-500 shadow-sm">
-      <Loader2Icon className="mb-4 size-8 animate-spin text-[rgb(57,130,152)]" />
+    <div className="flex flex-col items-center justify-center rounded-md border border-accent/20 bg-white/20 py-16 text-stone-500 shadow-sm font-serif">
+      <Loader2Icon className="mb-4 size-8 animate-spin text-primary" />
       正在检索文献馆藏...
     </div>
   );
@@ -619,9 +627,9 @@ export function KnowledgeEmptyState({
   }
 
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white py-16 text-slate-400">
-      <FileIcon className="mb-4 size-14 text-slate-200" />
-      <p className="text-base font-medium text-slate-500">此分类下暂无相关文献文档。</p>
+    <div className="flex flex-col items-center justify-center rounded-md border border-dashed border-accent/30 bg-white/10 py-16 text-stone-400 font-serif">
+      <FileIcon className="mb-4 size-14 text-accent/20" />
+      <p className="text-base font-bold text-stone-600">此分类下暂无相关文献文档。</p>
       <p className="mt-1 text-xs">可以尝试放宽检索条件，或切换到其他目录查看。</p>
     </div>
   );
@@ -641,19 +649,163 @@ function CategoryCheckbox({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1.5 transition select-none group focus:outline-none",
-        active ? "text-[rgb(57,130,152)]" : "text-slate-500 hover:text-slate-700",
+        "relative flex items-center transition select-none group focus:outline-none font-serif px-2 py-1",
+        active ? "text-primary scale-105" : "text-stone-500 hover:text-stone-700",
       )}
     >
+      {/* Paper Bookmark Handle (纸签手/签语项) */}
       <div className={cn(
-        "flex size-4 items-center justify-center rounded-sm border transition",
-        active 
-          ? "border-[rgb(57,130,152)] bg-[rgb(57,130,152)] text-white shadow-sm" 
-          : "border-slate-300 bg-white group-hover:border-[rgb(57,130,152)]"
-      )}>
-        {active && <CheckSquareIcon className="size-3 stroke-[3]" />}
-      </div>
-      <span className="text-sm font-medium">{label}</span>
+        "absolute -left-1 top-0 bottom-0 w-0.5 bg-accent/30 transition-all",
+        active ? "bg-primary w-1" : "group-hover:w-1"
+      )} />
+      
+      <span className={cn(
+        "text-sm font-bold tracking-tight transition-all",
+        active ? "translate-x-1" : "group-hover:translate-x-1"
+      )}>{label}</span>
+      
+      {active && (
+        <div className="absolute -bottom-1 left-3 right-0 h-px bg-primary/40 animate-in fade-in slide-in-from-left-2 duration-300" />
+      )}
     </button>
+  );
+}
+
+function FolderDropdownItems({
+  nodes,
+  selectedPath,
+  onSelectFolder,
+}: {
+  nodes: FolderTreeNode[];
+  selectedPath: string;
+  onSelectFolder: (path: string) => void;
+}) {
+  return (
+    <>
+      {nodes.map((node) => {
+        const isSelected =
+          selectedPath === node.path || selectedPath.startsWith(`${node.path}/`);
+        const label = getFolderDisplayName(node.name);
+
+        if (node.children.length > 0) {
+          return (
+            <DropdownMenuSub key={node.path}>
+              <DropdownMenuSubTrigger className="min-w-48 font-serif">
+                <FolderIcon className="size-4 text-accent" />
+                <span className="flex-1 truncate">{label}</span>
+                <span className="ml-2 text-[10px] text-stone-400 font-sans">({node.fileCount})</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="min-w-56">
+                <DropdownMenuItem
+                  className={cn(
+                    "gap-2 font-serif",
+                    isSelected && "bg-primary/10 text-primary font-bold",
+                  )}
+                  onClick={() => onSelectFolder(node.path)}
+                >
+                  {isSelected ? (
+                    <CheckIcon className="size-4 text-primary" />
+                  ) : (
+                    <FolderIcon className="size-4 text-accent" />
+                  )}
+                  <span className="flex-1 truncate">全部</span>
+                  <span className="text-xs text-slate-400">{node.fileCount}</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <FolderDropdownItems
+                  nodes={node.children}
+                  selectedPath={selectedPath}
+                  onSelectFolder={onSelectFolder}
+                />
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          );
+        }
+
+        return (
+          <DropdownMenuItem
+            key={node.path}
+            className={cn(
+              "gap-2 font-serif",
+              isSelected && "bg-primary/10 text-primary font-bold",
+            )}
+            onClick={() => onSelectFolder(node.path)}
+          >
+            {isSelected ? (
+              <CheckIcon className="size-4 text-primary" />
+            ) : (
+              <FolderIcon className="size-4 text-accent" />
+            )}
+            <span className="flex-1 truncate">{label}</span>
+            <span className="text-[10px] text-stone-400 font-sans">({node.fileCount})</span>
+          </DropdownMenuItem>
+        );
+      })}
+    </>
+  );
+}
+
+function CategoryFolderFilter({
+  node,
+  selectedPath,
+  onSelectFolder,
+}: {
+  node: FolderTreeNode;
+  selectedPath: string;
+  onSelectFolder: (path: string) => void;
+}) {
+  const isActive =
+    selectedPath === node.path || selectedPath.startsWith(`${node.path}/`);
+  const hasChildren = node.children.length > 0;
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <CategoryCheckbox
+        active={isActive}
+        label={getFolderDisplayName(node.name)}
+        onClick={() => onSelectFolder(node.path)}
+      />
+      {hasChildren ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "flex size-6 items-center justify-center rounded-sm border transition",
+                isActive
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-accent/20 bg-white/60 text-accent/60 hover:border-primary hover:text-primary",
+              )}
+              aria-label={`展开 ${getFolderDisplayName(node.name)} 文件夹`}
+            >
+              <ChevronDownIcon className="size-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-56 rounded-md border-accent/20 bg-white/90 backdrop-blur-md p-1.5">
+            <DropdownMenuItem
+              className={cn(
+                "gap-2 font-serif",
+                isActive && "bg-primary/10 text-primary font-bold",
+              )}
+              onClick={() => onSelectFolder(node.path)}
+            >
+              {isActive ? (
+                <CheckIcon className="size-4 text-primary" />
+              ) : (
+                <FolderIcon className="size-4 text-accent" />
+              )}
+              <span className="flex-1 truncate">全部</span>
+              <span className="text-xs text-slate-400">{node.fileCount}</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <FolderDropdownItems
+              nodes={node.children}
+              selectedPath={selectedPath}
+              onSelectFolder={onSelectFolder}
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+    </div>
   );
 }

@@ -25,6 +25,7 @@ import { ThreadTitle } from "@/components/workspace/thread-title";
 import { TodoList } from "@/components/workspace/todo-list";
 import { Tooltip } from "@/components/workspace/tooltip";
 import { Welcome } from "@/components/workspace/welcome";
+import { SilkRibbon } from "@/components/workspace/silk-ribbon";
 import { getAPIClient } from "@/core/api";
 import { useI18n } from "@/core/i18n/hooks";
 import {
@@ -566,6 +567,8 @@ function ChatPageContent({
                   )}
                 </div>
               </div>
+              
+              {isNewThread && <SilkRibbon />}
             </main>
           </div>
         </div>

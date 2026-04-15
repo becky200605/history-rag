@@ -24,13 +24,17 @@ class TestMineruConfig:
         assert cfg.qdrant.upsert_batch_size == 64
         assert cfg.qdrant.upsert_parallelism == 2
 
-    def test_mineru_request_timeout_default_is_one_hour(self):
+    def test_mineru_request_timeout_default_supports_long_jobs(self):
         cfg = MineruConfig()
-        assert cfg.request_timeout == 3600
-        assert cfg.keepalive_time_ms == 120000
-        assert cfg.keepalive_timeout_ms == 60000
+        assert cfg.request_timeout == 14400
+        assert cfg.keepalive_time_ms == 180000
+        assert cfg.keepalive_timeout_ms == 180000
         assert cfg.keepalive_permit_without_calls is True
         assert cfg.max_message_bytes == 512 * 1024 * 1024
+        assert cfg.enable_pdf_chunking is True
+        assert cfg.pdf_split_page_threshold == 1200
+        assert cfg.pdf_chunk_page_count == 250
+        assert cfg.pdf_split_size_threshold_bytes == 256 * 1024 * 1024
 
     def test_mineru_custom_config(self):
         """Custom Mineru configuration should be loaded correctly."""
@@ -48,6 +52,10 @@ class TestMineruConfig:
                 "keepalive_timeout_ms": 15000,
                 "keepalive_permit_without_calls": False,
                 "max_message_bytes": 1024,
+                "enable_pdf_chunking": True,
+                "pdf_split_page_threshold": 200,
+                "pdf_chunk_page_count": 40,
+                "pdf_split_size_threshold_bytes": 2048,
             },
         }
 
@@ -66,6 +74,10 @@ class TestMineruConfig:
         assert cfg.mineru.keepalive_timeout_ms == 15000
         assert cfg.mineru.keepalive_permit_without_calls is False
         assert cfg.mineru.max_message_bytes == 1024
+        assert cfg.mineru.enable_pdf_chunking is True
+        assert cfg.mineru.pdf_split_page_threshold == 200
+        assert cfg.mineru.pdf_chunk_page_count == 40
+        assert cfg.mineru.pdf_split_size_threshold_bytes == 2048
 
     def test_book_metadata_custom_config(self):
         data = {

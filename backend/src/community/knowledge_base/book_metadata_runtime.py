@@ -21,6 +21,7 @@ from src.community.knowledge_base.book_metadata import (
     resolve_book_folder,
     save_book_metadata,
 )
+from src.community.knowledge_base.folder_registry import list_folder_paths, render_folder_tree
 from src.config.knowledge_base_config import BookMetadataConfig
 
 logger = logging.getLogger(__name__)
@@ -122,52 +123,23 @@ def build_existing_folder_tree(
     output_dir: Path,
     *,
     exclude_source_filename: str | None = None,
+    folder_registry_path: Path | None = None,
 ) -> str | None:
     """Render the current logical folder layout as a simple file tree."""
     metadata_dir = get_book_metadata_dir(output_dir)
-    if not metadata_dir.exists():
-        return None
+    file_entries: list[tuple[str | None, str]] = []
 
-    tree: dict[str, Any] = {}
+    if metadata_dir.exists():
+        for path in sorted(metadata_dir.glob("*.book-metadata.json")):
+            record = load_book_metadata(path)
+            if record is None or record.source_filename == exclude_source_filename:
+                continue
+            file_entries.append((resolve_book_folder(record.suggestion), record.source_filename))
 
-    def _node_children(node: dict[str, Any]) -> dict[str, Any]:
-        return node.setdefault("children", {})
-
-    def _node_files(node: dict[str, Any]) -> list[str]:
-        return node.setdefault("files", [])
-
-    for path in sorted(metadata_dir.glob("*.book-metadata.json")):
-        record = load_book_metadata(path)
-        if record is None or record.source_filename == exclude_source_filename:
-            continue
-        folder = resolve_book_folder(record.suggestion)
-        if not folder:
-            continue
-        node = tree
-        for segment in folder.split("/"):
-            node = _node_children(node).setdefault(segment, {})
-        _node_files(node).append(record.source_filename)
-
-    if not tree:
-        return None
-
-    lines = ["."]
-
-    def _render(node: dict[str, Any], prefix: str = "") -> None:
-        folders = sorted(_node_children(node).items(), key=lambda item: item[0])
-        files = sorted(_node_files(node))
-        entries: list[tuple[str, str, Any]] = [("folder", name, child) for name, child in folders]
-        entries.extend(("file", name, None) for name in files)
-
-        for index, (entry_type, name, child) in enumerate(entries):
-            is_last = index == len(entries) - 1
-            branch = "`-- " if is_last else "|-- "
-            lines.append(f"{prefix}{branch}{name}{'/' if entry_type == 'folder' else ''}")
-            if entry_type == "folder":
-                _render(child, prefix + ("    " if is_last else "|   "))
-
-    _render(tree)
-    return "\n".join(lines)
+    return render_folder_tree(
+        folder_paths=list_folder_paths(folder_registry_path) if folder_registry_path else [],
+        file_entries=file_entries,
+    )
 
 
 def generate_book_metadata_record(
@@ -191,6 +163,7 @@ def generate_book_metadata_record(
         existing_folder_tree=build_existing_folder_tree(
             output_dir,
             exclude_source_filename=source_filename,
+            folder_registry_path=output_dir / ".folders.json",
         ),
     )
 

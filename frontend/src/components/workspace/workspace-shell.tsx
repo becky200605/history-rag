@@ -13,31 +13,31 @@ import { useLocalSettings } from "@/core/settings";
 const queryClient = new QueryClient();
 
 const workspaceTheme = {
-  "--background": "rgb(247 251 252)",
-  "--foreground": "rgb(31 41 55)",
-  "--card": "rgb(255 255 255)",
-  "--card-foreground": "rgb(31 41 55)",
-  "--popover": "rgb(255 255 255)",
-  "--popover-foreground": "rgb(31 41 55)",
-  "--primary": "rgb(57 130 152)",
-  "--primary-foreground": "rgb(255 255 255)",
-  "--secondary": "rgb(231 242 244)",
-  "--secondary-foreground": "rgb(23 89 108)",
-  "--muted": "rgb(241 247 249)",
-  "--muted-foreground": "rgb(99 115 128)",
-  "--accent": "rgb(230 243 246)",
-  "--accent-foreground": "rgb(23 89 108)",
-  "--border": "rgba(57, 130, 152, 0.16)",
-  "--input": "rgba(57, 130, 152, 0.14)",
-  "--ring": "rgba(57, 130, 152, 0.18)",
-  "--sidebar": "rgb(249 252 252)",
-  "--sidebar-foreground": "rgb(31 41 55)",
-  "--sidebar-primary": "rgb(57 130 152)",
-  "--sidebar-primary-foreground": "rgb(255 255 255)",
-  "--sidebar-accent": "rgb(231 244 246)",
-  "--sidebar-accent-foreground": "rgb(23 89 108)",
-  "--sidebar-border": "rgba(57, 130, 152, 0.14)",
-  "--sidebar-ring": "rgba(57, 130, 152, 0.28)",
+  "--background": "#fdfcf0",
+  "--foreground": "#1c1917",
+  "--card": "#ffffff",
+  "--card-foreground": "#1c1917",
+  "--popover": "#ffffff",
+  "--popover-foreground": "#1c1917",
+  "--primary": "#7e332e",
+  "--primary-foreground": "#ffffff",
+  "--secondary": "#f7f3ea",
+  "--secondary-foreground": "#1c1917",
+  "--muted": "#f7f3ea",
+  "--muted-foreground": "#78716c",
+  "--accent": "#a38a52",
+  "--accent-foreground": "#ffffff",
+  "--border": "rgba(126, 51, 46, 0.1)",
+  "--input": "rgba(126, 51, 46, 0.1)",
+  "--ring": "rgba(126, 51, 46, 0.12)",
+  "--sidebar": "#fcfaf3",
+  "--sidebar-foreground": "#1c1917",
+  "--sidebar-primary": "#7e332e",
+  "--sidebar-primary-foreground": "#ffffff",
+  "--sidebar-accent": "rgba(126, 51, 46, 0.05)",
+  "--sidebar-accent-foreground": "#1c1917",
+  "--sidebar-border": "rgba(126, 51, 46, 0.08)",
+  "--sidebar-ring": "rgba(126, 51, 46, 0.16)",
 } as CSSProperties;
 
 type WorkspaceUser = {
@@ -71,20 +71,20 @@ export function WorkspaceShell({
     <QueryClientProvider client={queryClient}>
       {isImmersiveKnowledgeView ? (
         <div
-          className="h-screen bg-[linear-gradient(180deg,rgba(249,252,252,1),rgba(241,248,249,1))] text-foreground"
+          className="h-screen bg-[linear-gradient(180deg,rgba(255,255,255,1),rgba(253,252,240,1))] text-foreground"
           style={workspaceTheme}
         >
           {children}
         </div>
       ) : (
         <SidebarProvider
-          className="h-screen bg-[linear-gradient(180deg,rgba(249,252,252,1),rgba(241,248,249,1))] text-foreground"
+          className="h-screen bg-[linear-gradient(180deg,rgba(255,255,255,1),rgba(253,252,240,1))] text-foreground"
           open={open}
           onOpenChange={handleOpenChange}
           style={workspaceTheme}
         >
           <WorkspaceSidebar user={user} />
-          <SidebarInset className="min-w-0 bg-[linear-gradient(180deg,rgba(249,252,252,1),rgba(241,248,249,1))]">
+          <SidebarInset className="min-w-0 bg-transparent">
             {children}
           </SidebarInset>
         </SidebarProvider>

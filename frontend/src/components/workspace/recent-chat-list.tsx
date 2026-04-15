@@ -146,12 +146,12 @@ export function RecentChatList() {
                                 showOnHover
                                 className="bg-background/50 hover:bg-background"
                               >
-                                <MoreHorizontal />
-                                <span className="sr-only">{t.common.more}</span>
+                                <span className="text-xs">⋯</span>
+                                <span className="sr-only">更多</span>
                               </SidebarMenuAction>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent
-                              className="w-48 rounded-lg"
+                              className="w-48 rounded-lg font-serif"
                               side={"right"}
                               align={"start"}
                             >
@@ -163,21 +163,19 @@ export function RecentChatList() {
                                   )
                                 }
                               >
-                                <Pencil className="text-muted-foreground" />
-                                <span>{t.common.rename}</span>
+                                重命名
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onSelect={() => handleShare(thread.thread_id)}
                               >
-                                <Share2 className="text-muted-foreground" />
-                                <span>{t.common.share}</span>
+                                分享
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 onSelect={() => handleDelete(thread.thread_id)}
+                                className="text-destructive hover:text-destructive"
                               >
-                                <Trash2 className="text-muted-foreground" />
-                                <span>{t.common.delete}</span>
+                                刪除
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>

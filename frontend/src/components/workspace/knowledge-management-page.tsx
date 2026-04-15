@@ -639,8 +639,8 @@ export default function KnowledgeManagementPage() {
 
   return (
     <WorkspaceContainer>
-      <WorkspaceHeader className="border-b border-[#398298]/10" />
-      <WorkspaceBody className="bg-[#f9fafb]">
+      <WorkspaceHeader className="border-b border-primary/5" />
+      <WorkspaceBody className="bg-transparent">
         <input
           ref={fileInputRef}
           type="file"

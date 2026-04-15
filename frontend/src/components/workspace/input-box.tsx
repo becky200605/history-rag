@@ -118,7 +118,7 @@ function PresetIcon({
   tier: AgentTier;
 }) {
   if (scenario === "research" && tier === "ultra") {
-    return <RocketIcon className="size-3 text-[rgb(57,130,152)]" />;
+    return <RocketIcon className="size-3 text-primary" />;
   }
   if (scenario === "qa" && tier === "ultra") {
     return <ZapIcon className="size-3" />;
@@ -253,7 +253,7 @@ export function InputBox({
   return (
     <PromptInput
       className={cn(
-        "bg-background/85 rounded-2xl backdrop-blur-sm transition-all duration-300 ease-out *:data-[slot='input-group']:rounded-2xl",
+        "bg-[#fdfbf6] rounded-sm border-2 border-[#7e332e]/20 shadow-[4px_4px_0_rgba(126,51,46,0.05)] transition-all duration-300 ease-out *:data-[slot='input-group']:rounded-sm",
         className,
       )}
       disabled={disabled}
@@ -275,7 +275,7 @@ export function InputBox({
       <PromptInputBody className="z-3 w-full">
         <KnowledgeMentionTextarea
           autoFocus={autoFocus}
-          className={cn("w-full")}
+          className={cn("w-full font-serif text-stone-800 placeholder:text-stone-400 focus-visible:ring-primary/20")}
           disabled={disabled}
           mentionables={mentionables}
           placeholder={t.inputBox.placeholder}
@@ -294,162 +294,8 @@ export function InputBox({
             </PromptInputActionMenuContent>
           </PromptInputActionMenu> */}
           <AddAttachmentsButton className="px-2!" />
-          <PromptInputActionMenu>
-            <ModeHoverGuide scenario={context.scenario} tier={context.tier}>
-              <PromptInputActionMenuTrigger className="max-w-38 gap-1! px-2!">
-                <PresetIcon scenario={context.scenario} tier={context.tier} />
-                <div
-                  className={cn(
-                    "truncate text-xs font-normal",
-                    context.scenario === "research" &&
-                      context.tier === "ultra" &&
-                      "font-medium text-[rgb(57,130,152)]",
-                  )}
-                >
-                  {triggerLabel}
-                </div>
-              </PromptInputActionMenuTrigger>
-            </ModeHoverGuide>
-            <PromptInputActionMenuContent className="w-80">
-              <DropdownMenuGroup>
-                <DropdownMenuLabel className="text-muted-foreground text-xs">
-                  {t.inputBox.mode}
-                </DropdownMenuLabel>
-                <DropdownMenuLabel className="text-muted-foreground pt-2 text-xs">
-                  {t.inputBox.researchScenario}
-                </DropdownMenuLabel>
-                <PromptInputActionMenu>
-                  <PromptInputActionMenuItem
-                    className={cn(
-                      isPreset("research", "pro")
-                        ? "text-accent-foreground"
-                        : "text-muted-foreground/65",
-                    )}
-                    onSelect={() => handlePresetSelect("research", "pro")}
-                  >
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-1 font-bold">
-                        <GraduationCapIcon
-                          className={cn(
-                            "mr-2 size-4",
-                            isPreset("research", "pro") &&
-                              "text-accent-foreground",
-                          )}
-                        />
-                        {t.inputBox.researchProLabel}
-                      </div>
-                      <div className="pl-7 text-xs">
-                        {t.inputBox.researchProDescription}
-                      </div>
-                    </div>
-                    {isPreset("research", "pro") ? (
-                      <CheckIcon className="ml-auto size-4 shrink-0" />
-                    ) : (
-                      <div className="ml-auto size-4 shrink-0" />
-                    )}
-                  </PromptInputActionMenuItem>
-                  <PromptInputActionMenuItem
-                    className={cn(
-                      isPreset("research", "ultra")
-                        ? "text-accent-foreground"
-                        : "text-muted-foreground/65",
-                    )}
-                    onSelect={() => handlePresetSelect("research", "ultra")}
-                  >
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-1 font-bold">
-                        <RocketIcon
-                          className={cn(
-                            "mr-2 size-4",
-                            isPreset("research", "ultra") &&
-                              "text-[rgb(57,130,152)]",
-                          )}
-                        />
-                        <span
-                          className={cn(
-                            isPreset("research", "ultra") &&
-                              "font-semibold text-[rgb(57,130,152)]",
-                          )}
-                        >
-                          {t.inputBox.researchUltraLabel}
-                        </span>
-                      </div>
-                      <div className="pl-7 text-xs">
-                        {t.inputBox.researchUltraDescription}
-                      </div>
-                    </div>
-                    {isPreset("research", "ultra") ? (
-                      <CheckIcon className="ml-auto size-4 shrink-0" />
-                    ) : (
-                      <div className="ml-auto size-4 shrink-0" />
-                    )}
-                  </PromptInputActionMenuItem>
-                </PromptInputActionMenu>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-muted-foreground text-xs">
-                  {t.inputBox.qaScenario}
-                </DropdownMenuLabel>
-                <PromptInputActionMenu>
-                  <PromptInputActionMenuItem
-                    className={cn(
-                      isPreset("qa", "pro")
-                        ? "text-accent-foreground"
-                        : "text-muted-foreground/65",
-                    )}
-                    onSelect={() => handlePresetSelect("qa", "pro")}
-                  >
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-1 font-bold">
-                        <MessageCircleIcon
-                          className={cn(
-                            "mr-2 size-4",
-                            isPreset("qa", "pro") && "text-accent-foreground",
-                          )}
-                        />
-                        {t.inputBox.qaProLabel}
-                      </div>
-                      <div className="pl-7 text-xs">
-                        {t.inputBox.qaProDescription}
-                      </div>
-                    </div>
-                    {isPreset("qa", "pro") ? (
-                      <CheckIcon className="ml-auto size-4 shrink-0" />
-                    ) : (
-                      <div className="ml-auto size-4 shrink-0" />
-                    )}
-                  </PromptInputActionMenuItem>
-                  <PromptInputActionMenuItem
-                    className={cn(
-                      isPreset("qa", "ultra")
-                        ? "text-accent-foreground"
-                        : "text-muted-foreground/65",
-                    )}
-                    onSelect={() => handlePresetSelect("qa", "ultra")}
-                  >
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-1 font-bold">
-                        <ZapIcon
-                          className={cn(
-                            "mr-2 size-4",
-                            isPreset("qa", "ultra") && "text-accent-foreground",
-                          )}
-                        />
-                        {t.inputBox.qaUltraLabel}
-                      </div>
-                      <div className="pl-7 text-xs">
-                        {t.inputBox.qaUltraDescription}
-                      </div>
-                    </div>
-                    {isPreset("qa", "ultra") ? (
-                      <CheckIcon className="ml-auto size-4 shrink-0" />
-                    ) : (
-                      <div className="ml-auto size-4 shrink-0" />
-                    )}
-                  </PromptInputActionMenuItem>
-                </PromptInputActionMenu>
-              </DropdownMenuGroup>
-            </PromptInputActionMenuContent>
-          </PromptInputActionMenu>
+          {/* Mode Switcher Removed per scholarly redesign */}
+            {/* Mode Menu Content Removed */}
         </PromptInputTools>
         <PromptInputTools>
           <ModelSelector
@@ -457,8 +303,8 @@ export function InputBox({
             onOpenChange={setModelDialogOpen}
           >
             <ModelSelectorTrigger asChild>
-              <PromptInputButton>
-                <ModelSelectorName className="text-xs font-normal">
+              <PromptInputButton className="border-stone-200 bg-stone-50/50 hover:bg-stone-100 hover:text-primary transition-colors">
+                <ModelSelectorName className="text-xs font-serif font-medium">
                   {selectedModel?.display_name}
                 </ModelSelectorName>
               </PromptInputButton>
@@ -484,18 +330,14 @@ export function InputBox({
             </ModelSelectorContent>
           </ModelSelector>
           <PromptInputSubmit
-            className="rounded-full"
+            className="rounded-sm bg-primary text-white hover:bg-primary/90 shadow-[2px_2px_0_rgba(126,51,46,0.2)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
             disabled={disabled}
-            variant="outline"
+            variant="ghost" // Using ghost to ignore parent outline variants
             status={status}
           />
         </PromptInputTools>
       </PromptInputFooter>
-      {isNewThread && searchParams.get("mode") !== "skill" && (
-        <div className="absolute right-0 -bottom-20 left-0 z-0 flex items-center justify-center">
-          <SuggestionList />
-        </div>
-      )}
+      {/* Suggestions Removed per scholarly redesign */}
       {!isNewThread && (
         <div className="bg-background absolute right-0 -bottom-[17px] left-0 z-0 h-4"></div>
       )}
@@ -578,7 +420,10 @@ function AddAttachmentsButton({ className }: { className?: string }) {
   return (
     <Tooltip content={t.inputBox.addAttachments}>
       <PromptInputButton
-        className={cn("px-2!", className)}
+        className={cn(
+          "px-2! border-stone-200 bg-stone-50/50 hover:bg-stone-100 hover:text-primary transition-colors",
+          className,
+        )}
         onClick={() => attachments.openFileDialog()}
       >
         <PaperclipIcon className="size-3" />

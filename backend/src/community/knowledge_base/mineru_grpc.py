@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +20,17 @@ from src.community.knowledge_base.structured_document import (
 from src.config.knowledge_base_config import MineruConfig, get_knowledge_base_config
 
 DEFAULT_MAX_GRPC_MESSAGE_BYTES = 256 * 1024 * 1024
+DEFAULT_PDF_SPLIT_SIZE_RATIO = 0.8
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PdfChunkPlan:
+    total_pages: int
+    chunk_page_count: int
+    chunk_ranges: list[tuple[int, int]]
+    file_size_bytes: int
 
 
 def _get_max_grpc_message_bytes(config: MineruConfig) -> int:
@@ -55,6 +69,24 @@ def _build_metadata(config: MineruConfig) -> list[tuple[str, str]]:
     return [("authorization", f"Bearer {config.api_token}")]
 
 
+def _build_parse_pdf_request(
+    *,
+    file_path: Path,
+    config: MineruConfig,
+    hints: dict[str, str] | None,
+    language_hint: str | None,
+) -> mineru_pb2.ParsePdfRequest:
+    hints = hints or {}
+    return mineru_pb2.ParsePdfRequest(
+        filename=file_path.name,
+        file_content=file_path.read_bytes(),
+        language_hint=language_hint or "",
+        layout_hint=hints.get("layout_hint", ""),
+        document_type_hint=hints.get("document_type_hint", ""),
+        model_version=config.model_version,
+    )
+
+
 def _build_channel(config: MineruConfig) -> grpc.Channel:
     max_message_bytes = _get_max_grpc_message_bytes(config)
     options = [
@@ -73,6 +105,81 @@ def _build_channel(config: MineruConfig) -> grpc.Channel:
         credentials = grpc.ssl_channel_credentials()
         return grpc.secure_channel(config.target, credentials, options=options)
     return grpc.insecure_channel(config.target, options=options)
+
+
+def _parse_pdf_response_via_mineru_grpc(
+    file_path: Path,
+    *,
+    config: MineruConfig,
+    hints: dict[str, str] | None = None,
+    language_hint: str | None = None,
+) -> mineru_pb2.ParsePdfResponse:
+    request = _build_parse_pdf_request(
+        file_path=file_path,
+        config=config,
+        hints=hints,
+        language_hint=language_hint,
+    )
+    try:
+        with _build_channel(config) as channel:
+            stub = mineru_pb2_grpc.MineruPdfExtractorStub(channel)
+            return stub.ParsePdf(
+                request,
+                timeout=config.request_timeout,
+                metadata=_build_metadata(config),
+            )
+    except grpc.RpcError as exc:
+        raise RuntimeError(f"MinerU gRPC failed: {exc.code().name} {exc.details()}") from exc
+
+
+def _count_pdf_pages(file_path: Path) -> int:
+    from pypdf import PdfReader
+
+    reader = PdfReader(str(file_path))
+    return len(reader.pages)
+
+
+def _default_pdf_split_size_threshold_bytes(config: MineruConfig) -> int:
+    max_message_bytes = _get_max_grpc_message_bytes(config)
+    threshold = int(max_message_bytes * DEFAULT_PDF_SPLIT_SIZE_RATIO)
+    return max(1, threshold)
+
+
+def _build_pdf_chunk_ranges(total_pages: int, chunk_page_count: int) -> list[tuple[int, int]]:
+    normalized_chunk_page_count = max(1, int(chunk_page_count))
+    return [
+        (start_page_index, min(start_page_index + normalized_chunk_page_count, total_pages))
+        for start_page_index in range(0, total_pages, normalized_chunk_page_count)
+    ]
+
+
+def _maybe_build_pdf_chunk_plan(file_path: Path, config: MineruConfig) -> PdfChunkPlan | None:
+    if file_path.suffix.lower() != ".pdf" or not config.enable_pdf_chunking:
+        return None
+
+    file_size_bytes = file_path.stat().st_size
+    size_threshold_bytes = _coerce_positive_int(config.pdf_split_size_threshold_bytes)
+    if size_threshold_bytes is None:
+        size_threshold_bytes = _default_pdf_split_size_threshold_bytes(config)
+
+    total_pages = _count_pdf_pages(file_path)
+    should_split = (
+        total_pages > config.pdf_split_page_threshold
+        or file_size_bytes > size_threshold_bytes
+    )
+    if not should_split or total_pages <= 1:
+        return None
+
+    chunk_ranges = _build_pdf_chunk_ranges(total_pages, config.pdf_chunk_page_count)
+    if len(chunk_ranges) <= 1:
+        return None
+
+    return PdfChunkPlan(
+        total_pages=total_pages,
+        chunk_page_count=max(1, int(config.pdf_chunk_page_count)),
+        chunk_ranges=chunk_ranges,
+        file_size_bytes=file_size_bytes,
+    )
 
 
 def _bbox_to_payload(bbox: mineru_pb2.BBox | None) -> dict[str, float] | None:
@@ -211,6 +318,108 @@ def build_structured_document_from_mineru_response(
     return payload
 
 
+def _merge_chunked_structured_documents(
+    *,
+    source_filename: str,
+    title: str,
+    parser_name: str,
+    hints: dict[str, str] | None,
+    chunk_payloads: list[dict[str, Any]],
+    chunk_plan: PdfChunkPlan,
+) -> dict[str, Any]:
+    hints = hints or {}
+    merged_pages: list[dict[str, Any]] = []
+    page_texts: list[str] = []
+    paragraph_no_in_doc = 1
+    global_line = 1
+    task_ids: list[str] = []
+
+    for payload in chunk_payloads:
+        provider_meta = payload.get("provider_result_meta")
+        if isinstance(provider_meta, dict):
+            task_id = str(provider_meta.get("task_id") or "").strip()
+            if task_id:
+                task_ids.append(task_id)
+
+        for page in payload.get("pages") or []:
+            page_number = len(merged_pages) + 1
+            page_text = str(page.get("text") or "").strip()
+            raw_paragraphs = page.get("paragraphs") or []
+            paragraphs: list[dict[str, Any]] = []
+
+            for paragraph in raw_paragraphs:
+                text = str(paragraph.get("text") or "").strip()
+                if not text:
+                    continue
+
+                paragraph_index = len(paragraphs) + 1
+                line_start = global_line
+                line_end = line_start + max(1, text.count("\n") + 1) - 1
+
+                paragraph_payload = {
+                    "paragraph_id": f"page-{page_number}-p{paragraph_index}",
+                    "paragraph_no": paragraph_index,
+                    "paragraph_no_in_doc": paragraph_no_in_doc,
+                    "text": text,
+                    "line_start": line_start,
+                    "line_end": line_end,
+                }
+                if paragraph.get("bbox") is not None:
+                    paragraph_payload["bbox"] = paragraph.get("bbox")
+                if paragraph.get("bbox_source") is not None:
+                    paragraph_payload["bbox_source"] = paragraph.get("bbox_source")
+
+                paragraphs.append(paragraph_payload)
+                paragraph_no_in_doc += 1
+                global_line = line_end + 2
+
+            if not paragraphs and page_text:
+                paragraphs, paragraph_no_in_doc, global_line = _build_single_paragraph_from_page_text(
+                    page_text=page_text,
+                    pdf_page_no=page_number,
+                    paragraph_no_in_doc_start=paragraph_no_in_doc,
+                    global_line_start=global_line,
+                )
+
+            page_payload = {
+                **build_page_reference(page_number, hints),
+                "text": page_text,
+                "paragraphs": paragraphs,
+            }
+            if isinstance(page.get("meta"), dict) and page.get("meta"):
+                page_payload["meta"] = page.get("meta")
+
+            merged_pages.append(page_payload)
+            page_texts.append(page_text)
+
+    merged_payload: dict[str, Any] = {
+        "schema_version": 1,
+        "source_filename": source_filename,
+        "title": title,
+        "parser_name": parser_name,
+        "hints": hints,
+        "full_text": "\f".join(page_texts).strip(),
+        "pages": merged_pages,
+        "provider": "mineru_grpc",
+        "provider_result_meta": {
+            "chunked": True,
+            "chunk_count": len(chunk_payloads),
+            "total_pages": chunk_plan.total_pages,
+            "chunk_page_count": chunk_plan.chunk_page_count,
+            "chunk_ranges": [
+                {
+                    "start_pdf_page": start_page_index + 1,
+                    "end_pdf_page": end_page_index,
+                }
+                for start_page_index, end_page_index in chunk_plan.chunk_ranges
+            ],
+        },
+    }
+    if task_ids:
+        merged_payload["provider_result_meta"]["task_ids"] = task_ids
+    return merged_payload
+
+
 def build_structured_document_from_mineru_grpc(
     file_path: Path,
     *,
@@ -221,31 +430,66 @@ def build_structured_document_from_mineru_grpc(
 ) -> dict[str, Any]:
     config = _get_mineru_config()
     hints = hints or {}
+    chunk_plan = _maybe_build_pdf_chunk_plan(file_path, config)
+    if chunk_plan is None:
+        response = _parse_pdf_response_via_mineru_grpc(
+            file_path,
+            config=config,
+            hints=hints,
+            language_hint=language_hint,
+        )
+        return build_structured_document_from_mineru_response(
+            source_filename=file_path.name,
+            title=title,
+            parser_name=parser_name,
+            response=response,
+            hints=hints,
+        )
 
-    request = mineru_pb2.ParsePdfRequest(
-        filename=file_path.name,
-        file_content=file_path.read_bytes(),
-        language_hint=language_hint or "",
-        layout_hint=hints.get("layout_hint", ""),
-        document_type_hint=hints.get("document_type_hint", ""),
-        model_version=config.model_version,
+    logger.info(
+        "Auto-splitting PDF for MinerU OCR: %s (%s pages, %s bytes) into %s chunks of up to %s pages",
+        file_path.name,
+        chunk_plan.total_pages,
+        chunk_plan.file_size_bytes,
+        len(chunk_plan.chunk_ranges),
+        chunk_plan.chunk_page_count,
     )
 
-    try:
-        with _build_channel(config) as channel:
-            stub = mineru_pb2_grpc.MineruPdfExtractorStub(channel)
-            response = stub.ParsePdf(
-                request,
-                timeout=config.request_timeout,
-                metadata=_build_metadata(config),
-            )
-    except grpc.RpcError as exc:
-        raise RuntimeError(f"MinerU gRPC failed: {exc.code().name} {exc.details()}") from exc
+    chunk_payloads: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix="mineru-pdf-chunks-") as temp_dir:
+        from pypdf import PdfReader, PdfWriter
 
-    return build_structured_document_from_mineru_response(
+        reader = PdfReader(str(file_path))
+        temp_dir_path = Path(temp_dir)
+        for chunk_index, (start_page_index, end_page_index) in enumerate(chunk_plan.chunk_ranges, start=1):
+            chunk_path = temp_dir_path / f"{file_path.stem}.part{chunk_index:03d}.pdf"
+            writer = PdfWriter()
+            for page_index in range(start_page_index, end_page_index):
+                writer.add_page(reader.pages[page_index])
+            with chunk_path.open("wb") as handle:
+                writer.write(handle)
+
+            response = _parse_pdf_response_via_mineru_grpc(
+                chunk_path,
+                config=config,
+                hints=hints,
+                language_hint=language_hint,
+            )
+            chunk_payloads.append(
+                build_structured_document_from_mineru_response(
+                    source_filename=file_path.name,
+                    title=title,
+                    parser_name=parser_name,
+                    response=response,
+                    hints=hints,
+                )
+            )
+
+    return _merge_chunked_structured_documents(
         source_filename=file_path.name,
         title=title,
         parser_name=parser_name,
-        response=response,
         hints=hints,
+        chunk_payloads=chunk_payloads,
+        chunk_plan=chunk_plan,
     )

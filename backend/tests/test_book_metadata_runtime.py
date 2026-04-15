@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from src.community.knowledge_base.book_metadata import load_book_metadata_for_source, save_book_metadata
+from src.community.knowledge_base.folder_registry import ensure_folder_path
 from src.community.knowledge_base.book_metadata_runtime import (
     _extract_response_text,
     build_existing_folder_tree,
@@ -217,6 +218,19 @@ def test_build_existing_folder_tree_renders_nested_paths(tmp_path) -> None:
     assert "a.pdf" in tree
     assert "制度史/" in tree
     assert "b.pdf" in tree
+
+
+def test_build_existing_folder_tree_includes_empty_registry_folders(tmp_path) -> None:
+    ensure_folder_path(tmp_path / ".folders.json", "财政史/明代")
+
+    tree = build_existing_folder_tree(
+        tmp_path,
+        folder_registry_path=tmp_path / ".folders.json",
+    )
+
+    assert tree is not None
+    assert "财政史/" in tree
+    assert "明代/" in tree
 
 
 def test_extract_response_text_accepts_prefixed_json_in_content() -> None:

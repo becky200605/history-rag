@@ -9,6 +9,8 @@ from src.community.knowledge_base.book_metadata import (
     BOOK_METADATA_FILENAME_SUFFIX,
     get_book_metadata_dir,
     load_book_metadata,
+    normalize_folder_path,
+    resolve_book_folder,
 )
 from src.community.knowledge_base.common import (
     derive_global_doc_id,
@@ -88,6 +90,7 @@ class BookCatalogEntry:
     priority: int | None = None
     score: float | None = None
     metadata_source: str | None = None
+    folder_path: str | None = None
 
 
 @dataclass
@@ -104,6 +107,18 @@ class CatalogMetadataRecord:
     priority: int | None = None
     search_terms: list[str] = field(default_factory=list)
     source_path: str | None = None
+    folder_path: str | None = None
+
+
+TREE_FILE_KEY = "__files__"
+TREE_SCOPE_ROOTS = {
+    "user": ("用户书籍",),
+    "thread": ("当前线程书籍",),
+    CORE_TYPE: ("系统知识库", "核心通用书"),
+    SPECIALIZED_TYPE: ("系统知识库", "专题支撑书"),
+    REFERENCE_TYPE: ("系统知识库", "补充材料 / 参考工具书"),
+    "unknown": ("系统知识库", "其他资料"),
+}
 
 
 def _read_preview(path: Path, max_chars: int = 800) -> str:
@@ -234,6 +249,7 @@ def _coerce_catalog_metadata_record(payload: dict[str, object], source_path: str
         priority=_as_optional_int(payload.get("priority")),
         search_terms=_as_list(payload.get("search_terms")),
         source_path=source_path,
+        folder_path=normalize_folder_path(payload.get("folder")),
     )
 
 
@@ -264,6 +280,7 @@ def _merge_metadata_record(
         priority=record.priority if record.priority is not None else existing.priority,
         search_terms=record.search_terms or existing.search_terms,
         source_path=record.source_path or existing.source_path,
+        folder_path=record.folder_path or existing.folder_path,
     )
 
 
@@ -290,6 +307,7 @@ def _load_generated_book_metadata_index(directory: Path) -> dict[str, CatalogMet
             summary=summary,
             search_terms=tokenize_search_text(summary),
             source_path=str(path),
+            folder_path=resolve_book_folder(suggestion),
         )
         for key in _metadata_index_keys(record):
             metadata_index[key] = _merge_metadata_record(metadata_index.get(key), record)
@@ -331,6 +349,7 @@ def _book_metadata_search_text(metadata: CatalogMetadataRecord) -> str:
     parts = [
         metadata.type,
         metadata.title or "",
+        metadata.folder_path or "",
         metadata.summary,
         " ".join(metadata.categories),
         " ".join(metadata.eras),
@@ -348,8 +367,11 @@ def _apply_metadata_to_entry(
     if metadata is None:
         return entry
 
+    resolved_folder_path = metadata.folder_path or entry.folder_path
     metadata_text = _book_metadata_search_text(metadata)
-    search_text = normalize_search_text(" ".join(part for part in [entry.search_text, metadata_text] if part))
+    search_text = normalize_search_text(
+        " ".join(part for part in [entry.search_text, resolved_folder_path or "", metadata_text] if part)
+    )
     return replace(
         entry,
         type=metadata.type if metadata.type else entry.type,
@@ -362,6 +384,7 @@ def _apply_metadata_to_entry(
         search_text=search_text,
         search_tokens=tokenize_search_text(search_text),
         metadata_source=metadata.source_path,
+        folder_path=resolved_folder_path,
     )
 
 
@@ -369,6 +392,8 @@ def _format_metadata_text(entry: BookCatalogEntry) -> str:
     parts: list[str] = []
     if entry.type and entry.type != "unknown":
         parts.append(f"类型: {entry.type}")
+    if entry.folder_path:
+        parts.append(f"目录: {entry.folder_path}")
     if entry.categories:
         parts.append(f"分类: {'、'.join(entry.categories)}")
     if entry.eras:
@@ -534,6 +559,7 @@ def _build_global_entries(
                 preview=preview[:240],
                 search_text=normalize_search_text(f"{title} {extracted_title} {search_excerpt}"),
                 search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
+                folder_path=normalize_folder_path(payload.get("folder_path")),
             )
             entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
             seen_filenames.add(str(source_filename))
@@ -672,6 +698,7 @@ def _build_user_entries(
             search_text=normalize_search_text(f"{title} {extracted_title} {search_excerpt}"),
             search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
             type="user",
+            folder_path=normalize_folder_path(record.get("folder_path")),
         )
         entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
 
@@ -737,6 +764,7 @@ def _exact_match_boost(entry: BookCatalogEntry, query: str, query_tokens: list[s
     normalized_query = normalize_search_text(query)
     title_text = normalize_search_text(entry.title)
     filename_text = normalize_search_text(entry.filename)
+    folder_text = normalize_search_text(entry.folder_path or "")
     summary_text = normalize_search_text(entry.summary)
 
     if normalized_query and normalized_query == title_text:
@@ -746,15 +774,157 @@ def _exact_match_boost(entry: BookCatalogEntry, query: str, query_tokens: list[s
 
     if normalized_query and normalized_query in filename_text:
         boost += 6.0
+    if normalized_query and folder_text and normalized_query in folder_text:
+        boost += 5.0
 
     for token in query_tokens:
         if token in title_text:
             boost += 1.5
         if token in filename_text:
             boost += 1.25
+        if folder_text and token in folder_text:
+            boost += 1.1
         if token in summary_text:
             boost += 0.6
     return boost
+
+
+def filter_book_catalog_entries(
+    entries: list[BookCatalogEntry],
+    *,
+    doc_ids: list[str] | None = None,
+    scopes: list[str] | None = None,
+    folder_paths: list[str] | None = None,
+) -> list[BookCatalogEntry]:
+    """Apply optional scope/doc filters to a catalog entry list."""
+    filtered = entries
+    if doc_ids:
+        allowed_doc_ids = set(doc_ids)
+        filtered = [entry for entry in filtered if entry.doc_id in allowed_doc_ids]
+    if scopes:
+        allowed_scopes = {scope.strip().lower() for scope in scopes if scope and scope.strip()}
+        filtered = [entry for entry in filtered if entry.scope in allowed_scopes]
+    if folder_paths:
+        normalized_folder_paths = [
+            normalized
+            for raw_path in folder_paths
+            if (normalized := normalize_folder_path(raw_path))
+        ]
+        if normalized_folder_paths:
+            filtered = [
+                entry
+                for entry in filtered
+                if _entry_matches_any_folder(entry, normalized_folder_paths)
+            ]
+    return filtered
+
+
+def _entry_filter_folder_path(entry: BookCatalogEntry) -> str | None:
+    normalized = normalize_folder_path(entry.folder_path)
+    if normalized:
+        return normalized
+
+    relative_parent = normalize_folder_path(str(Path(entry.filename).parent))
+    if relative_parent:
+        return relative_parent
+    return None
+
+
+def _entry_matches_any_folder(entry: BookCatalogEntry, folder_paths: list[str]) -> bool:
+    entry_folder_path = _entry_filter_folder_path(entry)
+    if not entry_folder_path:
+        return False
+    return any(
+        entry_folder_path == folder_path or entry_folder_path.startswith(f"{folder_path}/")
+        for folder_path in folder_paths
+    )
+
+
+def _entry_tree_root(entry: BookCatalogEntry) -> tuple[str, ...]:
+    if entry.scope == "user":
+        return TREE_SCOPE_ROOTS["user"]
+    if entry.scope == "thread":
+        return TREE_SCOPE_ROOTS["thread"]
+    return TREE_SCOPE_ROOTS.get(_normalize_type(entry.type), TREE_SCOPE_ROOTS["unknown"])
+
+
+def _entry_folder_segments(entry: BookCatalogEntry) -> list[str]:
+    normalized = _entry_filter_folder_path(entry)
+    if normalized:
+        return normalized.split("/")
+
+    return ["未归档"]
+
+
+def _entry_tree_leaf(entry: BookCatalogEntry) -> str:
+    display_title = entry.title or Path(entry.filename).stem or entry.filename or entry.doc_id
+    return f"{display_title} [doc_id={entry.doc_id}]"
+
+
+def render_book_catalog_directory_tree(entries: list[BookCatalogEntry]) -> str | None:
+    """Render visible catalog entries as a simple directory tree."""
+    if not entries:
+        return None
+
+    tree: dict[str, object] = {}
+
+    def _children(node: dict[str, object]) -> dict[str, object]:
+        existing = node.get("children")
+        if isinstance(existing, dict):
+            return existing
+        created: dict[str, object] = {}
+        node["children"] = created
+        return created
+
+    def _files(node: dict[str, object]) -> list[str]:
+        existing = node.get(TREE_FILE_KEY)
+        if isinstance(existing, list):
+            return existing
+        created: list[str] = []
+        node[TREE_FILE_KEY] = created
+        return created
+
+    ordered_entries = sorted(
+        entries,
+        key=lambda entry: (
+            _entry_tree_root(entry),
+            _entry_folder_segments(entry),
+            entry.title,
+            entry.doc_id,
+        ),
+    )
+    for entry in ordered_entries:
+        node = tree
+        for segment in [*_entry_tree_root(entry), *_entry_folder_segments(entry)]:
+            node = _children(node).setdefault(segment, {})  # type: ignore[assignment]
+        leaf = _entry_tree_leaf(entry)
+        node_files = _files(node)
+        if leaf not in node_files:
+            node_files.append(leaf)
+
+    lines = ["."]
+
+    def _render(node: dict[str, object], prefix: str = "") -> None:
+        folder_items = sorted(
+            ((name, child) for name, child in _children(node).items()),
+            key=lambda item: item[0],
+        )
+        file_items = sorted(_files(node))
+        entries_to_render: list[tuple[str, str, object | None]] = [
+            ("folder", name, child) for name, child in folder_items
+        ]
+        entries_to_render.extend(("file", name, None) for name in file_items)
+
+        for index, (entry_type, name, child) in enumerate(entries_to_render):
+            is_last = index == len(entries_to_render) - 1
+            branch = "`-- " if is_last else "|-- "
+            suffix = "/" if entry_type == "folder" else ""
+            lines.append(f"{prefix}{branch}{name}{suffix}")
+            if entry_type == "folder" and isinstance(child, dict):
+                _render(child, prefix + ("    " if is_last else "|   "))
+
+    _render(tree)
+    return "\n".join(lines)
 
 
 def search_book_catalog(
@@ -762,9 +932,17 @@ def search_book_catalog(
     thread_id: str | None = None,
     user_id: str | None = None,
     top_k: int = 8,
+    doc_ids: list[str] | None = None,
+    scopes: list[str] | None = None,
+    folder_paths: list[str] | None = None,
 ) -> list[BookCatalogEntry]:
     """Return the most relevant candidate books for a query."""
-    entries = list_book_catalog(thread_id=thread_id, user_id=user_id)
+    entries = filter_book_catalog_entries(
+        list_book_catalog(thread_id=thread_id, user_id=user_id),
+        doc_ids=doc_ids,
+        scopes=scopes,
+        folder_paths=folder_paths,
+    )
     tokens = tokenize_search_text(query)
     if not entries or not tokens:
         return []

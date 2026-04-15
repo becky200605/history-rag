@@ -1,0 +1,191 @@
+"""Inject a knowledge-directory tree into the system prompt at runtime."""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Awaitable, Callable
+
+from langchain.agents import AgentState
+from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
+from langchain_core.messages import SystemMessage
+
+from src.community.knowledge_base.catalog import (
+    filter_book_catalog_entries,
+    list_book_catalog,
+    render_book_catalog_directory_tree,
+)
+from src.community.knowledge_base.book_metadata import normalize_folder_path
+from src.community.knowledge_base.common import resolve_project_path
+from src.community.knowledge_base.folder_registry import list_folder_paths
+from src.config.knowledge_base_config import get_knowledge_base_config
+from src.config.paths import get_paths
+
+logger = logging.getLogger(__name__)
+KNOWLEDGE_DIRECTORY_TAG = "<knowledge_directory_tree>"
+
+
+def _coerce_runtime_string_list(value: object) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        parsed = [item.strip() for item in value.split(",") if item.strip()]
+        return parsed or None
+    if isinstance(value, (list, tuple, set)):
+        parsed = [str(item).strip() for item in value if str(item).strip()]
+        return parsed or None
+    return None
+
+
+class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
+    """Add a runtime knowledge tree to the system context for source navigation."""
+
+    def _visible_entries(self, request: ModelRequest) -> list:
+        runtime_context = request.runtime.context
+        entries = list_book_catalog(
+            thread_id=runtime_context.get("thread_id"),
+            user_id=runtime_context.get("user_id"),
+        )
+        return filter_book_catalog_entries(
+            entries,
+            doc_ids=_coerce_runtime_string_list(runtime_context.get("selected_doc_ids")),
+            scopes=_coerce_runtime_string_list(runtime_context.get("selected_sources_scope")),
+        )
+
+    def _occupied_folder_paths_by_scope(self, entries: list) -> dict[str, set[str]]:
+        occupied: dict[str, set[str]] = {"user": set(), "global": set()}
+        for entry in entries:
+            scope = str(getattr(entry, "scope", "") or "")
+            if scope not in occupied:
+                continue
+            normalized = normalize_folder_path(getattr(entry, "folder_path", None))
+            if not normalized:
+                continue
+            parts = normalized.split("/")
+            for index in range(1, len(parts) + 1):
+                occupied[scope].add("/".join(parts[:index]))
+        return occupied
+
+    def _build_empty_folder_section(self, request: ModelRequest, entries: list) -> str | None:
+        runtime_context = request.runtime.context
+        if _coerce_runtime_string_list(runtime_context.get("selected_doc_ids")):
+            return None
+
+        selected_scopes = set(_coerce_runtime_string_list(runtime_context.get("selected_sources_scope")) or ["user", "thread", "global"])
+        occupied = self._occupied_folder_paths_by_scope(entries)
+        sections: list[tuple[str, list[str]]] = []
+
+        if "user" in selected_scopes and runtime_context.get("user_id"):
+            user_id = str(runtime_context["user_id"])
+            registry_path = get_paths().user_knowledge_docs_dir(user_id).parent / ".folders.json"
+            user_folders = [
+                folder
+                for folder in list_folder_paths(registry_path)
+                if folder not in occupied["user"]
+            ]
+            if user_folders:
+                sections.append(("用户空文件夹", user_folders))
+
+        if "global" in selected_scopes:
+            docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
+            registry_path = docs_root / ".folders.json"
+            global_folders = [
+                folder
+                for folder in list_folder_paths(registry_path)
+                if folder not in occupied["global"]
+            ]
+            if global_folders:
+                sections.append(("系统知识库空文件夹", global_folders))
+
+        if not sections:
+            return None
+
+        lines = [
+            "<empty_knowledge_folders>",
+            "下面这些空文件夹当前还没有文档，但可以作为归档或后续检索的候选目录：",
+            "",
+        ]
+        for title, folders in sections:
+            lines.append(f"{title}:")
+            for folder in folders:
+                lines.append(f"- {folder}")
+            lines.append("")
+        lines.append("</empty_knowledge_folders>")
+        return "\n".join(lines)
+
+    def _has_directory_tree(self, request: ModelRequest) -> bool:
+        system_content = str(request.system_message.content or "") if request.system_message else ""
+        if KNOWLEDGE_DIRECTORY_TAG in system_content:
+            return True
+        return any(
+            getattr(message, "type", None) == "system"
+            and KNOWLEDGE_DIRECTORY_TAG in str(getattr(message, "content", "") or "")
+            for message in request.messages
+        )
+
+    def _build_directory_block(self, request: ModelRequest) -> SystemMessage | None:
+        try:
+            entries = self._visible_entries(request)
+            directory_tree = render_book_catalog_directory_tree(entries)
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.warning("Failed to build knowledge directory tree: %s", exc)
+            return None
+
+        if not directory_tree:
+            return None
+
+        return SystemMessage(
+            content=(
+                f"{KNOWLEDGE_DIRECTORY_TAG}\n"
+                "下面是当前可见知识资料的目录树。它是导航线索，不是证据。"
+                "请先看目录树，再决定优先去哪些文件夹/书目调用 `book_search` 或 `knowledge_search`。\n\n"
+                f"{directory_tree}\n"
+                "</knowledge_directory_tree>"
+            )
+        )
+
+    def _inject_directory_block(self, request: ModelRequest) -> ModelRequest:
+        if self._has_directory_tree(request):
+            return request
+
+        directory_message = self._build_directory_block(request)
+        try:
+            empty_folder_section = self._build_empty_folder_section(
+                request,
+                self._visible_entries(request),
+            )
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.warning("Failed to build empty-folder section: %s", exc)
+            empty_folder_section = None
+
+        if directory_message is None and empty_folder_section is None:
+            return request
+
+        content_parts: list[str] = []
+        if directory_message is not None:
+            content_parts.append(str(directory_message.content))
+        if empty_folder_section is not None:
+            content_parts.append(empty_folder_section)
+        injected_content = "\n\n".join(content_parts)
+
+        if request.system_message is None:
+            return request.override(system_message=SystemMessage(content=injected_content))
+
+        combined_content = (
+            f"{request.system_message.content}\n\n{injected_content}"
+        )
+        return request.override(system_message=SystemMessage(content=combined_content))
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelCallResult:
+        return handler(self._inject_directory_block(request))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelCallResult:
+        return await handler(self._inject_directory_block(request))

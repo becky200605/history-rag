@@ -830,11 +830,11 @@ export function getFolderDisplayName(name: string) {
 
 export function getCoverTone(title: string) {
   const tones = [
-    "from-slate-900 via-slate-800 to-slate-700",
-    "from-teal-950 via-teal-900 to-cyan-800",
-    "from-emerald-950 via-emerald-900 to-teal-700",
-    "from-sky-950 via-sky-900 to-slate-700",
-    "from-zinc-900 via-stone-800 to-slate-700",
+    "from-stone-900 via-stone-800 to-stone-700",      // 焦墨
+    "from-primary-950 via-primary-900 to-primary/80", // 朱砂
+    "from-amber-950 via-amber-900 to-stone-800",      // 赭石
+    "from-slate-950 via-slate-900 to-slate-800",      // 黛蓝/墨青
+    "from-zinc-900 via-stone-800 to-slate-700",       // 苍灰
   ];
   const charCode = title.charCodeAt(0) || 0;
   return tones[Math.abs(charCode) % tones.length] ?? tones[0];

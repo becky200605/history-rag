@@ -470,7 +470,7 @@ export default function KnowledgeLibraryPage() {
                             className={cn(
                               "grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-3 border-l-2 px-4 py-2 text-left transition",
                               selectedItem?.id === item.id
-                                ? "border-l-[rgb(57,130,152)] bg-slate-50 text-slate-900"
+                                ? "border-l-primary bg-stone-50 text-slate-900"
                                 : "border-l-transparent text-slate-700 hover:bg-slate-50",
                             )}
                           >
@@ -580,7 +580,7 @@ export default function KnowledgeLibraryPage() {
                 取消
               </Button>
               <Button
-                className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
+                className="bg-primary text-white hover:bg-primary/90"
                 onClick={() => void handleUpload()}
                 disabled={uploadMutation.isPending || pendingFiles.length === 0}
               >

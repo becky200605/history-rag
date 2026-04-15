@@ -25,9 +25,12 @@ from src.community.knowledge_base.catalog import (
     REFERENCE_TYPE,
     SPECIALIZED_TYPE,
     BookCatalogEntry,
+    filter_book_catalog_entries,
     list_book_catalog,
+    render_book_catalog_directory_tree,
     search_book_catalog,
 )
+from src.community.knowledge_base.book_metadata import normalize_folder_path
 from src.community.knowledge_base.citations import resolve_result_citation_context
 from src.community.knowledge_base.locator import extract_document_context, locate_document
 
@@ -52,6 +55,22 @@ def _parse_doc_ids(doc_ids: str | None) -> list[str] | None:
     if not doc_ids:
         return None
     parsed = [item.strip() for item in doc_ids.split(",") if item.strip()]
+    return parsed or None
+
+
+def _parse_folder_paths(folder_paths: str | list[str] | tuple[str, ...] | None) -> list[str] | None:
+    if folder_paths is None:
+        return None
+    raw_items = [folder_paths] if isinstance(folder_paths, str) else list(folder_paths)
+    parsed: list[str] = []
+    seen: set[str] = set()
+    for raw_item in raw_items:
+        for candidate in str(raw_item).split(","):
+            normalized = normalize_folder_path(candidate)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            parsed.append(normalized)
     return parsed or None
 
 
@@ -345,6 +364,8 @@ def _format_candidate_brief(candidate: BookCatalogEntry) -> str:
     parts = [candidate.title, f"doc_id={candidate.doc_id}"]
     if candidate.score is not None:
         parts.append(f"相关度={candidate.score:.2f}")
+    if candidate.folder_path:
+        parts.append(f"目录={candidate.folder_path}")
     return " | ".join(parts)
 
 
@@ -383,7 +404,11 @@ def _validate_single_layer_doc_ids(
 
 
 @tool("book_search", parse_docstring=True)
-def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) -> str:
+def book_search_tool(
+    runtime: ToolRuntime[ContextT, ThreadState],
+    query: str,
+    folder_paths: list[str] | None = None,
+) -> str:
     """Search candidate books before full-text retrieval.
 
     Use this tool first for historical/domain questions. It finds likely user
@@ -392,21 +417,53 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
 
     Args:
         query: The user's research question or topic description.
+        folder_paths: Optional folder-path array. When provided, only search
+            books inside these folders or their subfolders.
     """
     thread_id = runtime.context.get("thread_id")
     user_id = runtime.context.get("user_id")
     selected_doc_ids = _runtime_selected_doc_ids(runtime)
-    candidates = search_book_catalog(query, thread_id=thread_id, user_id=user_id, top_k=BOOK_SEARCH_TOP_K)
-    if selected_doc_ids:
-        allowed = set(selected_doc_ids)
-        candidates = [candidate for candidate in candidates if candidate.doc_id in allowed]
+    selected_scopes = _runtime_selected_scopes(runtime)
+    parsed_folder_paths = _parse_folder_paths(folder_paths)
+    visible_entries = filter_book_catalog_entries(
+        list_book_catalog(thread_id=thread_id, user_id=user_id),
+        doc_ids=selected_doc_ids,
+        scopes=selected_scopes,
+        folder_paths=parsed_folder_paths,
+    )
+    candidates = search_book_catalog(
+        query,
+        thread_id=thread_id,
+        user_id=user_id,
+        top_k=BOOK_SEARCH_TOP_K,
+        doc_ids=selected_doc_ids,
+        scopes=selected_scopes,
+        folder_paths=parsed_folder_paths,
+    )
+    directory_tree = render_book_catalog_directory_tree(visible_entries)
     if not candidates:
+        if directory_tree:
+            return "## 资料目录树\n\n" + directory_tree + "\n\n---\n当前范围内没有找到匹配的候选书目。"
         if selected_doc_ids:
             return "当前对话已限定在所选资料范围内，但这些资料里没有找到匹配的候选书目。"
         return "No likely books found for this query."
 
     grouped = _group_book_candidates(candidates)
-    lines = ["## 候选书目", ""]
+    lines = []
+    if directory_tree:
+        lines.extend(
+            [
+                "## 资料目录树",
+                "",
+                "先看目录再决定去哪里找；目录树是导航线索，不是证据。",
+                "",
+                directory_tree,
+                "",
+                "---",
+                "",
+            ]
+        )
+    lines.extend(["## 候选书目", ""])
     section_titles = (
         ("user", "用户书籍"),
         ("thread", "当前线程书籍"),
@@ -448,6 +505,8 @@ def book_search_tool(runtime: ToolRuntime[ContextT, ThreadState], query: str) ->
         lines.append(f"specialized doc_ids: {specialized_doc_ids}")
     if reference_doc_ids:
         lines.append(f"reference doc_ids: {reference_doc_ids}")
+    if parsed_folder_paths:
+        lines.append(f"folder_paths: {', '.join(parsed_folder_paths)}")
     return "\n".join(lines)
 
 
@@ -457,6 +516,7 @@ def knowledge_search_tool(
     query: str,
     doc_ids: str | None = None,
     scopes: str | None = None,
+    folder_paths: list[str] | None = None,
 ) -> str:
     """Search the internal knowledge base for domain-specific information.
 
@@ -478,7 +538,9 @@ def knowledge_search_tool(
     5. `scopes` is a hard filter. If you already pass `doc_ids` from
        `book_search`, do not also force an incompatible scope. When in doubt,
        omit `scopes` and let the `doc_ids` control the search.
-    6. Keep `query` close to the user's wording and key anchors. Preserve
+    6. If the directory tree already makes the likely folders clear, pass
+       `folder_paths` so retrieval stays inside those folders before you widen.
+    7. Keep `query` close to the user's wording and key anchors. Preserve
        book names, people, periods, institutions, years, and policy terms.
        Prefer a sentence-like professional query over a keyword pile-up.
        Do not write a bag of terms like `清代末期财政情况 财政收支结构 财政政策 财政危机`.
@@ -497,6 +559,8 @@ def knowledge_search_tool(
             Prefer this for narrowing to known relevant books.
         scopes: Optional comma-separated hard filters: `user`, `thread`, `global`.
             Only set this when you intentionally want to exclude other scopes.
+        folder_paths: Optional folder-path array. When provided, restrict search
+            to documents under these folders or subfolders.
     """
     try:
         from src.community.knowledge_base.retriever import get_retriever
@@ -514,6 +578,7 @@ def knowledge_search_tool(
             )
         parsed_scopes = _parse_scopes(scopes)
         selected_scopes = _runtime_selected_scopes(runtime)
+        parsed_folder_paths = _parse_folder_paths(folder_paths)
         mixed_layer_error = _validate_single_layer_doc_ids(
             effective_doc_ids,
             thread_id=thread_id,
@@ -533,6 +598,7 @@ def knowledge_search_tool(
             user_id=user_id,
             doc_ids=effective_doc_ids,
             scopes=effective_scopes,
+            folder_paths=parsed_folder_paths,
         )
     except Exception as e:
         return f"Error searching knowledge base: {e}"

@@ -45,10 +45,10 @@ const DEFAULT_REGISTER_FORM: RegisterFormState = {
 };
 
 const INPUT_CLASS_NAME =
-  "border-[rgba(57,130,152,0.18)] bg-[rgb(249,252,252)] text-[rgb(23,89,108)] placeholder:text-slate-400";
+  "border-[#d3c6aa] bg-[#fdf6e3]/50 text-[#222222] placeholder:text-[#657b83] focus:border-[#9c2828] focus:ring-[#9c2828] font-serif";
 
 const PRIMARY_BUTTON_CLASS_NAME =
-  "bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]";
+  "bg-[#9c2828] text-white hover:bg-[#7a1f1f] font-serif font-bold tracking-widest shadow-md transition-all active:scale-95";
 
 function resolveNextPath(nextPath: string | null) {
   if (nextPath?.startsWith("/") !== true) {
@@ -137,33 +137,30 @@ export function AuthForm() {
   };
 
   return (
-    <Card className="w-full max-w-md border-[rgba(57,130,152,0.16)] bg-white/96 shadow-[0_24px_60px_rgba(33,92,110,0.12)]">
-      <CardHeader className="space-y-3">
-        <div className="space-y-1">
-          <CardTitle className="text-2xl text-[rgb(23,89,108)]">用户登录</CardTitle>
-          <CardDescription className="text-sm text-slate-600">
-            先接入最小用户体系，当前支持注册、登录和退出登录。
-          </CardDescription>
-        </div>
+    <Card className="parchment-texture w-full max-w-md border-[#d3c6aa] bg-[#fdfcf0]/95 font-serif shadow-[0_24px_60px_rgba(45,35,20,0.2)]">
+      <CardHeader className="space-y-6 pb-2">
         <Tabs
           value={mode}
+          className="w-full"
           onValueChange={(value) => {
             setMode(value as AuthMode);
             setError("");
           }}
         >
-          <TabsList className="grid w-full grid-cols-2 bg-[rgb(233,244,246)]">
+          <TabsList className="grid w-full grid-cols-2 bg-[#eee8d5]/50 p-1">
             <TabsTrigger
               value="login"
-              className="data-[state=active]:border-[rgba(57,130,152,0.2)] data-[state=active]:bg-white data-[state=active]:text-[rgb(23,89,108)]"
+              className="flex items-center gap-2 data-[state=active]:bg-[#fdfcf0] data-[state=active]:text-blue-600 data-[state=active]:shadow-sm"
             >
-              登录
+              <div className="cloud-pattern size-4 opacity-70" />
+              <span className="text-lg font-bold">登录</span>
             </TabsTrigger>
             <TabsTrigger
               value="register"
-              className="data-[state=active]:border-[rgba(57,130,152,0.2)] data-[state=active]:bg-white data-[state=active]:text-[rgb(23,89,108)]"
+              className="flex items-center gap-2 data-[state=active]:bg-[#fdfcf0] data-[state=active]:text-blue-600 data-[state=active]:shadow-sm"
             >
-              注册
+              <div className="cloud-pattern size-4 opacity-70" />
+              <span className="text-lg font-bold">注册</span>
             </TabsTrigger>
           </TabsList>
 

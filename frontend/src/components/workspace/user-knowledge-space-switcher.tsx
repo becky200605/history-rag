@@ -118,7 +118,7 @@ export function UserKnowledgeSpaceSwitcher({
             </Button>
             <Button
               disabled={createMutation.isPending}
-              className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
+              className="bg-primary text-white hover:bg-primary/90"
               onClick={() => void handleCreate()}
             >
               {createMutation.isPending ? (

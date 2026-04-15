@@ -47,13 +47,13 @@ export const enUS: Translations = {
 
   // Welcome
   welcome: {
-    greeting: "Hello, again!",
+    greeting: "Welcome to the Scholarly Pavilion.",
     description:
-      "Welcome to 🦌 DeerFlow, an open source super agent. With built-in and custom skills, DeerFlow helps you search on the web, analyze data, and generate artifacts like slides, web pages and do almost anything.",
+      "Within these digital halls lie the records of fiscal lineages across the ages. We stand ready to assist your inquiry into the deep currents of history.",
 
-    createYourOwnSkill: "Create Your Own Skill",
+    createYourOwnSkill: "Forge New Pathways",
     createYourOwnSkillDescription:
-      "Create your own skill to release the power of DeerFlow. With customized skills,\nDeerFlow can help you search on the web, analyze data, and generate\n artifacts like slides, web pages and do almost anything.",
+      "Design your proprietary strategies to navigate the vast sea of records and establish your own historical thesis.",
   },
 
   // Clipboard
@@ -66,9 +66,9 @@ export const enUS: Translations = {
 
   // Input Box
   inputBox: {
-    placeholder: "How can I assist you today?",
+    placeholder: "Inquire within... your command is awaited.",
     createSkillPrompt:
-      "We're going to build a new skill step by step with `skill-creator`. To start, what do you want this skill to do?",
+      "Grant me the blueprints of your strategy, and I shall labor to fulfill its structure and vision.",
     addAttachments: "Add attachments",
     mode: "Mode",
     flashMode: "Flash",

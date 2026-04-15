@@ -269,8 +269,8 @@ export function KnowledgeMentionTextarea({
     <div className="relative w-full self-stretch">
       {activeMention && (
         <div className="absolute right-0 bottom-[calc(100%+8px)] left-0 z-40">
-          <div className="overflow-hidden rounded-2xl border border-[rgba(57,130,152,0.18)] bg-white/97 shadow-lg backdrop-blur-sm">
-            <div className="flex items-center gap-2 border-b border-[rgba(57,130,152,0.12)] px-3 py-2 text-xs text-slate-500">
+          <div className="overflow-hidden rounded-sm border border-primary/20 bg-[#fdfbf6] shadow-lg backdrop-blur-sm">
+            <div className="flex items-center gap-2 border-b border-primary/10 px-3 py-2 text-xs text-stone-500 font-serif">
               <LibraryBigIcon className="size-3.5" />
               输入书名后按回车引用，本轮检索将只限制在这些 `@` 书籍内
             </div>
@@ -298,10 +298,10 @@ export function KnowledgeMentionTextarea({
                           }}
                           onSelect={() => selectMention(item)}
                           className={cn(
-                            "items-start gap-3 rounded-xl px-3 py-2.5",
+                            "items-start gap-3 rounded-sm px-3 py-2.5 font-serif",
                             filteredMentionables[activeIndex]?.doc_id ===
                               item.doc_id &&
-                              "bg-[rgb(241,248,249)] text-[rgb(23,89,108)]",
+                                "bg-primary/10 text-primary",
                           )}
                         >
                           {item.groupLabel === "个人知识库" ? (
@@ -310,10 +310,10 @@ export function KnowledgeMentionTextarea({
                             <BookOpenTextIcon className="mt-0.5 size-4 shrink-0" />
                           )}
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium">
+                            <div className="truncate text-sm font-bold">
                               {item.bookTitle}
                             </div>
-                            <div className="truncate text-xs text-slate-500">
+                            <div className="truncate text-xs text-stone-500">
                               {item.subtitle}
                             </div>
                           </div>
@@ -333,23 +333,23 @@ export function KnowledgeMentionTextarea({
             <HoverCardTrigger asChild>
               <button
                 type="button"
-                className="inline-flex max-w-full items-center rounded-full border border-[rgba(57,130,152,0.18)] bg-[rgb(241,248,249)] px-3 py-1 text-xs font-medium text-[rgb(23,89,108)] transition-colors hover:bg-[rgb(232,244,246)]"
+                className="inline-flex max-w-full items-center rounded-sm border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-serif font-bold text-primary transition-colors hover:bg-primary/10"
               >
                 <span className="truncate">{selectedSummary}</span>
               </button>
             </HoverCardTrigger>
             <HoverCardContent
               align="start"
-              className="w-80 rounded-2xl border border-[rgba(57,130,152,0.18)] bg-white/97 p-3 shadow-lg backdrop-blur-sm"
+              className="w-80 rounded-sm border border-primary/20 bg-[#fdfbf6] p-3 shadow-lg backdrop-blur-sm font-serif"
             >
-              <div className="mb-2 text-xs font-medium tracking-[0.08em] text-[rgb(23,89,108)] uppercase">
+              <div className="mb-2 text-xs font-bold tracking-[0.08em] text-primary uppercase">
                 已选资料范围
               </div>
               <div className="space-y-1.5">
                 {selectedMaterials.map((material) => (
                   <div
                     key={material.doc_id}
-                    className="rounded-xl bg-[rgb(247,250,251)] px-3 py-2 text-sm text-slate-700"
+                    className="rounded-sm bg-stone-50/80 border border-stone-200 px-3 py-2 text-sm text-stone-800"
                   >
                     {material.title}
                   </div>

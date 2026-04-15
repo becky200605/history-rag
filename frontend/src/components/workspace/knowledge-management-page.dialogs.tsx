@@ -60,7 +60,7 @@ export function UploadDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)]/95">
+      <DialogContent className="max-w-2xl border-accent/20 bg-white shadow-xl">
         <DialogHeader>
           <DialogTitle className="text-slate-900">
             上传到{targetFolderLabel}
@@ -73,7 +73,7 @@ export function UploadDialog({
         </DialogHeader>
 
         <div className="grid gap-4">
-          <div className="rounded-xl border border-[rgba(57,130,152,0.14)] bg-white p-4">
+          <div className="rounded-xl border border-accent/10 bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-medium text-slate-900">选择文件</div>
@@ -84,7 +84,7 @@ export function UploadDialog({
               <Button
                 type="button"
                 variant="outline"
-                className="border-[rgba(57,130,152,0.18)] bg-white text-[rgb(23,89,108)]"
+                className="border-primary/20 bg-white text-primary hover:bg-primary/5"
                 onClick={onPickFiles}
                 disabled={isPending}
               >
@@ -92,7 +92,7 @@ export function UploadDialog({
               </Button>
             </div>
 
-            <div className="mt-3 rounded-lg border border-dashed border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)] p-3">
+            <div className="mt-3 rounded-lg border border-dashed border-accent/20 bg-stone-50/50 p-3">
               {form.files.length === 0 ? (
                 <div className="text-sm text-slate-500">还没有选择文件。</div>
               ) : (
@@ -110,7 +110,7 @@ export function UploadDialog({
             </div>
           </div>
 
-          <div className="grid gap-3 rounded-xl border border-[rgba(57,130,152,0.14)] bg-white p-4 md:grid-cols-3">
+          <div className="grid gap-3 rounded-xl border border-accent/10 bg-white p-4 md:grid-cols-3">
             <SelectField
               label="文档类型"
               value={form.documentTypeHint}
@@ -153,7 +153,7 @@ export function UploadDialog({
           </Button>
           <Button
             type="button"
-            className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
+            className="bg-primary text-white hover:bg-primary/90"
             onClick={onSubmit}
             disabled={isPending || form.files.length === 0}
           >
@@ -187,7 +187,7 @@ export function CreateFolderDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)]/95">
+      <DialogContent className="max-w-md border-accent/20 bg-white shadow-xl">
         <DialogHeader>
           <DialogTitle className="text-slate-900">{title}</DialogTitle>
           <DialogDescription className="text-slate-600">{description}</DialogDescription>
@@ -209,7 +209,7 @@ export function CreateFolderDialog({
           </Button>
           <Button
             type="button"
-            className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
+            className="bg-primary text-white hover:bg-primary/90"
             onClick={onSubmit}
             disabled={isPending}
           >
@@ -241,7 +241,7 @@ export function MoveFileDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)]/95">
+      <DialogContent className="max-w-md border-accent/20 bg-white shadow-xl">
         <DialogHeader>
           <DialogTitle className="text-slate-900">移动文件</DialogTitle>
           <DialogDescription className="text-slate-600">
@@ -271,7 +271,7 @@ export function MoveFileDialog({
           </Button>
           <Button
             type="button"
-            className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
+            className="bg-primary text-white hover:bg-primary/90"
             onClick={onSubmit}
             disabled={isPending || !value}
           >
@@ -309,7 +309,7 @@ export function MetadataDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl border-[rgba(57,130,152,0.16)] bg-[rgb(247,251,252)]/95">
+      <DialogContent className="max-w-2xl border-accent/20 bg-white shadow-xl">
         <DialogHeader>
           <DialogTitle className="text-slate-900">修改书籍标签</DialogTitle>
           <DialogDescription className="text-slate-600">
@@ -455,7 +455,7 @@ export function MetadataDialog({
           </Button>
           <Button
             type="button"
-            className="bg-[rgb(57,130,152)] text-white hover:bg-[rgb(49,113,132)]"
+            className="bg-primary text-white hover:bg-primary/90"
             onClick={onSave}
             disabled={isSaving || isRegenerating}
           >

@@ -824,7 +824,7 @@ export function KnowledgePdfReader({
             <div className="flex items-center gap-1.5 px-2 text-sm font-medium text-slate-600">
               <Input
                 type="text"
-                className="h-7 w-12 rounded-md border-slate-200 bg-white px-1 text-center text-xs shadow-sm focus-visible:ring-emerald-500/30"
+                className="h-7 w-12 rounded-md border-slate-200 bg-white px-1 text-center text-xs shadow-sm focus-visible:ring-primary/30"
                 value={
                   pageInputValue !== ""
                     ? pageInputValue
@@ -877,7 +877,7 @@ export function KnowledgePdfReader({
                   className={cn(
                     "h-7 rounded-lg px-2.5 text-[11px] font-bold transition-all",
                     sourceLanguage === option.value
-                      ? "bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200/30"
+                      ? "bg-white text-primary shadow-sm ring-1 ring-slate-200/30"
                       : "text-slate-500 hover:text-slate-700",
                   )}
                   onClick={() => setSourceLanguage(option.value)}
@@ -895,7 +895,7 @@ export function KnowledgePdfReader({
               className={cn(
                 "h-7 rounded-lg px-3 text-[11px] font-bold transition-all",
                 showStructure
-                  ? "bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200/30"
+                  ? "bg-white text-primary shadow-sm ring-1 ring-slate-200/30"
                   : "text-slate-500 hover:text-slate-700",
               )}
               onClick={() => setShowStructure((current) => !current)}
@@ -909,7 +909,7 @@ export function KnowledgePdfReader({
               className={cn(
                 "h-7 rounded-lg px-3 text-[11px] font-bold transition-all",
                 mode === "translation"
-                  ? "bg-white text-emerald-600 shadow-sm ring-1 ring-slate-200/30"
+                  ? "bg-white text-primary shadow-sm ring-1 ring-slate-200/30"
                   : "text-slate-500 hover:text-slate-700",
               )}
               onClick={() =>
@@ -977,8 +977,8 @@ export function KnowledgePdfReader({
                           className={cn(
                             "absolute rounded-[4px] border-2 transition-all duration-200",
                             isActive
-                              ? "border-emerald-500 bg-emerald-400/15 shadow-[0_0_12px_rgba(16,185,129,0.2)]"
-                              : "border-transparent bg-transparent hover:border-emerald-400/80 hover:bg-emerald-300/10",
+                              ? "border-primary bg-primary/10 shadow-[0_0_12px_rgba(126,51,46,0.15)]"
+                              : "border-transparent bg-transparent hover:border-primary/60 hover:bg-primary/5",
                             item.source === "previous-spill" && "border-dashed",
                           )}
                           style={{
@@ -1106,8 +1106,8 @@ export function KnowledgePdfReader({
                               className={cn(
                                 "absolute rounded-lg border text-left transition-all duration-200",
                                 isActive
-                                  ? "border-emerald-300 bg-emerald-50/80 shadow-[0_4px_12px_-2px_rgba(16,185,129,0.12)]"
-                                  : "border-transparent hover:border-emerald-200/60 hover:bg-emerald-50/40",
+                                  ? "border-primary/40 bg-primary/5 shadow-[0_4px_12px_-2px_rgba(126,51,46,0.1)]"
+                                  : "border-transparent hover:border-primary/30 hover:bg-stone-50/40",
                               )}
                               style={{
                                 left: `${item.textLeft - 4}px`,

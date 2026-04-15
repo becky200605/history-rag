@@ -8,6 +8,7 @@ from src.agents.lead_agent.prompt import apply_prompt_template
 from src.agents.middlewares.citation_enforcement_middleware import CitationEnforcementMiddleware
 from src.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from src.agents.middlewares.dangling_tool_call_middleware import DanglingToolCallMiddleware
+from src.agents.middlewares.knowledge_directory_middleware import KnowledgeDirectoryMiddleware
 from src.agents.middlewares.memory_middleware import MemoryMiddleware
 from src.agents.middlewares.subagent_limit_middleware import SubagentLimitMiddleware
 from src.agents.middlewares.thread_data_middleware import ThreadDataMiddleware
@@ -215,7 +216,14 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
     Returns:
         List of middleware instances.
     """
-    middlewares = [ThreadDataMiddleware(), UploadsMiddleware(), SandboxMiddleware(), DanglingToolCallMiddleware(), CitationEnforcementMiddleware()]
+    middlewares = [
+        ThreadDataMiddleware(),
+        UploadsMiddleware(),
+        KnowledgeDirectoryMiddleware(),
+        SandboxMiddleware(),
+        DanglingToolCallMiddleware(),
+        CitationEnforcementMiddleware(),
+    ]
 
     # Add summarization middleware if enabled
     summarization_middleware = _create_summarization_middleware()

@@ -748,9 +748,9 @@ export function KnowledgeSidePane({
                         ? "border-dashed"
                         : "border-solid",
                       isActive
-                        ? "border-emerald-400 bg-emerald-50/80 shadow-[0_4px_12px_-2px_rgba(16,185,129,0.12)]"
+                        ? "border-primary bg-primary/5 shadow-[0_4px_12px_-2px_rgba(126,51,46,0.1)]"
                         : isHighlightable
-                          ? "border-transparent bg-transparent hover:border-emerald-200/60 hover:bg-emerald-50/40"
+                          ? "border-transparent bg-transparent hover:border-primary/30 hover:bg-stone-50/40"
                           : "border-transparent bg-transparent",
                     )}
                     style={{
@@ -864,7 +864,7 @@ export function KnowledgeSidePane({
           <div className="sticky top-0 z-10 rounded-xl border border-slate-200 bg-white/90 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 backdrop-blur-sm">
             原文结构
           </div>
-          <div className="sticky top-0 z-10 rounded-xl border border-emerald-200 bg-white/90 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-emerald-600 backdrop-blur-sm">
+          <div className="sticky top-0 z-10 rounded-xl border border-primary/20 bg-white/90 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-primary backdrop-blur-sm">
             中文翻译
           </div>
 
@@ -917,9 +917,9 @@ export function KnowledgeSidePane({
                         "rounded-xl border bg-white p-4 text-left transition-all duration-200 shadow-sm",
                         isExcerptable && "cursor-context-menu",
                         isActive
-                          ? "border-emerald-300 ring-1 ring-emerald-300 bg-emerald-50/20"
+                          ? "border-primary/40 ring-1 ring-primary/40 bg-primary/5"
                           : isHighlightable
-                            ? "border-slate-200 hover:border-emerald-200/60 hover:shadow-md"
+                            ? "border-slate-200 hover:border-primary/30 hover:shadow-md"
                             : "border-slate-200",
                       )}
                       {...interactionProps}
@@ -931,20 +931,19 @@ export function KnowledgeSidePane({
                         {paragraph.text}
                       </div>
                     </div>
-
                     <div
                       className={cn(
-                        "rounded-xl border p-4 text-left transition-all duration-200 shadow-[0_4px_12px_rgba(16,185,129,0.03)]",
+                        "rounded-xl border p-4 text-left transition-all duration-200 shadow-sm",
                         isExcerptable && "cursor-context-menu",
                         isActive
-                          ? "border-emerald-400/60 bg-emerald-100/30 ring-1 ring-emerald-300/50 shadow-md"
+                          ? "border-primary/40 bg-primary/10 ring-1 ring-primary/20 shadow-md"
                           : isHighlightable
-                            ? "border-emerald-100 bg-emerald-50/30 hover:border-emerald-300/60 hover:bg-emerald-50/60"
-                            : "border-emerald-100 bg-emerald-50/30",
+                            ? "border-stone-100 bg-stone-50/30 hover:border-primary/30 hover:bg-stone-50/60"
+                            : "border-stone-100 bg-stone-50/30",
                       )}
                       {...interactionProps}
                     >
-                      <div className="mb-2 text-xs font-medium text-emerald-700/80">
+                      <div className="mb-2 text-xs font-medium text-primary/80">
                         第 {paragraph.paragraph_no ?? 1} 段译文
                       </div>
                       {translationError && !translationMap ? (
@@ -952,12 +951,12 @@ export function KnowledgeSidePane({
                           {translationError}
                         </div>
                       ) : translationLoading && !translationMap ? (
-                        <div className="flex min-h-[96px] items-center justify-center rounded-xl border border-emerald-200/70 bg-white/70 text-sm text-emerald-700">
+                        <div className="flex min-h-[96px] items-center justify-center rounded-xl border border-primary/20 bg-white/70 text-sm text-primary">
                           <Loader2Icon className="mr-2 size-4 animate-spin" />
                           正在翻译本页为中文...
                         </div>
                       ) : (
-                        <div className="text-sm leading-7 break-words whitespace-pre-wrap text-emerald-900">
+                        <div className="text-sm leading-7 break-words whitespace-pre-wrap text-stone-900">
                           {translationText || "该段翻译暂未返回结果。"}
                         </div>
                       )}

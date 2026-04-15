@@ -369,11 +369,15 @@ knowledge_base:
     use_tls: $MINERU_GRPC_USE_TLS
     api_token: null
     model_version: $MINERU_MODEL_VERSION
-    request_timeout: 3600
-    keepalive_time_ms: ${MINERU_GRPC_KEEPALIVE_TIME_MS:-120000}
-    keepalive_timeout_ms: ${MINERU_GRPC_KEEPALIVE_TIMEOUT_MS:-60000}
+    request_timeout: ${MINERU_GRPC_REQUEST_TIMEOUT:-14400}
+    keepalive_time_ms: ${MINERU_GRPC_KEEPALIVE_TIME_MS:-180000}
+    keepalive_timeout_ms: ${MINERU_GRPC_KEEPALIVE_TIMEOUT_MS:-180000}
     keepalive_permit_without_calls: ${MINERU_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS:-true}
     max_message_bytes: ${MINERU_GRPC_MAX_MESSAGE_BYTES:-536870912}
+    enable_pdf_chunking: ${MINERU_GRPC_ENABLE_PDF_CHUNKING:-true}
+    pdf_split_page_threshold: ${MINERU_GRPC_PDF_SPLIT_PAGE_THRESHOLD:-1200}
+    pdf_chunk_page_count: ${MINERU_GRPC_PDF_CHUNK_PAGE_COUNT:-250}
+    pdf_split_size_threshold_bytes: ${MINERU_GRPC_PDF_SPLIT_SIZE_THRESHOLD_BYTES:-268435456}
 
   book_metadata:
     enabled: true

@@ -29,17 +29,23 @@ export default async function AuthPage({
   }
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[rgb(244,249,250)] px-6 py-12">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(57,130,152,0.22),_transparent_34%),radial-gradient(circle_at_bottom,_rgba(57,130,152,0.14),_transparent_30%)]" />
-      <div className="absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(57,130,152,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(57,130,152,0.08)_1px,transparent_1px)] [background-size:32px_32px]" />
-      <div className="relative z-10 w-full">
-        <div className="mx-auto mb-8 max-w-md text-center">
-          <p className="text-sm tracking-[0.3em] text-[rgb(57,130,152)] uppercase">
-            History RAG
-          </p>
-          <h1 className="mt-3 text-4xl font-semibold tracking-tight text-[rgb(23,89,108)]">
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden font-serif px-6 py-12">
+      <div
+        className="absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
+        style={{
+          backgroundImage: 'url("/historical_parchment_bg.png")',
+          filter: "brightness(0.7)",
+        }}
+      />
+      <div className="absolute inset-0 z-0 bg-black/30" />
+      <div className="relative z-10 w-full mb-12">
+        <div className="mx-auto mb-12 max-w-md text-center">
+          <h1 className="mt-3 text-5xl font-bold tracking-widest text-[#fdf6e3] drop-shadow-lg">
             财政历史智能知识库
           </h1>
+          <p className="mt-4 text-lg font-medium tracking-[0.2em] text-[#fdf6e3]/80 uppercase drop-shadow-md">
+            History RAG System
+          </p>
         </div>
         <div className="mx-auto flex max-w-md justify-center">
           <AuthForm />

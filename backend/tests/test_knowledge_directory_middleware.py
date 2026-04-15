@@ -1,0 +1,166 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+from dataclasses import dataclass, replace
+from pathlib import Path
+from types import ModuleType
+from types import SimpleNamespace
+
+from langchain_core.messages import SystemMessage
+
+from src.community.knowledge_base.catalog import BookCatalogEntry
+
+if "langchain.agents" not in sys.modules:
+    langchain_agents = ModuleType("langchain.agents")
+
+    class _DummyAgentState(dict):
+        pass
+
+    langchain_agents.AgentState = _DummyAgentState
+    sys.modules["langchain.agents"] = langchain_agents
+
+if "langchain.agents.middleware" not in sys.modules:
+    langchain_agents_middleware = ModuleType("langchain.agents.middleware")
+
+    class _DummyAgentMiddleware:
+        def __class_getitem__(cls, _item):
+            return cls
+
+    langchain_agents_middleware.AgentMiddleware = _DummyAgentMiddleware
+    sys.modules["langchain.agents.middleware"] = langchain_agents_middleware
+
+if "langchain.agents.middleware.types" not in sys.modules:
+    langchain_agents_middleware_types = ModuleType("langchain.agents.middleware.types")
+    langchain_agents_middleware_types.ModelCallResult = object
+    langchain_agents_middleware_types.ModelRequest = object
+    langchain_agents_middleware_types.ModelResponse = object
+    sys.modules["langchain.agents.middleware.types"] = langchain_agents_middleware_types
+
+_MIDDLEWARE_SPEC = importlib.util.spec_from_file_location(
+    "test_knowledge_directory_middleware_module",
+    Path(__file__).parent.parent / "src/agents/middlewares/knowledge_directory_middleware.py",
+)
+knowledge_directory_middleware = importlib.util.module_from_spec(_MIDDLEWARE_SPEC)
+assert _MIDDLEWARE_SPEC and _MIDDLEWARE_SPEC.loader
+_MIDDLEWARE_SPEC.loader.exec_module(knowledge_directory_middleware)
+KnowledgeDirectoryMiddleware = knowledge_directory_middleware.KnowledgeDirectoryMiddleware
+
+
+@dataclass(frozen=True)
+class _DummyRequest:
+    runtime: object
+    system_message: SystemMessage | None
+    messages: list[object]
+
+    def override(self, **overrides):
+        return replace(self, **overrides)
+
+
+def test_knowledge_directory_middleware_injects_tree_into_system_message(monkeypatch) -> None:
+    middleware = KnowledgeDirectoryMiddleware()
+    entries = [
+        BookCatalogEntry(
+            doc_id="uk_1",
+            title="晚清财政史料",
+            filename="late-qing.pdf",
+            scope="user",
+            source_path="/tmp/late-qing.pdf",
+            source_url="/api/secure-knowledge/users/me/knowledge/docs/late-qing.pdf",
+            original_url=None,
+            preview="",
+            search_text="晚清财政史料 财政史 清代 晚清",
+            search_tokens=["晚清财政史料", "财政史", "清代", "晚清"],
+            type="user",
+            folder_path="财政史/清代/晚清",
+        )
+    ]
+    monkeypatch.setattr(
+        knowledge_directory_middleware,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: entries,
+    )
+
+    captured: dict[str, object] = {}
+
+    def handler(request):
+        captured["system_message"] = request.system_message
+        return "ok"
+
+    request = _DummyRequest(
+        runtime=SimpleNamespace(context={"thread_id": "thread-1", "user_id": "user-1"}),
+        system_message=SystemMessage(content="base-system"),
+        messages=[],
+    )
+
+    result = middleware.wrap_model_call(request, handler)
+
+    assert result == "ok"
+    system_message = captured["system_message"]
+    assert isinstance(system_message, SystemMessage)
+    assert "base-system" in str(system_message.content)
+    assert "<knowledge_directory_tree>" in str(system_message.content)
+    assert "用户书籍/" in str(system_message.content)
+    assert "财政史/" in str(system_message.content)
+    assert "晚清财政史料 [doc_id=uk_1]" in str(system_message.content)
+
+
+def test_knowledge_directory_middleware_injects_empty_folder_candidates(monkeypatch, tmp_path) -> None:
+    middleware = KnowledgeDirectoryMiddleware()
+    monkeypatch.setattr(
+        knowledge_directory_middleware,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [],
+    )
+    monkeypatch.setattr(
+        knowledge_directory_middleware,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(docs_path=str(tmp_path / "docs")),
+    )
+    monkeypatch.setattr(
+        knowledge_directory_middleware,
+        "resolve_project_path",
+        lambda path: tmp_path / "docs",
+    )
+    monkeypatch.setattr(
+        knowledge_directory_middleware,
+        "get_paths",
+        lambda: SimpleNamespace(
+            user_knowledge_docs_dir=lambda user_id: tmp_path / "users" / user_id / "knowledge" / "docs"
+        ),
+    )
+
+    def fake_list_folder_paths(path):
+        path_text = str(path)
+        if "users/user-1" in path_text:
+            return ["用户资料/未整理"]
+        return ["系统资料/待归档"]
+
+    monkeypatch.setattr(
+        knowledge_directory_middleware,
+        "list_folder_paths",
+        fake_list_folder_paths,
+    )
+
+    captured: dict[str, object] = {}
+
+    def handler(request):
+        captured["system_message"] = request.system_message
+        return "ok"
+
+    request = _DummyRequest(
+        runtime=SimpleNamespace(context={"thread_id": "thread-1", "user_id": "user-1"}),
+        system_message=SystemMessage(content="base-system"),
+        messages=[],
+    )
+
+    result = middleware.wrap_model_call(request, handler)
+
+    assert result == "ok"
+    system_message = captured["system_message"]
+    assert isinstance(system_message, SystemMessage)
+    assert "<empty_knowledge_folders>" in str(system_message.content)
+    assert "用户空文件夹" in str(system_message.content)
+    assert "用户资料/未整理" in str(system_message.content)
+    assert "系统知识库空文件夹" in str(system_message.content)
+    assert "系统资料/待归档" in str(system_message.content)

@@ -80,6 +80,67 @@ def list_folder_paths(path: Path) -> list[str]:
     return expand_folder_paths(entry.get("path") for entry in load_folder_registry(path))
 
 
+def render_folder_tree(
+    *,
+    folder_paths: Iterable[str | None] = (),
+    file_entries: Iterable[tuple[str | None, str]] = (),
+) -> str | None:
+    """Render folders plus optional files as a simple logical tree."""
+    tree: dict[str, Any] = {}
+
+    def _node_children(node: dict[str, Any]) -> dict[str, Any]:
+        return node.setdefault("children", {})
+
+    def _node_files(node: dict[str, Any]) -> list[str]:
+        return node.setdefault("files", [])
+
+    normalized_folder_paths = expand_folder_paths(folder_paths)
+    for folder_path in normalized_folder_paths:
+        node = tree
+        for segment in folder_path.split("/"):
+            node = _node_children(node).setdefault(segment, {})
+
+    seen_files: set[tuple[str | None, str]] = set()
+    for raw_folder_path, raw_filename in file_entries:
+        filename = str(raw_filename or "").strip()
+        if not filename:
+            continue
+        normalized_folder_path = normalize_folder_path(raw_folder_path)
+        dedupe_key = (normalized_folder_path, filename)
+        if dedupe_key in seen_files:
+            continue
+        seen_files.add(dedupe_key)
+
+        node = tree
+        if normalized_folder_path:
+            for segment in normalized_folder_path.split("/"):
+                node = _node_children(node).setdefault(segment, {})
+        files = _node_files(node)
+        if filename not in files:
+            files.append(filename)
+
+    if not tree:
+        return None
+
+    lines = ["."]
+
+    def _render(node: dict[str, Any], prefix: str = "") -> None:
+        folders = sorted(_node_children(node).items(), key=lambda item: item[0])
+        files = sorted(_node_files(node))
+        entries: list[tuple[str, str, Any]] = [("folder", name, child) for name, child in folders]
+        entries.extend(("file", name, None) for name in files)
+
+        for index, (entry_type, name, child) in enumerate(entries):
+            is_last = index == len(entries) - 1
+            branch = "`-- " if is_last else "|-- "
+            lines.append(f"{prefix}{branch}{name}{'/' if entry_type == 'folder' else ''}")
+            if entry_type == "folder":
+                _render(child, prefix + ("    " if is_last else "|   "))
+
+    _render(tree)
+    return "\n".join(lines)
+
+
 def ensure_folder_path(path: Path, folder_path: str) -> list[str]:
     normalized = normalize_folder_path(folder_path)
     if not normalized:

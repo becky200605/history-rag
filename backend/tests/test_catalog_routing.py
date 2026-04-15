@@ -105,6 +105,104 @@ def test_search_book_catalog_reads_generated_sidecar_metadata(tmp_path, monkeypa
     assert results[0].metadata_source is not None
 
 
+def test_search_book_catalog_can_route_by_folder_path(tmp_path, monkeypatch) -> None:
+    docs_root = tmp_path / "knowledge" / "docs"
+    docs_root.mkdir(parents=True)
+    (docs_root / "late_qing_finance.md").write_text("# 晚清财政\n厘金与关税", encoding="utf-8")
+    record = build_book_metadata_record(
+        source_filename="late_qing_finance.md",
+        source_title="late_qing_finance",
+        page_count=12,
+        prompt_input={
+            "source_filename": "late_qing_finance.md",
+            "title": "late_qing_finance",
+            "page_count": 12,
+            "selected_pages": [],
+            "selection_notes": [],
+        },
+        suggestion={
+            "title": "晚清财政史料",
+            "type": {"value": "specialized", "confidence": 0.92, "evidence": "目录"},
+            "folder": {"value": "财政史/清代/晚清", "confidence": 0.91, "evidence": "目录"},
+            "summary": {"value": "晚清厘金与关税专题。", "confidence": 0.8, "evidence": "样本"},
+        },
+    )
+    save_book_metadata(docs_root, "late_qing_finance.md", record)
+
+    monkeypatch.setattr(
+        catalog_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(docs_path=str(docs_root)),
+    )
+
+    results = search_book_catalog("晚清 财政史 清代", top_k=1)
+
+    assert results[0].folder_path == "财政史/清代/晚清"
+    assert results[0].filename == "late_qing_finance.md"
+    assert results[0].type == "specialized"
+
+
+def test_search_book_catalog_folder_paths_hard_filter(tmp_path, monkeypatch) -> None:
+    docs_root = tmp_path / "knowledge" / "docs"
+    docs_root.mkdir(parents=True)
+    (docs_root / "qing_finance.md").write_text("# 清代财政\n", encoding="utf-8")
+    (docs_root / "song_finance.md").write_text("# 宋代财政\n", encoding="utf-8")
+    save_book_metadata(
+        docs_root,
+        "qing_finance.md",
+        build_book_metadata_record(
+            source_filename="qing_finance.md",
+            source_title="qing_finance",
+            page_count=10,
+            prompt_input={
+                "source_filename": "qing_finance.md",
+                "title": "qing_finance",
+                "page_count": 10,
+                "selected_pages": [],
+                "selection_notes": [],
+            },
+            suggestion={
+                "folder": {"value": "财政史/清代", "confidence": 0.9, "evidence": "目录"},
+                "type": {"value": "specialized", "confidence": 0.9, "evidence": "目录"},
+            },
+        ),
+    )
+    save_book_metadata(
+        docs_root,
+        "song_finance.md",
+        build_book_metadata_record(
+            source_filename="song_finance.md",
+            source_title="song_finance",
+            page_count=10,
+            prompt_input={
+                "source_filename": "song_finance.md",
+                "title": "song_finance",
+                "page_count": 10,
+                "selected_pages": [],
+                "selection_notes": [],
+            },
+            suggestion={
+                "folder": {"value": "财政史/宋代", "confidence": 0.9, "evidence": "目录"},
+                "type": {"value": "specialized", "confidence": 0.9, "evidence": "目录"},
+            },
+        ),
+    )
+
+    monkeypatch.setattr(
+        catalog_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(docs_path=str(docs_root)),
+    )
+
+    results = search_book_catalog(
+        "财政史",
+        top_k=5,
+        folder_paths=["财政史/清代"],
+    )
+
+    assert [item.filename for item in results] == ["qing_finance.md"]
+
+
 def test_search_book_catalog_broad_query_keeps_core_and_specialized_books(tmp_path, monkeypatch) -> None:
     docs_root = tmp_path / "knowledge" / "docs"
     docs_root.mkdir(parents=True)
@@ -253,11 +351,15 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     monkeypatch.setattr(
         tools_module,
         "search_book_catalog",
-        lambda query, thread_id=None, user_id=None, top_k=8: candidates,
+        lambda query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None: candidates,
     )
+    monkeypatch.setattr(tools_module, "list_book_catalog", lambda thread_id=None, user_id=None: candidates)
 
     output = tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
 
+    assert "## 资料目录树" in output
+    assert "用户书籍/" in output
+    assert "系统知识库/" in output
     assert "### 用户书籍" in output
     assert "### 核心通用书" in output
     assert "### 专题支撑书" in output
@@ -275,7 +377,7 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
 def test_book_search_tool_uses_larger_top_k(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_search(query, thread_id=None, user_id=None, top_k=8):
+    def fake_search(query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None):
         captured["top_k"] = top_k
         return []
 
@@ -290,12 +392,13 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class _DummyRetriever:
-        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None):
+        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None, folder_paths=None):
             captured["query"] = query
             captured["thread_id"] = thread_id
             captured["user_id"] = user_id
             captured["doc_ids"] = doc_ids
             captured["scopes"] = scopes
+            captured["folder_paths"] = folder_paths
             return []
 
     retriever_stub = ModuleType("src.community.knowledge_base.retriever")
@@ -341,6 +444,27 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
 
     assert captured["doc_ids"] == ["global-doc", "global-doc-2"]
     assert captured["scopes"] == ["global"]
+
+
+def test_knowledge_search_tool_forwards_folder_paths(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _DummyRetriever:
+        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None, folder_paths=None):
+            captured["folder_paths"] = folder_paths
+            return []
+
+    retriever_stub = ModuleType("src.community.knowledge_base.retriever")
+    retriever_stub.get_retriever = lambda: _DummyRetriever()
+    monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
+
+    tools_module.knowledge_search_tool.func(
+        SimpleNamespace(context={}),
+        "晚清财政情况",
+        folder_paths=["财政史/清代", "财政史/晚清"],
+    )
+
+    assert captured["folder_paths"] == ["财政史/清代", "财政史/晚清"]
 
 
 def test_knowledge_search_tool_rejects_mixed_layer_doc_ids(monkeypatch) -> None:
@@ -394,7 +518,7 @@ def test_knowledge_search_tool_rejects_mixed_layer_doc_ids(monkeypatch) -> None:
 
 def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) -> None:
     class _DummyRetriever:
-        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None):
+        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None, folder_paths=None):
             return [
                 {
                     "content": "民国财政以税收、公债与币制调整为主要线索。",
@@ -445,7 +569,7 @@ def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) 
 
 def test_knowledge_search_tool_no_result_guides_grounded_retries_before_web(monkeypatch) -> None:
     class _DummyRetriever:
-        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None):
+        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None, folder_paths=None):
             return []
 
     retriever_stub = ModuleType("src.community.knowledge_base.retriever")

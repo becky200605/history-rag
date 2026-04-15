@@ -1308,6 +1308,7 @@ async def update_global_knowledge_metadata(
             existing_folder_tree=build_existing_folder_tree(
                 docs_dir,
                 exclude_source_filename=filename,
+                folder_registry_path=_global_folder_registry_path(),
             ),
         )
     )
@@ -1524,6 +1525,7 @@ def search_knowledge_base(
     thread_id: str | None = Query(default=None, description="Optional thread ID to include uploaded docs"),
     user_id: str | None = Query(default=None, description="Optional user ID to include personal knowledge docs"),
     doc_ids: str | None = Query(default=None, description="Optional comma-separated doc_ids to filter candidate books"),
+    folder_path: list[str] | None = Query(default=None, description="Optional folder-path filters"),
 ) -> SearchResponse:
     """Search the knowledge base for relevant documents."""
     config = get_knowledge_base_config()
@@ -1533,7 +1535,14 @@ def search_knowledge_base(
     try:
         retriever = get_retriever()
         parsed_doc_ids = [item.strip() for item in doc_ids.split(",") if item.strip()] if doc_ids else None
-        results = retriever.search(q, thread_id=thread_id, user_id=user_id, doc_ids=parsed_doc_ids)
+        parsed_folder_paths = [normalized for raw in (folder_path or []) if (normalized := normalize_folder_path(raw))]
+        results = retriever.search(
+            q,
+            thread_id=thread_id,
+            user_id=user_id,
+            doc_ids=parsed_doc_ids,
+            folder_paths=parsed_folder_paths or None,
+        )
 
         search_results = []
         for res in results:

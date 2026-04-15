@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-
+import { SilkRibbon } from "@/components/workspace/silk-ribbon";
 import { AuthForm } from "@/components/auth/auth-form";
 import { env } from "@/env";
 import { getSession } from "@/server/better-auth/server";
@@ -29,28 +29,22 @@ export default async function AuthPage({
   }
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden font-serif px-6 py-12">
-      <div
-        className="absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
-        style={{
-          backgroundImage: 'url("/historical_parchment_bg.png")',
-          filter: "brightness(0.7)",
-        }}
-      />
-      <div className="absolute inset-0 z-0 bg-black/30" />
-      <div className="relative z-10 w-full mb-12">
-        <div className="mx-auto mb-12 max-w-md text-center">
-          <h1 className="mt-3 text-5xl font-bold tracking-widest text-[#fdf6e3] drop-shadow-lg">
-            财政历史智能知识库
+    <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background px-6 py-12">
+      <div className="relative z-10 w-full max-w-md">
+        <div className="mb-12 text-center">
+          <h1 className="font-serif text-4xl font-bold tracking-[0.2em] text-foreground">
+            财政历史 <br />
+            <span className="text-primary italic opacity-90">智能知识库</span>
           </h1>
-          <p className="mt-4 text-lg font-medium tracking-[0.2em] text-[#fdf6e3]/80 uppercase drop-shadow-md">
-            History RAG System
-          </p>
+          <div className="mx-auto mt-6 h-px w-24 bg-primary/30" />
         </div>
-        <div className="mx-auto flex max-w-md justify-center">
+        
+        <div className="flex justify-center">
           <AuthForm />
         </div>
       </div>
+
+      <SilkRibbon />
     </main>
   );
 }

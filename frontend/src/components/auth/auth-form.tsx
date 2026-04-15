@@ -45,10 +45,10 @@ const DEFAULT_REGISTER_FORM: RegisterFormState = {
 };
 
 const INPUT_CLASS_NAME =
-  "border-[#d3c6aa] bg-[#fdf6e3]/50 text-[#222222] placeholder:text-[#657b83] focus:border-[#9c2828] focus:ring-[#9c2828] font-serif";
+  "border-border bg-background/50 text-foreground placeholder:text-muted-foreground focus:border-primary focus:ring-primary font-serif";
 
 const PRIMARY_BUTTON_CLASS_NAME =
-  "bg-[#9c2828] text-white hover:bg-[#7a1f1f] font-serif font-bold tracking-widest shadow-md transition-all active:scale-95";
+  "bg-primary text-primary-foreground hover:bg-primary/90 font-serif font-bold tracking-widest shadow-md transition-all active:scale-95 rounded-full py-6";
 
 function resolveNextPath(nextPath: string | null) {
   if (nextPath?.startsWith("/") !== true) {
@@ -137,7 +137,7 @@ export function AuthForm() {
   };
 
   return (
-    <Card className="parchment-texture w-full max-w-md border-[#d3c6aa] bg-[#fdfcf0]/95 font-serif shadow-[0_24px_60px_rgba(45,35,20,0.2)]">
+    <Card className="w-full max-w-md border-border bg-card/80 font-serif shadow-2xl backdrop-blur-md">
       <CardHeader className="space-y-6 pb-2">
         <Tabs
           value={mode}
@@ -147,19 +147,19 @@ export function AuthForm() {
             setError("");
           }}
         >
-          <TabsList className="grid w-full grid-cols-2 bg-[#eee8d5]/50 p-1">
+          <TabsList className="grid w-full grid-cols-2 bg-muted/50 p-1">
             <TabsTrigger
               value="login"
-              className="flex items-center gap-2 data-[state=active]:bg-[#fdfcf0] data-[state=active]:text-blue-600 data-[state=active]:shadow-sm"
+              className="flex items-center gap-2 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm"
             >
-              <div className="cloud-pattern size-4 opacity-70" />
+              <div className="size-1.5 rounded-full bg-primary/40" />
               <span className="text-lg font-bold">登录</span>
             </TabsTrigger>
             <TabsTrigger
               value="register"
-              className="flex items-center gap-2 data-[state=active]:bg-[#fdfcf0] data-[state=active]:text-blue-600 data-[state=active]:shadow-sm"
+              className="flex items-center gap-2 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm"
             >
-              <div className="cloud-pattern size-4 opacity-70" />
+              <div className="size-1.5 rounded-full bg-primary/40" />
               <span className="text-lg font-bold">注册</span>
             </TabsTrigger>
           </TabsList>
@@ -303,7 +303,7 @@ export function AuthForm() {
           返回首页请访问{" "}
           <Link
             href="/"
-            className="text-[rgb(57,130,152)] underline underline-offset-4"
+            className="text-primary hover:underline underline-offset-4"
           >
             财政历史智能知识库
           </Link>

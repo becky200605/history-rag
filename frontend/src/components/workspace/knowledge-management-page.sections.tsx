@@ -40,6 +40,8 @@ import {
   canRetryManagedFile,
   formatCompactTime,
   getCoverTone,
+  findFolderNode,
+  getCascadingLevels,
   getFolderDisplayName,
   getManagedFileCoverImageUrl,
   knowledgeTypeLabel,
@@ -671,7 +673,61 @@ function CategoryCheckbox({
   );
 }
 
-function FolderDropdownItems({
+function FolderCascaderColumn({
+  nodes,
+  selectedPath,
+  onSelectFolder,
+  onHover,
+  activeChildPath,
+}: {
+  nodes: FolderTreeNode[];
+  selectedPath: string;
+  onSelectFolder: (path: string) => void;
+  onHover: (node: FolderTreeNode | null) => void;
+  activeChildPath?: string;
+}) {
+  return (
+    <div className="flex min-w-48 flex-col border-r border-accent/10 last:border-r-0 py-1 bg-white/50 first:bg-transparent">
+      <div className="max-h-[320px] overflow-y-auto px-1">
+        {nodes.map((node) => {
+          const isSelected = selectedPath === node.path || selectedPath.startsWith(`${node.path}/`);
+          const isHovered = activeChildPath === node.path || activeChildPath?.startsWith(`${node.path}/`);
+          const hasChildren = node.children.length > 0;
+          const label = getFolderDisplayName(node.name);
+
+          return (
+            <div
+              key={node.path}
+              className={cn(
+                "group relative flex cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2 text-sm transition-all font-serif outline-none select-none",
+                isHovered ? "bg-accent/10 text-primary" : "hover:bg-accent/5 text-stone-600 hover:text-stone-900",
+                isSelected && "font-bold text-primary",
+              )}
+              onMouseEnter={() => hasChildren ? onHover(node) : onHover(null)}
+              onClick={() => onSelectFolder(node.path)}
+            >
+              <FolderIcon className={cn(
+                "size-4 shrink-0 transition-colors",
+                isHovered || isSelected ? "text-primary" : "text-accent/60 group-hover:text-primary"
+              )} />
+              <span className="flex-1 truncate">{label}</span>
+              <span className="shrink-0 text-[10px] text-stone-400 font-sans group-hover:text-primary">({node.fileCount})</span>
+              {hasChildren && (
+                <ChevronRightIcon className="size-3.5 shrink-0 text-accent/40 group-hover:text-primary" />
+              )}
+              
+              {isSelected && !isHovered && (
+                <div className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-primary rounded-full" />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FolderCascader({
   nodes,
   selectedPath,
   onSelectFolder,
@@ -680,68 +736,42 @@ function FolderDropdownItems({
   selectedPath: string;
   onSelectFolder: (path: string) => void;
 }) {
+  const [hoveredNodes, setHoveredNodes] = useState<FolderTreeNode[]>([]);
+
+  // Calculate the columns to show
+  // Column 0: Root nodes
+  // Column 1: Children of hoveredNodes[0]...
+  const columns = [nodes];
+  for (let i = 0; i < hoveredNodes.length; i++) {
+    if (hoveredNodes[i].children.length > 0) {
+      columns.push(hoveredNodes[i].children);
+    }
+  }
+
+  const handleHover = (level: number, node: FolderTreeNode | null) => {
+    if (!node) {
+      setHoveredNodes(prev => prev.slice(0, level));
+      return;
+    }
+    setHoveredNodes(prev => {
+      const next = [...prev.slice(0, level), node];
+      return next;
+    });
+  };
+
   return (
-    <>
-      {nodes.map((node) => {
-        const isSelected =
-          selectedPath === node.path || selectedPath.startsWith(`${node.path}/`);
-        const label = getFolderDisplayName(node.name);
-
-        if (node.children.length > 0) {
-          return (
-            <DropdownMenuSub key={node.path}>
-              <DropdownMenuSubTrigger className="min-w-48 font-serif">
-                <FolderIcon className="size-4 text-accent" />
-                <span className="flex-1 truncate">{label}</span>
-                <span className="ml-2 text-[10px] text-stone-400 font-sans">({node.fileCount})</span>
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="min-w-56">
-                <DropdownMenuItem
-                  className={cn(
-                    "gap-2 font-serif",
-                    isSelected && "bg-primary/10 text-primary font-bold",
-                  )}
-                  onClick={() => onSelectFolder(node.path)}
-                >
-                  {isSelected ? (
-                    <CheckIcon className="size-4 text-primary" />
-                  ) : (
-                    <FolderIcon className="size-4 text-accent" />
-                  )}
-                  <span className="flex-1 truncate">全部</span>
-                  <span className="text-xs text-slate-400">{node.fileCount}</span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <FolderDropdownItems
-                  nodes={node.children}
-                  selectedPath={selectedPath}
-                  onSelectFolder={onSelectFolder}
-                />
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          );
-        }
-
-        return (
-          <DropdownMenuItem
-            key={node.path}
-            className={cn(
-              "gap-2 font-serif",
-              isSelected && "bg-primary/10 text-primary font-bold",
-            )}
-            onClick={() => onSelectFolder(node.path)}
-          >
-            {isSelected ? (
-              <CheckIcon className="size-4 text-primary" />
-            ) : (
-              <FolderIcon className="size-4 text-accent" />
-            )}
-            <span className="flex-1 truncate">{label}</span>
-            <span className="text-[10px] text-stone-400 font-sans">({node.fileCount})</span>
-          </DropdownMenuItem>
-        );
-      })}
-    </>
+    <div className="flex flex-row overflow-x-auto">
+      {columns.map((colNodes, index) => (
+        <FolderCascaderColumn
+          key={index}
+          nodes={colNodes}
+          selectedPath={selectedPath}
+          onSelectFolder={onSelectFolder}
+          onHover={(node) => handleHover(index, node)}
+          activeChildPath={hoveredNodes[index]?.path}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -781,28 +811,27 @@ function CategoryFolderFilter({
               <ChevronDownIcon className="size-3.5" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-56 rounded-md border-accent/20 bg-white/90 backdrop-blur-md p-1.5">
-            <DropdownMenuItem
-              className={cn(
-                "gap-2 font-serif",
-                isActive && "bg-primary/10 text-primary font-bold",
-              )}
-              onClick={() => onSelectFolder(node.path)}
-            >
-              {isActive ? (
-                <CheckIcon className="size-4 text-primary" />
-              ) : (
-                <FolderIcon className="size-4 text-accent" />
-              )}
-              <span className="flex-1 truncate">全部</span>
-              <span className="text-xs text-slate-400">{node.fileCount}</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <FolderDropdownItems
-              nodes={node.children}
-              selectedPath={selectedPath}
-              onSelectFolder={onSelectFolder}
-            />
+          <DropdownMenuContent 
+            align="start" 
+            className="w-fit max-w-[80vw] overflow-hidden rounded-md border-accent/20 bg-white/95 backdrop-blur-md p-0 shadow-[0_20px_50px_-12px_rgba(28,25,23,0.3)]"
+          >
+            <div className="flex flex-col">
+              <div 
+                className={cn(
+                  "flex cursor-pointer items-center gap-2 px-4 py-2.5 text-sm transition font-serif border-b border-accent/10 hover:bg-accent/5",
+                  selectedPath === node.path ? "font-bold text-primary bg-primary/5" : "text-stone-700"
+                )}
+                onClick={() => onSelectFolder(node.path)}
+              >
+                <CheckIcon className={cn("size-4 text-primary", selectedPath !== node.path && "opacity-0")} />
+                <span className="flex-1">全部馆藏 ({node.fileCount})</span>
+              </div>
+              <FolderCascader
+                nodes={node.children}
+                selectedPath={selectedPath}
+                onSelectFolder={onSelectFolder}
+              />
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}

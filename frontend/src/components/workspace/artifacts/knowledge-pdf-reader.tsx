@@ -364,17 +364,24 @@ export function KnowledgePdfReader({
   knowledgeSpaceId,
   originFilename,
   originTitle,
+  focusedPdfPageNo,
+  focusedParagraphNo,
+  focusedParagraphText,
 }: {
   documentUrl: string;
   initialPdfPageNo?: number;
   knowledgeSpaceId?: string;
   originFilename: string;
   originTitle: string;
+  focusedPdfPageNo?: number | null;
+  focusedParagraphNo?: number | null;
+  focusedParagraphText?: string | null;
 }) {
   const router = useRouter();
   const createDerivedMutation = useCreateUserDerivedKnowledge();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const pageImageRef = useRef<HTMLImageElement | null>(null);
   const translationBlockRefs = useRef<Record<string, HTMLDivElement | null>>(
     {},
   );
@@ -401,6 +408,7 @@ export function KnowledgePdfReader({
     Record<string, number>
   >({});
   const [canvasWidth, setCanvasWidth] = useState(0);
+  const [pageImageSize, setPageImageSize] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
     setCurrentPdfPageNo(Math.max(initialPdfPageNo, 1));
@@ -409,6 +417,7 @@ export function KnowledgePdfReader({
     setPreviousPageData(null);
     setContextMenu(null);
     setHoveredKey(null);
+    setPageImageSize({ width: 0, height: 0 });
   }, [documentUrl, initialPdfPageNo]);
 
   useEffect(() => {
@@ -592,7 +601,69 @@ export function KnowledgePdfReader({
     translationMap,
   ]);
 
-  const activeKey = contextMenu?.paragraph.key ?? hoveredKey;
+  useEffect(() => {
+    const image = pageImageRef.current;
+    if (!image) {
+      setPageImageSize({ width: 0, height: 0 });
+      return;
+    }
+
+    const updateImageSize = () => {
+      setPageImageSize({
+        width: image.clientWidth,
+        height: image.clientHeight,
+      });
+    };
+
+    updateImageSize();
+    const observer = new ResizeObserver(updateImageSize);
+    observer.observe(image);
+    return () => {
+      observer.disconnect();
+    };
+  }, [currentPdfPageNo, pageImageUrl]);
+
+  const focusedKey = useMemo(() => {
+    if (!renderParagraphItems.length) {
+      return null;
+    }
+    if (focusedPdfPageNo && currentPdfPageNo !== focusedPdfPageNo) {
+      return null;
+    }
+
+    if (focusedParagraphNo) {
+      const paragraphMatch = renderParagraphItems.find(
+        (item) =>
+          item.contextParagraph.paragraphNo === focusedParagraphNo
+          && (!focusedPdfPageNo || item.contextParagraph.pdfPageNo === focusedPdfPageNo),
+      );
+      if (paragraphMatch) {
+        return paragraphMatch.contextParagraph.key;
+      }
+    }
+
+    const normalizedText = focusedParagraphText?.trim();
+    if (!normalizedText) {
+      return null;
+    }
+
+    const textMatch = renderParagraphItems.find((item) => {
+      const paragraphText = item.contextParagraph.text.trim();
+      return (
+        paragraphText.includes(normalizedText)
+        || normalizedText.includes(paragraphText)
+      );
+    });
+    return textMatch?.contextParagraph.key ?? null;
+  }, [
+    currentPdfPageNo,
+    focusedParagraphNo,
+    focusedParagraphText,
+    focusedPdfPageNo,
+    renderParagraphItems,
+  ]);
+
+  const activeKey = contextMenu?.paragraph.key ?? hoveredKey ?? focusedKey;
 
   const goToPage = useCallback(
     (page: number) => {
@@ -956,17 +1027,30 @@ export function KnowledgePdfReader({
               <div className="flex min-h-full items-start justify-center p-6">
                 <div className="relative">
                   <img
+                    ref={pageImageRef}
                     src={pageImageUrl}
                     alt={`${pageState.data.title} 第 ${currentPdfPageNo} 页`}
                     className="block rounded-sm bg-white shadow-[0_18px_36px_-18px_rgba(15,23,42,0.24)]"
                     style={{
                       width: `${pageWidth * displayScale}px`,
-                      height: `${pageHeight * displayScale}px`,
+                      height: "auto",
+                    }}
+                    onLoad={(event) => {
+                      const image = event.currentTarget;
+                      setPageImageSize({
+                        width: image.clientWidth,
+                        height: image.clientHeight,
+                      });
                     }}
                   />
                   <div className="absolute inset-0 overflow-hidden">
                     {renderParagraphItems.map((item) => {
-                      if (pageWidth <= 0 || pageHeight <= 0) {
+                      if (
+                        pageWidth <= 0
+                        || pageHeight <= 0
+                        || pageImageSize.width <= 0
+                        || pageImageSize.height <= 0
+                      ) {
                         return null;
                       }
 
@@ -982,10 +1066,10 @@ export function KnowledgePdfReader({
                             item.source === "previous-spill" && "border-dashed",
                           )}
                           style={{
-                            left: `${(item.visibleLeft / pageWidth) * 100}%`,
-                            top: `${(item.visibleTop / pageHeight) * 100}%`,
-                            width: `${(item.visibleWidth / pageWidth) * 100}%`,
-                            height: `${(item.visibleHeight / pageHeight) * 100}%`,
+                            left: `${(item.visibleLeft / pageWidth) * pageImageSize.width}px`,
+                            top: `${(item.visibleTop / pageHeight) * pageImageSize.height}px`,
+                            width: `${(item.visibleWidth / pageWidth) * pageImageSize.width}px`,
+                            height: `${(item.visibleHeight / pageHeight) * pageImageSize.height}px`,
                           }}
                           onMouseEnter={() =>
                             setHoveredKey(item.contextParagraph.key)

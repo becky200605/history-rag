@@ -440,6 +440,9 @@ function KnowledgeCitationPdfViewer({
       knowledgeSpaceId={knowledgeSpaceId}
       originFilename={state.data.filename}
       originTitle={state.data.title}
+      focusedPdfPageNo={state.data.pdf_page_no ?? null}
+      focusedParagraphNo={state.data.paragraph_no ?? null}
+      focusedParagraphText={state.data.text ?? null}
     />
   );
 }

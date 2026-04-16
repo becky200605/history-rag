@@ -721,6 +721,47 @@ export function buildFolderBreadcrumbs(nodes: FolderTreeNode[], targetPath: stri
   return path;
 }
 
+/**
+ * Returns the sequence of folder lists for each level along the target path.
+ * Used for cascading navigation rows.
+ */
+export function getCascadingLevels(
+  rootNodes: FolderTreeNode[],
+  targetPath: string,
+): FolderTreeNode[][] {
+  const levels: FolderTreeNode[][] = [rootNodes];
+  
+  if (targetPath === "all" || targetPath === "personal-root" || targetPath === "system-root") {
+    return levels;
+  }
+
+  const findPath = (nodes: FolderTreeNode[], currentPath: string): boolean => {
+    for (const node of nodes) {
+      if (node.path === targetPath) {
+        if (node.children.length > 0) {
+          levels.push(node.children);
+        }
+        return true;
+      }
+      
+      const isSubPath = targetPath === node.path || targetPath.startsWith(`${node.path}/`);
+      if (isSubPath) {
+        if (node.children.length > 0) {
+          levels.push(node.children);
+          if (findPath(node.children, targetPath)) {
+            return true;
+          }
+        }
+        return true;
+      }
+    }
+    return false;
+  };
+
+  findPath(rootNodes, targetPath);
+  return levels;
+}
+
 export function isSelectableForChat(file: ManagedKnowledgeFile) {
   return Boolean(file.docId) && file.parseStatus === "indexed";
 }

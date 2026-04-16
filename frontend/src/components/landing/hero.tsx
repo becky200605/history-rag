@@ -6,6 +6,7 @@ import { motion, type Variants } from "motion/react";
 
 import { Button } from "@/components/ui/button";
 import { SilkRibbon } from "@/components/workspace/silk-ribbon";
+import { FloatingInk } from "@/components/landing/floating-ink";
 import { cn } from "@/lib/utils";
 
 export function Hero({ className }: { className?: string }) {
@@ -37,8 +38,16 @@ export function Hero({ className }: { className?: string }) {
       )}
     >
       {/* Background decoration - optional subtle gradient or just clean */}
-      <div className="absolute inset-0 z-0 opacity-[0.03] pointer-events-none">
-        <div className="absolute inset-0 bg-radial-gradient from-primary via-transparent to-transparent" />
+      <FloatingInk />
+      
+      {/* Top Decoration to balance weight */}
+      <div className="absolute top-24 right-16 z-10 hidden md:block opacity-[0.15] select-none pointer-events-none">
+        <div className="flex flex-col items-center gap-6">
+          <div className="h-32 w-px bg-primary/40" />
+          <span className="font-serif text-sm tracking-[0.5em] text-primary [writing-mode:vertical-rl] whitespace-nowrap translate-x-[2px]">
+            数字文博 · 档案存证
+          </span>
+        </div>
       </div>
 
       {/* Main Content Container */}
@@ -46,12 +55,12 @@ export function Hero({ className }: { className?: string }) {
         variants={containerVariants}
         initial="hidden"
         animate="visible"
-        className="container relative z-10 mx-auto flex flex-col items-center px-6 text-center"
+        className="container relative z-10 mx-auto flex -translate-y-16 flex-col items-center px-6 text-center"
       >
         <motion.div variants={itemVariants} className="space-y-8">
           <h1 className="font-serif text-6xl font-bold tracking-[0.1em] text-foreground md:text-[5rem]">
             财政历史 <br />
-            <span className="text-primary italic opacity-90">智能知识库</span>
+            <span className="text-primary opacity-90">智能知识库</span>
           </h1>
           
           <div className="mx-auto h-px w-24 bg-primary/30" />
@@ -60,16 +69,24 @@ export function Hero({ className }: { className?: string }) {
         <motion.div variants={itemVariants} className="pt-12">
           <Link href="/workspace">
             <Button
-              className="group relative min-w-[240px] overflow-hidden rounded-full border border-primary/20 bg-primary/5 px-10 py-8 font-serif text-2xl text-primary backdrop-blur-md transition-all hover:bg-primary hover:text-white hover:scale-105"
+              className={cn(
+                "group relative min-w-[220px] overflow-visible rounded-none border border-primary/20",
+                "bg-[url('https://www.transparenttextures.com/patterns/natural-paper.png')] bg-white/60",
+                "px-10 py-6 font-serif text-xl text-primary backdrop-blur-sm transition-all duration-500",
+                "hover:bg-primary/95 hover:text-white hover:border-primary shadow-sm hover:shadow-lg"
+              )}
               size="lg"
             >
-              <span className="relative z-10 font-medium tracking-[0.2em]">
+              <span className="relative z-10 font-bold tracking-[0.3em] pr-[0.3em]">
                 即刻启卷
               </span>
-              <ChevronRightIcon className="relative z-10 ml-3 size-6 transition-transform group-hover:translate-x-1" />
               
-              {/* Button hover effect mask */}
-              <div className="absolute inset-0 -translate-x-full bg-linear-to-r from-transparent via-white/10 to-transparent transition-transform duration-500 group-hover:translate-x-full" />
+              {/* Side Rectangles Decoration - Centered on borders */}
+              <div className="absolute -left-[3px] top-1/2 -translate-y-1/2 w-[6px] h-5 bg-primary/60 group-hover:bg-white group-hover:h-7 transition-all duration-300" />
+              <div className="absolute -right-[3px] top-1/2 -translate-y-1/2 w-[6px] h-5 bg-primary/60 group-hover:bg-white group-hover:h-7 transition-all duration-300" />
+
+              {/* Inner paper glow on hover */}
+              <div className="absolute inset-0 opacity-0 group-hover:opacity-20 shadow-[inset_0_0_20px_rgba(255,255,255,0.8)] transition-opacity" />
             </Button>
           </Link>
         </motion.div>

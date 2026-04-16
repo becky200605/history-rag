@@ -31,13 +31,15 @@ const ACTIVE_USER_KNOWLEDGE_JOB_STATUSES = [
   "parsing",
   "queued_embedding",
   "indexing",
-  "parsed",
 ];
 
 export function useUserKnowledgeRecords(knowledgeSpaceId?: string | null) {
   return useQuery<UserKnowledgeListResponse>({
     queryKey: [...USER_KNOWLEDGE_QUERY_KEY, knowledgeSpaceId ?? "all"],
     queryFn: () => listUserKnowledgeRecords(knowledgeSpaceId),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     refetchInterval: (query) => {
       const records = query.state.data?.records ?? [];
       const hasActiveJobs = records.some((record) =>

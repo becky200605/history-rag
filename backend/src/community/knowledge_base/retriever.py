@@ -1,4 +1,6 @@
+import logging
 import re
+import time
 
 from langchain_core.embeddings import Embeddings
 from langchain_qdrant import QdrantVectorStore
@@ -15,6 +17,8 @@ from src.reflection import resolve_variable
 """
 Module for retrieving documents from the knowledge base using Qdrant.
 """
+
+logger = logging.getLogger(__name__)
 
 _retriever_instance = None
 DEFAULT_SEARCH_SCOPES = ("user", "thread", "global")
@@ -487,6 +491,7 @@ class KnowledgeBaseRetriever:
         folder_paths: list[str] | None = None,
     ) -> list[dict]:
         """Search for relevant documents."""
+        started_at = time.perf_counter()
         enabled_scopes = scopes or list(DEFAULT_SEARCH_SCOPES)
         effective_doc_ids = self._resolve_effective_doc_ids(
             thread_id=thread_id,
@@ -496,6 +501,13 @@ class KnowledgeBaseRetriever:
             folder_paths=folder_paths,
         )
         if effective_doc_ids == []:
+            logger.info(
+                "Knowledge search skipped: query=%r folder_paths=%s scopes=%s effective_doc_ids=0 elapsed_ms=%.1f",
+                query,
+                ",".join(folder_paths or []),
+                ",".join(enabled_scopes),
+                (time.perf_counter() - started_at) * 1000,
+            )
             return []
 
         query_variants = _select_query_variants(query, doc_ids=effective_doc_ids)
@@ -531,13 +543,29 @@ class KnowledgeBaseRetriever:
 
             for collection_name in collections:
                 try:
+                    vector_started_at = time.perf_counter()
                     results = self._search_collection(
                         collection_name,
                         variant_query,
                         doc_ids=effective_doc_ids,
                         top_k=per_query_top_k,
                     )
+                    logger.info(
+                        "Knowledge vector search: query=%r variant=%r collection=%s doc_ids=%s hits=%s elapsed_ms=%.1f",
+                        query,
+                        variant_label,
+                        collection_name,
+                        len(effective_doc_ids or []),
+                        len(results),
+                        (time.perf_counter() - vector_started_at) * 1000,
+                    )
                 except Exception:
+                    logger.exception(
+                        "Knowledge vector search failed: query=%r variant=%r collection=%s",
+                        query,
+                        variant_label,
+                        collection_name,
+                    )
                     continue
                 for result in results:
                     result["matched_query"] = variant_label
@@ -546,6 +574,7 @@ class KnowledgeBaseRetriever:
                     merged_results.append(result)
 
             try:
+                lexical_started_at = time.perf_counter()
                 lexical_results = lexical_search_documents(
                     variant_query,
                     thread_id=thread_id,
@@ -554,7 +583,20 @@ class KnowledgeBaseRetriever:
                     scopes=enabled_scopes,
                     top_k=per_query_top_k,
                 )
+                logger.info(
+                    "Knowledge lexical search: query=%r variant=%r doc_ids=%s hits=%s elapsed_ms=%.1f",
+                    query,
+                    variant_label,
+                    len(effective_doc_ids or []),
+                    len(lexical_results),
+                    (time.perf_counter() - lexical_started_at) * 1000,
+                )
             except Exception:
+                logger.exception(
+                    "Knowledge lexical search failed: query=%r variant=%r",
+                    query,
+                    variant_label,
+                )
                 lexical_results = []
 
             for result in lexical_results:
@@ -574,7 +616,19 @@ class KnowledgeBaseRetriever:
         merged_results.sort(key=lambda item: item.get("weighted_score", item.get("score", 0)), reverse=True)
         deduped_results = self._merge_duplicate_results(merged_results)
         deduped_results.sort(key=lambda item: item.get("weighted_score", item.get("score", 0)), reverse=True)
-        return self._select_diverse_results(deduped_results, limit=final_limit)
+        selected = self._select_diverse_results(deduped_results, limit=final_limit)
+        logger.info(
+            "Knowledge search complete: query=%r variants=%s collections=%s doc_ids=%s merged=%s deduped=%s returned=%s elapsed_ms=%.1f",
+            query,
+            len(query_variants),
+            len(collections),
+            len(effective_doc_ids or []),
+            len(merged_results),
+            len(deduped_results),
+            len(selected),
+            (time.perf_counter() - started_at) * 1000,
+        )
+        return selected
 
 
 def get_retriever() -> KnowledgeBaseRetriever:

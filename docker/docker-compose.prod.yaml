@@ -79,7 +79,7 @@ services:
     build:
       context: ../
       dockerfile: backend/Dockerfile
-    command: sh -c "cd backend && langgraph dev --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024"
+    command: sh -c "cd backend && langgraph dev --no-browser --allow-blocking --no-reload --host 0.0.0.0 --port 2024 --n-jobs-per-worker 2"
     env_file:
       - ../backend/.production.env
     volumes:

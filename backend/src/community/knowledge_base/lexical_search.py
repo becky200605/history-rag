@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -21,6 +23,7 @@ from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
 LEXICAL_SCORE_THRESHOLD = 0.18
+logger = logging.getLogger(__name__)
 
 def _iter_global_documents(doc_ids: set[str] | None = None) -> Iterator[dict[str, Any]]:
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
@@ -170,20 +173,27 @@ def lexical_search_documents(
     top_k: int = 5,
 ) -> list[dict[str, Any]]:
     """Scan structured documents lexically for quote-like or table-title queries."""
+    started_at = time.perf_counter()
     results: list[dict[str, Any]] = []
+    document_count = 0
+    page_count = 0
+    paragraph_count = 0
     for document in _iter_candidate_documents(
         thread_id,
         user_id,
         doc_ids=doc_ids,
         scopes=scopes,
     ):
+        document_count += 1
         payload = document.get("payload") or {}
         for page in payload.get("pages") or []:
+            page_count += 1
             page_no = page.get("page_no")
             pdf_page_no = page.get("pdf_page_no") or page_no
             book_page_no = page.get("book_page_no")
             page_number_source = page.get("page_number_source")
             for paragraph in page.get("paragraphs") or []:
+                paragraph_count += 1
                 content = str(paragraph.get("text") or "").strip()
                 score = _score_paragraph(query, content)
                 if score < LEXICAL_SCORE_THRESHOLD:
@@ -223,4 +233,17 @@ def lexical_search_documents(
                 )
 
     results.sort(key=lambda item: item.get("score", 0), reverse=True)
-    return results[:top_k]
+    trimmed_results = results[:top_k]
+    logger.info(
+        "Lexical search complete: query=%r doc_ids=%s scopes=%s documents=%s pages=%s paragraphs=%s hits=%s returned=%s elapsed_ms=%.1f",
+        query,
+        len(doc_ids or []),
+        ",".join(scopes or []),
+        document_count,
+        page_count,
+        paragraph_count,
+        len(results),
+        len(trimmed_results),
+        (time.perf_counter() - started_at) * 1000,
+    )
+    return trimmed_results

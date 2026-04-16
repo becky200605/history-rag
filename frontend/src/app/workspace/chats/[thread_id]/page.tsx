@@ -2,7 +2,7 @@
 
 import type { Message } from "@langchain/langgraph-sdk";
 import type { UseStream } from "@langchain/langgraph-sdk/react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FilesIcon, XIcon } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -124,6 +124,7 @@ function clearThreadRouteHandoff(threadId?: string) {
 
 export default function ChatPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const { thread_id: threadIdFromPath } = useParams<{ thread_id: string }>();
   const isNewThread = threadIdFromPath === "new";
@@ -163,6 +164,10 @@ export default function ChatPage() {
     queryFn: async () => {
       const thread =
         await getAPIClient().threads.get<AgentThreadState>(threadIdFromPath);
+      queryClient.setQueryData(
+        ["thread", "details", threadIdFromPath, session?.user.id],
+        thread,
+      );
       const ownerId =
         typeof thread.metadata?.user_id === "string"
           ? thread.metadata.user_id
@@ -181,6 +186,7 @@ export default function ChatPage() {
       return ownerId === session?.user.id;
     },
     retry: false,
+    staleTime: 30_000,
   });
 
   useEffect(() => {
@@ -312,6 +318,7 @@ function ChatPageContent({
       !isNewThread &&
       (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" || !!session?.user.id),
     queryFn: async () => apiClient.threads.get<AgentThreadState>(threadId!),
+    staleTime: 30_000,
   });
   const [finalState, setFinalState] = useState<AgentThreadState | null>(null);
   const threadMetadataContext = useMemo(

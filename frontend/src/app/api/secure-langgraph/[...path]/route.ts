@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_LANGGRAPH_BASE_URL = "http://127.0.0.1:2024";
 const JSON_CONTENT_TYPE = "application/json";
+const DEFAULT_OWNERSHIP_CACHE_TTL_MS = 30_000;
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "content-length",
@@ -30,11 +31,63 @@ type AuthenticatedSession = NonNullable<
   Awaited<ReturnType<typeof auth.api.getSession>>
 >;
 
+type ThreadOwnershipCacheEntry = {
+  ownerId: string;
+  expiresAt: number;
+};
+
+const threadOwnershipCache = new Map<string, ThreadOwnershipCacheEntry>();
+
 function getMetadataRecord(body?: Record<string, unknown>) {
   const metadata = body?.metadata;
   return metadata && typeof metadata === "object"
     ? (metadata as Record<string, unknown>)
     : {};
+}
+
+function getOwnershipCacheTtlMs() {
+  const rawValue = process.env.SECURE_LANGGRAPH_OWNERSHIP_CACHE_TTL_MS;
+  if (!rawValue) {
+    return DEFAULT_OWNERSHIP_CACHE_TTL_MS;
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_OWNERSHIP_CACHE_TTL_MS;
+  }
+
+  return parsed;
+}
+
+function getCachedThreadOwner(threadId: string) {
+  const cached = threadOwnershipCache.get(threadId);
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAt <= nowMs()) {
+    threadOwnershipCache.delete(threadId);
+    return null;
+  }
+
+  return cached.ownerId;
+}
+
+function setCachedThreadOwner(threadId: string, ownerId: string) {
+  const ttlMs = getOwnershipCacheTtlMs();
+  if (ttlMs <= 0) {
+    threadOwnershipCache.delete(threadId);
+    return;
+  }
+
+  threadOwnershipCache.set(threadId, {
+    ownerId,
+    expiresAt: nowMs() + ttlMs,
+  });
+}
+
+function clearCachedThreadOwner(threadId: string) {
+  threadOwnershipCache.delete(threadId);
 }
 
 function getUpstreamBaseUrl() {
@@ -159,8 +212,43 @@ async function ensureThreadOwnership(
   session: AuthenticatedSession,
 ) {
   const startedAt = nowMs();
+  const cachedOwnerId = getCachedThreadOwner(threadId);
+  if (cachedOwnerId) {
+    const ownerMatch = cachedOwnerId === session.user.id;
+    logSecureLangGraphTiming("ownership_cache", {
+      thread_id: threadId,
+      hit: true,
+      owner_match: ownerMatch,
+    });
+    if (ownerMatch) {
+      logSecureLangGraphTiming("ownership_check", {
+        thread_id: threadId,
+        owner_missing: false,
+        owner_match: true,
+        cached: true,
+        elapsed_ms: nowMs() - startedAt,
+      });
+      return null;
+    }
+
+    logSecureLangGraphTiming("ownership_check", {
+      thread_id: threadId,
+      owner_missing: false,
+      owner_match: false,
+      cached: true,
+      elapsed_ms: nowMs() - startedAt,
+    });
+    return jsonResponse({ message: "Forbidden" }, 403);
+  }
+
+  logSecureLangGraphTiming("ownership_cache", {
+    thread_id: threadId,
+    hit: false,
+  });
+
   const { response, thread } = await fetchUpstreamThread(threadId);
   if (!response.ok || !thread) {
+    clearCachedThreadOwner(threadId);
     logSecureLangGraphTiming("ownership_check_failed", {
       thread_id: threadId,
       status: response.status,
@@ -210,6 +298,8 @@ async function ensureThreadOwnership(
       });
     }
 
+    setCachedThreadOwner(threadId, session.user.id);
+
     logSecureLangGraphTiming("ownership_check", {
       thread_id: threadId,
       owner_missing: true,
@@ -217,6 +307,8 @@ async function ensureThreadOwnership(
     });
     return null;
   }
+
+  setCachedThreadOwner(threadId, ownerId);
 
   if (ownerId !== session.user.id) {
     logSecureLangGraphTiming("ownership_check", {

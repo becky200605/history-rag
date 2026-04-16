@@ -28,6 +28,7 @@ from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
 BOOK_METADATA_FILENAMES = (".book_metadata.jsonl", ".book_metadata.json")
+UNFILED_FOLDER_NAME = "未分类"
 
 CORE_TYPE = "core"
 SPECIALIZED_TYPE = "specialized"
@@ -827,7 +828,7 @@ def _entry_filter_folder_path(entry: BookCatalogEntry) -> str | None:
     relative_parent = normalize_folder_path(str(Path(entry.filename).parent))
     if relative_parent:
         return relative_parent
-    return None
+    return UNFILED_FOLDER_NAME
 
 
 def _entry_matches_any_folder(entry: BookCatalogEntry, folder_paths: list[str]) -> bool:
@@ -853,7 +854,7 @@ def _entry_folder_segments(entry: BookCatalogEntry) -> list[str]:
     if normalized:
         return normalized.split("/")
 
-    return ["未归档"]
+    return [UNFILED_FOLDER_NAME]
 
 
 def _entry_tree_leaf(entry: BookCatalogEntry) -> str:

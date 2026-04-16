@@ -203,6 +203,69 @@ def test_search_book_catalog_folder_paths_hard_filter(tmp_path, monkeypatch) -> 
     assert [item.filename for item in results] == ["qing_finance.md"]
 
 
+def test_filter_book_catalog_entries_matches_uncategorized_entries() -> None:
+    entries = [
+        BookCatalogEntry(
+            doc_id="uncategorized-doc",
+            title="人物档案：刘恺卿",
+            filename="人物档案：刘恺卿 (1905–1952).pdf",
+            scope="global",
+            source_path="/tmp/liu.pdf",
+            source_url="/api/knowledge/docs/liu.pdf",
+            original_url=None,
+            preview="",
+            search_text="人物档案 刘恺卿",
+            search_tokens=["人物档案", "刘恺卿"],
+            type="unknown",
+            folder_path=None,
+        )
+    ]
+
+    filtered = catalog_module.filter_book_catalog_entries(
+        entries,
+        folder_paths=["未分类"],
+    )
+
+    assert [entry.doc_id for entry in filtered] == ["uncategorized-doc"]
+
+
+def test_book_search_tool_accepts_uncategorized_folder(monkeypatch) -> None:
+    entry = BookCatalogEntry(
+        doc_id="uncategorized-doc",
+        title="人物档案：刘恺卿",
+        filename="人物档案：刘恺卿 (1905–1952).pdf",
+        scope="global",
+        source_path="/tmp/liu.pdf",
+        source_url="/api/knowledge/docs/liu.pdf",
+        original_url=None,
+        preview="",
+        search_text="人物档案 刘恺卿",
+        search_tokens=["人物档案", "刘恺卿"],
+        type="unknown",
+        folder_path=None,
+        score=0.91,
+    )
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [entry],
+    )
+    monkeypatch.setattr(
+        tools_module,
+        "search_book_catalog",
+        lambda *args, **kwargs: [entry],
+    )
+
+    output = tools_module.book_search_tool.func(
+        SimpleNamespace(context={}),
+        "刘恺卿是谁",
+        knowledge_folders=["未归档"],
+    )
+
+    assert "Error:" not in output
+    assert "doc_id=uncategorized-doc" in output
+
+
 def test_search_book_catalog_broad_query_keeps_core_and_specialized_books(tmp_path, monkeypatch) -> None:
     docs_root = tmp_path / "knowledge" / "docs"
     docs_root.mkdir(parents=True)
@@ -555,6 +618,79 @@ def test_book_search_tool_rejects_virtual_layer_labels_as_knowledge_folders(monk
     assert "层级标签" in output
     assert "不是知识库逻辑目录" in output
     assert "人物传记/" in output
+
+
+def test_book_search_tool_accepts_trailing_slash_on_real_knowledge_folder(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    entry = BookCatalogEntry(
+        doc_id="global-doc",
+        title="Global Book",
+        filename="global.md",
+        scope="global",
+        source_path="/tmp/global.md",
+        source_url="/api/knowledge/docs/global.md",
+        original_url=None,
+        preview="",
+        search_text="global",
+        search_tokens=["global"],
+        type="core",
+        folder_path="人物传记/晚清",
+        score=0.88,
+    )
+
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [entry],
+    )
+
+    def fake_search(query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None, entries=None):
+        captured["folder_paths"] = folder_paths
+        return [entry]
+
+    monkeypatch.setattr(tools_module, "search_book_catalog", fake_search)
+
+    output = tools_module.book_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        knowledge_folders=["人物传记/晚清/"],
+    )
+
+    assert "Error:" not in output
+    assert captured["folder_paths"] == ["人物传记/晚清"]
+
+
+def test_book_search_tool_rejects_virtual_layer_labels_with_trailing_slash(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="global.md",
+                scope="global",
+                source_path="/tmp/global.md",
+                source_url="/api/knowledge/docs/global.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+                type="core",
+                folder_path="人物传记/晚清",
+            )
+        ],
+    )
+
+    output = tools_module.book_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        knowledge_folders=["核心通用书/", "global/"],
+    )
+
+    assert "层级标签" in output
+    assert "不是知识库逻辑目录" in output
 
 
 def test_search_book_catalog_can_reuse_prelisted_entries(monkeypatch) -> None:

@@ -742,9 +742,9 @@ function FolderCascader({
   // Column 0: Root nodes
   // Column 1: Children of hoveredNodes[0]...
   const columns = [nodes];
-  for (let i = 0; i < hoveredNodes.length; i++) {
-    if (hoveredNodes[i].children.length > 0) {
-      columns.push(hoveredNodes[i].children);
+  for (const hoveredNode of hoveredNodes) {
+    if (hoveredNode.children.length > 0) {
+      columns.push(hoveredNode.children);
     }
   }
 

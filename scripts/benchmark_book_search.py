@@ -2,8 +2,8 @@
 """Benchmark the book_search pipeline for a single query.
 
 Example:
-    python3 scripts/benchmark_book_search.py --query "盛宣怀 生平"
-    python3 scripts/benchmark_book_search.py --query "盛宣怀 生平" --runs 3
+    python3 scripts/benchmark_book_search.py --query "盛宣怀 生平" --knowledge-folders "人物传记/晚清"
+    python3 scripts/benchmark_book_search.py --query "盛宣怀 生平" --knowledge-folders "人物传记/晚清" --runs 3
 """
 
 from __future__ import annotations
@@ -68,9 +68,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--runs", type=int, default=3, help="Number of runs to execute.")
     parser.add_argument("--top-k", type=int, default=20, help="Top-k for direct catalog search.")
     parser.add_argument(
-        "--folder-paths",
+        "--knowledge-folders",
         default=None,
-        help="Comma/Chinese-comma/semicolon/newline separated folder paths for book_search.",
+        help="Comma/Chinese-comma/semicolon/newline separated knowledge-base folders for book_search.",
     )
     parser.add_argument("--thread-id", default=None, help="Optional thread_id context.")
     parser.add_argument("--user-id", default=None, help="Optional user_id context.")
@@ -179,7 +179,7 @@ def _instrument_book_search() -> Iterator[dict[str, TimingProbe]]:
 def _run_once(
     *,
     query: str,
-    folder_paths: list[str] | None,
+    knowledge_folders: list[str] | None,
     thread_id: str | None,
     user_id: str | None,
     top_k: int,
@@ -206,7 +206,7 @@ def _run_once(
         thread_id=thread_id,
         user_id=user_id,
         top_k=top_k,
-        folder_paths=folder_paths,
+        folder_paths=knowledge_folders,
     )
 
     with _instrument_book_search() as probes:
@@ -214,7 +214,7 @@ def _run_once(
             tool_callable,
             runtime,
             query,
-            folder_paths=folder_paths,
+            knowledge_folders=knowledge_folders,
         )
 
     return BenchmarkResult(
@@ -278,17 +278,17 @@ def main() -> int:
     print("book_search benchmark")
     print(f"  config: {args.config}")
     print(f"  query: {args.query}")
-    print(f"  folder_paths: {args.folder_paths or '-'}")
+    print(f"  knowledge_folders: {args.knowledge_folders or '-'}")
     print(f"  runs: {args.runs}")
     print(f"  thread_id: {args.thread_id or '-'}")
     print(f"  user_id: {args.user_id or '-'}")
 
-    parsed_folder_paths = _parse_loose_list(args.folder_paths)
+    parsed_knowledge_folders = _parse_loose_list(args.knowledge_folders)
     results: list[BenchmarkResult] = []
     for index in range(1, args.runs + 1):
         result = _run_once(
             query=args.query,
-            folder_paths=parsed_folder_paths,
+            knowledge_folders=parsed_knowledge_folders,
             thread_id=args.thread_id,
             user_id=args.user_id,
             top_k=args.top_k,

@@ -286,6 +286,7 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
             summary="用户材料",
             priority=0,
             score=5.0,
+            folder_path="人物传记/晚清",
         ),
         BookCatalogEntry(
             doc_id="core-1",
@@ -306,6 +307,7 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
             summary="核心通史",
             priority=1,
             score=4.0,
+            folder_path="人物传记/晚清",
         ),
         BookCatalogEntry(
             doc_id="spec-1",
@@ -326,6 +328,7 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
             summary="专题支撑",
             priority=2,
             score=3.0,
+            folder_path="人物传记/晚清",
         ),
         BookCatalogEntry(
             doc_id="ref-1",
@@ -346,18 +349,20 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
             summary="参考资料",
             priority=3,
             score=2.0,
+            folder_path="人物传记/晚清",
         ),
     ]
     monkeypatch.setattr(
         tools_module,
         "search_book_catalog",
-        lambda query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None: candidates,
+        lambda query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None, entries=None: candidates,
     )
+    monkeypatch.setattr(tools_module, "list_book_catalog", lambda thread_id=None, user_id=None: candidates)
 
     output = tools_module.book_search_tool.func(
         SimpleNamespace(context={}),
         "任意问题",
-        folder_paths=["人物传记/晚清"],
+        knowledge_folders=["人物传记/晚清"],
     )
 
     assert "### 用户书籍" in output
@@ -374,56 +379,149 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料" in output
 
 
-def test_book_search_tool_does_not_rebuild_directory_tree(monkeypatch) -> None:
-    monkeypatch.setattr(
-        tools_module,
-        "search_book_catalog",
-        lambda query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None: [],
-    )
-    monkeypatch.setattr(
-        tools_module,
-        "list_book_catalog",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("book_search_tool should not list the catalog")),
-    )
+def test_book_search_tool_lists_catalog_once_and_reuses_entries(monkeypatch) -> None:
+    list_calls = 0
+    captured: dict[str, object] = {}
+
+    def fake_list_book_catalog(thread_id=None, user_id=None):
+        nonlocal list_calls
+        list_calls += 1
+        return [
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="global.md",
+                scope="global",
+                source_path="/tmp/global.md",
+                source_url="/api/knowledge/docs/global.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+                type="core",
+                folder_path="人物传记/晚清",
+            )
+        ]
+
+    def fake_search(query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None, entries=None):
+        captured["entries"] = entries
+        return []
+
+    monkeypatch.setattr(tools_module, "list_book_catalog", fake_list_book_catalog)
+    monkeypatch.setattr(tools_module, "search_book_catalog", fake_search)
 
     output = tools_module.book_search_tool.func(
         SimpleNamespace(context={}),
         "任意问题",
-        folder_paths=["人物传记/晚清"],
+        knowledge_folders=["人物传记/晚清"],
     )
 
     assert output == "No likely books found for this query."
+    assert list_calls == 1
+    assert captured["entries"] is not None
 
 
 def test_book_search_tool_uses_larger_top_k(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_search(query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None):
+    def fake_search(query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None, entries=None):
         captured["top_k"] = top_k
         return []
 
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="global.md",
+                scope="global",
+                source_path="/tmp/global.md",
+                source_url="/api/knowledge/docs/global.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+                type="core",
+                folder_path="人物传记/晚清",
+            )
+        ],
+    )
     monkeypatch.setattr(tools_module, "search_book_catalog", fake_search)
 
     tools_module.book_search_tool.func(
         SimpleNamespace(context={}),
         "任意问题",
-        folder_paths=["人物传记/晚清"],
+        knowledge_folders=["人物传记/晚清"],
     )
 
     assert captured["top_k"] == 20
 
 
-def test_book_search_tool_requires_folder_paths(monkeypatch) -> None:
+def test_book_search_tool_requires_knowledge_folders(monkeypatch) -> None:
     monkeypatch.setattr(
         tools_module,
-        "search_book_catalog",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("book_search should not run without folder_paths")),
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="global.md",
+                scope="global",
+                source_path="/tmp/global.md",
+                source_url="/api/knowledge/docs/global.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+                type="core",
+                folder_path="人物传记/晚清",
+            )
+        ],
     )
 
-    output = tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
+    output = tools_module.book_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        knowledge_folders=None,
+    )
 
     assert "Error: `book_search` 禁止整库全量搜索" in output
-    assert "`folder_paths`" in output
+    assert "`knowledge_folders`" in output
+    assert "## 可见知识库目录树" in output
+
+
+def test_book_search_tool_rejects_local_filesystem_knowledge_folders(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="global.md",
+                scope="global",
+                source_path="/tmp/global.md",
+                source_url="/api/knowledge/docs/global.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+                type="core",
+                folder_path="人物传记/晚清",
+            )
+        ],
+    )
+
+    output = tools_module.book_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        knowledge_folders=["/mnt/user-data/uploads"],
+    )
+
+    assert "看起来像本地 sandbox 路径或文件名" in output
+    assert "## 可见知识库目录树" in output
 
 
 def test_search_book_catalog_can_reuse_prelisted_entries(monkeypatch) -> None:
@@ -485,6 +583,7 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
                 preview="",
                 search_text="global",
                 search_tokens=["global"],
+                folder_path="财政史/清代",
             ),
             BookCatalogEntry(
                 doc_id="global-doc-2",
@@ -497,6 +596,7 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
                 preview="",
                 search_text="global",
                 search_tokens=["global"],
+                folder_path="财政史/清代",
             ),
         ],
     )
@@ -506,6 +606,7 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
         "民国时期财政情况",
         doc_ids="global-doc,global-doc-2",
         scopes="global",
+        knowledge_folders=["财政史/清代"],
     )
 
     assert captured["doc_ids"] == ["global-doc", "global-doc-2"]
@@ -538,6 +639,7 @@ def test_knowledge_search_tool_accepts_loose_doc_id_delimiters(monkeypatch) -> N
                 preview="",
                 search_text="global",
                 search_tokens=["global"],
+                folder_path="财政史/清代",
             ),
             BookCatalogEntry(
                 doc_id="global-doc-2",
@@ -550,6 +652,7 @@ def test_knowledge_search_tool_accepts_loose_doc_id_delimiters(monkeypatch) -> N
                 preview="",
                 search_text="global",
                 search_tokens=["global"],
+                folder_path="财政史/清代",
             ),
             BookCatalogEntry(
                 doc_id="global-doc-3",
@@ -562,6 +665,7 @@ def test_knowledge_search_tool_accepts_loose_doc_id_delimiters(monkeypatch) -> N
                 preview="",
                 search_text="global",
                 search_tokens=["global"],
+                folder_path="财政史/清代",
             ),
         ],
     )
@@ -570,6 +674,7 @@ def test_knowledge_search_tool_accepts_loose_doc_id_delimiters(monkeypatch) -> N
         SimpleNamespace(context={}),
         "任意问题",
         doc_ids="global-doc-1，global-doc-2；\nglobal-doc-3",
+        knowledge_folders=["财政史/清代"],
     )
 
     assert captured["doc_ids"] == ["global-doc-1", "global-doc-2", "global-doc-3"]
@@ -601,6 +706,7 @@ def test_knowledge_search_tool_accepts_doc_id_arrays(monkeypatch) -> None:
                 preview="",
                 search_text="global",
                 search_tokens=["global"],
+                folder_path="财政史/清代",
             ),
             BookCatalogEntry(
                 doc_id="global-doc-2",
@@ -613,6 +719,7 @@ def test_knowledge_search_tool_accepts_doc_id_arrays(monkeypatch) -> None:
                 preview="",
                 search_text="global",
                 search_tokens=["global"],
+                folder_path="财政史/清代",
             ),
         ],
     )
@@ -621,12 +728,13 @@ def test_knowledge_search_tool_accepts_doc_id_arrays(monkeypatch) -> None:
         SimpleNamespace(context={}),
         "任意问题",
         doc_ids=["global-doc-1", "global-doc-2"],
+        knowledge_folders=["财政史/清代"],
     )
 
     assert captured["doc_ids"] == ["global-doc-1", "global-doc-2"]
 
 
-def test_knowledge_search_tool_forwards_folder_paths(monkeypatch) -> None:
+def test_knowledge_search_tool_forwards_knowledge_folders(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class _DummyRetriever:
@@ -637,14 +745,85 @@ def test_knowledge_search_tool_forwards_folder_paths(monkeypatch) -> None:
     retriever_stub = ModuleType("src.community.knowledge_base.retriever")
     retriever_stub.get_retriever = lambda: _DummyRetriever()
     monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="global.md",
+                scope="global",
+                source_path="/tmp/global.md",
+                source_url="/api/knowledge/docs/global.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+                type="core",
+                folder_path="财政史/清代",
+            ),
+            BookCatalogEntry(
+                doc_id="global-doc-2",
+                title="Global Book 2",
+                filename="global-2.md",
+                scope="global",
+                source_path="/tmp/global-2.md",
+                source_url="/api/knowledge/docs/global-2.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+                type="specialized",
+                folder_path="财政史/晚清",
+            ),
+        ],
+    )
 
     tools_module.knowledge_search_tool.func(
         SimpleNamespace(context={}),
         "晚清财政情况",
-        folder_paths=["财政史/清代", "财政史/晚清"],
+        knowledge_folders=["财政史/清代", "财政史/晚清"],
     )
 
     assert captured["folder_paths"] == ["财政史/清代", "财政史/晚清"]
+
+
+def test_knowledge_search_tool_requires_knowledge_folders(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="global.md",
+                scope="global",
+                source_path="/tmp/global.md",
+                source_url="/api/knowledge/docs/global.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+                type="core",
+                folder_path="财政史/清代",
+            )
+        ],
+    )
+
+    output = tools_module.knowledge_search_tool.func(
+        SimpleNamespace(context={}),
+        "晚清财政情况",
+        knowledge_folders=None,
+    )
+
+    assert "Error: `knowledge_search` 必须传入 `knowledge_folders`" in output
+    assert "## 可见知识库目录树" in output
+
+
+def test_tool_schema_marks_knowledge_folders_as_required() -> None:
+    assert tools_module.book_search_tool.args_schema.model_fields["knowledge_folders"].is_required()
+    assert tools_module.knowledge_search_tool.args_schema.model_fields["knowledge_folders"].is_required()
 
 
 def test_knowledge_search_tool_rejects_mixed_layer_doc_ids(monkeypatch) -> None:
@@ -667,6 +846,7 @@ def test_knowledge_search_tool_rejects_mixed_layer_doc_ids(monkeypatch) -> None:
                 search_text="user",
                 search_tokens=["user"],
                 type="user",
+                folder_path="用户资料/人物",
             ),
             BookCatalogEntry(
                 doc_id="reference-doc",
@@ -680,6 +860,7 @@ def test_knowledge_search_tool_rejects_mixed_layer_doc_ids(monkeypatch) -> None:
                 search_text="ref",
                 search_tokens=["ref"],
                 type="reference",
+                folder_path="参考资料/工具书",
             ),
         ],
     )
@@ -688,6 +869,7 @@ def test_knowledge_search_tool_rejects_mixed_layer_doc_ids(monkeypatch) -> None:
         SimpleNamespace(context={"thread_id": "thread-1", "user_id": "user-1"}),
         "任意问题",
         doc_ids="user-doc,reference-doc",
+        knowledge_folders=["用户资料/人物", "参考资料/工具书"],
     )
 
     assert "Error: 当前 `doc_ids` 混入了不同层级的书目" in output
@@ -720,6 +902,26 @@ def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) 
     monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
     monkeypatch.setattr(
         tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="finance.md",
+                scope="global",
+                source_path="/tmp/finance.md",
+                source_url="/api/knowledge/docs/finance.md",
+                original_url=None,
+                preview="",
+                search_text="finance",
+                search_tokens=["finance"],
+                type="core",
+                folder_path="财政史/民国",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        tools_module,
         "resolve_result_citation_context",
         lambda result, thread_id=None, user_id=None: {
             "source_url": "/api/knowledge/docs/finance.md",
@@ -740,6 +942,7 @@ def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) 
         "民国时期财政情况",
         doc_ids="global-doc",
         scopes="global",
+        knowledge_folders=["财政史/民国"],
     )
 
     assert "不要随手改成更空泛的短词" in output
@@ -755,12 +958,33 @@ def test_knowledge_search_tool_no_result_guides_grounded_retries_before_web(monk
     retriever_stub = ModuleType("src.community.knowledge_base.retriever")
     retriever_stub.get_retriever = lambda: _DummyRetriever()
     monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="core-doc",
+                title="Core Book",
+                filename="core.md",
+                scope="global",
+                source_path="/tmp/core.md",
+                source_url="/api/knowledge/docs/core.md",
+                original_url=None,
+                preview="",
+                search_text="core",
+                search_tokens=["core"],
+                type="core",
+                folder_path="财政史/清代",
+            )
+        ],
+    )
 
     output = tools_module.knowledge_search_tool.func(
         SimpleNamespace(context={}),
         "清代末期财政情况",
         doc_ids="core-doc",
         scopes="global",
+        knowledge_folders=["财政史/清代"],
     )
 
     assert "不要因为这一轮空结果就直接换到别的书层" in output

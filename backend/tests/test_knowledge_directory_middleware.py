@@ -100,6 +100,8 @@ def test_knowledge_directory_middleware_injects_tree_into_system_message(monkeyp
     assert isinstance(system_message, SystemMessage)
     assert "base-system" in str(system_message.content)
     assert "<knowledge_directory_tree>" in str(system_message.content)
+    assert "直接从这里复制目录名填写 `knowledge_folders`" in str(system_message.content)
+    assert "不是 sandbox / 容器 / 本地文件系统路径" in str(system_message.content)
     assert "用户书籍/" in str(system_message.content)
     assert "财政史/" in str(system_message.content)
     assert "晚清财政史料 [doc_id=uk_1]" in str(system_message.content)

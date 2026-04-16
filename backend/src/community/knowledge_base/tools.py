@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any, Generic, TYPE_CHECKING, TypeVar
 try:
     from langchain.tools import ToolRuntime, tool
@@ -26,7 +27,9 @@ from src.community.knowledge_base.catalog import (
     REFERENCE_TYPE,
     SPECIALIZED_TYPE,
     BookCatalogEntry,
+    filter_book_catalog_entries,
     list_book_catalog,
+    render_book_catalog_directory_tree,
     search_book_catalog,
 )
 from src.community.knowledge_base.book_metadata import normalize_folder_path
@@ -91,6 +94,12 @@ def _parse_folder_paths(folder_paths: str | list[str] | tuple[str, ...] | None) 
     return parsed or None
 
 
+def _parse_knowledge_folders(
+    knowledge_folders: str | list[str] | tuple[str, ...] | None,
+) -> list[str] | None:
+    return _parse_folder_paths(knowledge_folders)
+
+
 def _coerce_runtime_string_list(value: object) -> list[str] | None:
     if value is None:
         return None
@@ -124,6 +133,70 @@ def _runtime_selected_doc_ids(runtime: ToolRuntime[ContextT, ThreadState]) -> li
 def _runtime_selected_scopes(runtime: ToolRuntime[ContextT, ThreadState]) -> list[str] | None:
     selected_scopes = _coerce_runtime_string_list(runtime.context.get("selected_sources_scope"))
     return _parse_scopes(",".join(selected_scopes)) if selected_scopes else None
+
+
+def _entry_folder_path(entry: BookCatalogEntry) -> str | None:
+    normalized = normalize_folder_path(entry.folder_path)
+    if normalized:
+        return normalized
+    relative_parent = normalize_folder_path(str(Path(entry.filename).parent))
+    if relative_parent:
+        return relative_parent
+    return None
+
+
+def _entry_matches_any_knowledge_folder(entry: BookCatalogEntry, knowledge_folders: list[str]) -> bool:
+    entry_folder = _entry_folder_path(entry)
+    if not entry_folder:
+        return False
+    return any(
+        entry_folder == folder or entry_folder.startswith(f"{folder}/")
+        for folder in knowledge_folders
+    )
+
+
+def _visible_catalog_entries(
+    *,
+    thread_id: str | None,
+    user_id: str | None,
+    selected_doc_ids: list[str] | None,
+    selected_scopes: list[str] | None,
+) -> list[BookCatalogEntry]:
+    return filter_book_catalog_entries(
+        list_book_catalog(thread_id=thread_id, user_id=user_id),
+        doc_ids=selected_doc_ids,
+        scopes=selected_scopes,
+    )
+
+
+def _build_knowledge_folder_guidance(
+    *,
+    visible_entries: list[BookCatalogEntry],
+    reason: str,
+) -> str:
+    directory_tree = render_book_catalog_directory_tree(visible_entries) or "（当前范围没有可见知识库目录）"
+    return (
+        f"{reason}\n"
+        "`knowledge_folders` 指的是知识库目录树中的逻辑目录，不是 sandbox / 容器 / 本地文件系统路径。\n"
+        "不要把它理解成 `/mnt/...`、`./...`、`knowledge/docs/...` 这类本地目录，也不要试图通过 `ls`、`read_file`、`bash` 等其他方式自己推断它。\n"
+        "请直接从下面的知识库目录树中复制目录名来填写 `knowledge_folders`。\n\n"
+        "## 可见知识库目录树\n\n"
+        f"{directory_tree}\n\n"
+        "示例: `knowledge_folders=[\"人物传记/晚清\", \"档案资料/盛宣怀\"]`"
+    )
+
+
+def _looks_like_local_filesystem_path(value: str) -> bool:
+    normalized = value.strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    return (
+        normalized.startswith(("/", "./", "../", "~"))
+        or lowered.startswith(("mnt/", "knowledge/", "backend/", "frontend/"))
+        or "\\" in normalized
+        or lowered.endswith((".pdf", ".md", ".txt", ".json", ".jsonl"))
+    )
 
 
 def _intersect_doc_ids(
@@ -424,7 +497,7 @@ def _validate_single_layer_doc_ids(
 def book_search_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     query: str,
-    folder_paths: list[str] | None = None,
+    knowledge_folders: list[str],
 ) -> str:
     """Search candidate books before full-text retrieval.
 
@@ -434,20 +507,41 @@ def book_search_tool(
 
     Args:
         query: The user's research question or topic description.
-        folder_paths: Required folder-path array. `book_search` is not allowed
-            to run as a whole-corpus catalog search; it must stay inside the
-            folders chosen from the injected knowledge directory tree.
+        knowledge_folders: Required knowledge-base folder array. These are
+            logical folders from the injected knowledge directory tree, not
+            sandbox/local filesystem paths. `book_search` is not allowed to run
+            as a whole-corpus catalog search; it must stay inside the chosen
+            knowledge folders.
     """
     thread_id = runtime.context.get("thread_id")
     user_id = runtime.context.get("user_id")
     selected_doc_ids = _runtime_selected_doc_ids(runtime)
     selected_scopes = _runtime_selected_scopes(runtime)
-    parsed_folder_paths = _parse_folder_paths(folder_paths)
-    if not parsed_folder_paths:
-        return (
-            "Error: `book_search` 禁止整库全量搜索，必须传入 `folder_paths`。\n"
-            "请先阅读 system context 中的 `<knowledge_directory_tree>`，选出最可能相关的文件夹后再调用。\n"
-            "示例: `folder_paths=[\"人物传记/晚清\", \"档案资料/盛宣怀\"]`"
+    visible_entries = _visible_catalog_entries(
+        thread_id=thread_id,
+        user_id=user_id,
+        selected_doc_ids=selected_doc_ids,
+        selected_scopes=selected_scopes,
+    )
+    raw_knowledge_folders = _split_loose_delimited_values(knowledge_folders) or []
+    parsed_knowledge_folders = _parse_knowledge_folders(knowledge_folders)
+    if not parsed_knowledge_folders:
+        return _build_knowledge_folder_guidance(
+            visible_entries=visible_entries,
+            reason="Error: `book_search` 禁止整库全量搜索，必须传入 `knowledge_folders`。",
+        )
+    if any(_looks_like_local_filesystem_path(folder) for folder in raw_knowledge_folders):
+        return _build_knowledge_folder_guidance(
+            visible_entries=visible_entries,
+            reason="Error: 你传入的 `knowledge_folders` 看起来像本地 sandbox 路径或文件名，不是知识库逻辑目录。",
+        )
+    if not any(
+        _entry_matches_any_knowledge_folder(entry, parsed_knowledge_folders)
+        for entry in visible_entries
+    ):
+        return _build_knowledge_folder_guidance(
+            visible_entries=visible_entries,
+            reason="Error: 当前 `knowledge_folders` 在知识库目录树中没有匹配到任何可见目录。",
         )
     candidates = search_book_catalog(
         query,
@@ -456,7 +550,8 @@ def book_search_tool(
         top_k=BOOK_SEARCH_TOP_K,
         doc_ids=selected_doc_ids,
         scopes=selected_scopes,
-        folder_paths=parsed_folder_paths,
+        folder_paths=parsed_knowledge_folders,
+        entries=visible_entries,
     )
     if not candidates:
         if selected_doc_ids:
@@ -507,8 +602,8 @@ def book_search_tool(
         lines.append(f"specialized doc_ids: {specialized_doc_ids}")
     if reference_doc_ids:
         lines.append(f"reference doc_ids: {reference_doc_ids}")
-    if parsed_folder_paths:
-        lines.append(f"folder_paths: {', '.join(parsed_folder_paths)}")
+    if parsed_knowledge_folders:
+        lines.append(f"knowledge_folders: {', '.join(parsed_knowledge_folders)}")
     return "\n".join(lines)
 
 
@@ -516,9 +611,9 @@ def book_search_tool(
 def knowledge_search_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     query: str,
+    knowledge_folders: list[str],
     doc_ids: str | list[str] | tuple[str, ...] | set[str] | None = None,
     scopes: str | None = None,
-    folder_paths: list[str] | None = None,
 ) -> str:
     """Search the internal knowledge base for domain-specific information.
 
@@ -540,9 +635,11 @@ def knowledge_search_tool(
     5. `scopes` is a hard filter. If you already pass `doc_ids` from
        `book_search`, do not also force an incompatible scope. When in doubt,
        omit `scopes` and let the `doc_ids` control the search.
-    6. If the directory tree already makes the likely folders clear, pass
-       `folder_paths` so retrieval stays inside those folders before you widen.
-    7. Keep `query` close to the user's wording and key anchors. Preserve
+    6. Always pass `knowledge_folders` so retrieval stays inside the logical
+       knowledge-base folders chosen from the directory tree.
+    7. Reuse the same `knowledge_folders` you chose for `book_search` unless
+       you are intentionally widening or switching to another knowledge folder.
+    8. Keep `query` close to the user's wording and key anchors. Preserve
        book names, people, periods, institutions, years, and policy terms.
        Prefer a sentence-like professional query over a keyword pile-up.
        Do not write a bag of terms like `清代末期财政情况 财政收支结构 财政政策 财政危机`.
@@ -563,13 +660,12 @@ def knowledge_search_tool(
             Prefer this for narrowing to known relevant books.
         scopes: Optional comma-separated hard filters: `user`, `thread`, `global`.
             Only set this when you intentionally want to exclude other scopes.
-        folder_paths: Optional folder-path array. When provided, restrict search
-            to documents under these folders or subfolders.
+        knowledge_folders: Required knowledge-base folder array. These are
+            logical folders from the injected knowledge directory tree, not
+            sandbox/local filesystem paths. Reuse the same folders chosen for
+            `book_search` unless you intentionally want to widen/switch folders.
     """
     try:
-        from src.community.knowledge_base.retriever import get_retriever
-
-        retriever = get_retriever()
         thread_id = runtime.context.get("thread_id")
         user_id = runtime.context.get("user_id")
         parsed_doc_ids = _parse_doc_ids(doc_ids)
@@ -582,7 +678,35 @@ def knowledge_search_tool(
             )
         parsed_scopes = _parse_scopes(scopes)
         selected_scopes = _runtime_selected_scopes(runtime)
-        parsed_folder_paths = _parse_folder_paths(folder_paths)
+        visible_entries = _visible_catalog_entries(
+            thread_id=thread_id,
+            user_id=user_id,
+            selected_doc_ids=selected_doc_ids,
+            selected_scopes=selected_scopes,
+        )
+        raw_knowledge_folders = _split_loose_delimited_values(knowledge_folders) or []
+        parsed_knowledge_folders = _parse_knowledge_folders(knowledge_folders)
+        if not parsed_knowledge_folders:
+            return _build_knowledge_folder_guidance(
+                visible_entries=visible_entries,
+                reason="Error: `knowledge_search` 必须传入 `knowledge_folders`，禁止在未指定知识库目录的情况下直接检索。",
+            )
+        if any(_looks_like_local_filesystem_path(folder) for folder in raw_knowledge_folders):
+            return _build_knowledge_folder_guidance(
+                visible_entries=visible_entries,
+                reason="Error: 你传入的 `knowledge_folders` 看起来像本地 sandbox 路径或文件名，不是知识库逻辑目录。",
+            )
+        if not any(
+            _entry_matches_any_knowledge_folder(entry, parsed_knowledge_folders)
+            for entry in visible_entries
+        ):
+            return _build_knowledge_folder_guidance(
+                visible_entries=visible_entries,
+                reason="Error: 当前 `knowledge_folders` 在知识库目录树中没有匹配到任何可见目录。",
+            )
+        from src.community.knowledge_base.retriever import get_retriever
+
+        retriever = get_retriever()
         mixed_layer_error = _validate_single_layer_doc_ids(
             effective_doc_ids,
             thread_id=thread_id,
@@ -602,7 +726,7 @@ def knowledge_search_tool(
             user_id=user_id,
             doc_ids=effective_doc_ids,
             scopes=effective_scopes,
-            folder_paths=parsed_folder_paths,
+            folder_paths=parsed_knowledge_folders,
         )
     except Exception as e:
         return f"Error searching knowledge base: {e}"

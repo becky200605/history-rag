@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Generic, TYPE_CHECKING, TypeVar
 try:
     from langchain.tools import ToolRuntime, tool
@@ -49,26 +50,44 @@ HISTORICAL_TOPIC_RETRY_HINTS = ("情况", "概况", "变化", "变迁", "问题"
 FINANCE_RETRY_FACETS = ("财政收入结构", "财政支出结构", "财政政策")
 
 
-def _parse_doc_ids(doc_ids: str | None) -> list[str] | None:
+def _split_loose_delimited_values(
+    value: str | list[str] | tuple[str, ...] | set[str] | None,
+) -> list[str] | None:
+    if value is None:
+        return None
+
+    raw_items = [value] if isinstance(value, str) else list(value)
+    parsed: list[str] = []
+    seen: set[str] = set()
+
+    for raw_item in raw_items:
+        for candidate in re.split(r"[,，、;\n；]+", str(raw_item)):
+            normalized = candidate.strip().strip("`\"'")
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            parsed.append(normalized)
+
+    return parsed or None
+
+
+def _parse_doc_ids(doc_ids: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str] | None:
     if not doc_ids:
         return None
-    parsed = [item.strip() for item in doc_ids.split(",") if item.strip()]
-    return parsed or None
+    return _split_loose_delimited_values(doc_ids)
 
 
 def _parse_folder_paths(folder_paths: str | list[str] | tuple[str, ...] | None) -> list[str] | None:
     if folder_paths is None:
         return None
-    raw_items = [folder_paths] if isinstance(folder_paths, str) else list(folder_paths)
     parsed: list[str] = []
     seen: set[str] = set()
-    for raw_item in raw_items:
-        for candidate in str(raw_item).split(","):
-            normalized = normalize_folder_path(candidate)
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            parsed.append(normalized)
+    for candidate in _split_loose_delimited_values(folder_paths) or []:
+        normalized = normalize_folder_path(candidate)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        parsed.append(normalized)
     return parsed or None
 
 
@@ -490,7 +509,7 @@ def book_search_tool(
 def knowledge_search_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     query: str,
-    doc_ids: str | None = None,
+    doc_ids: str | list[str] | tuple[str, ...] | set[str] | None = None,
     scopes: str | None = None,
     folder_paths: list[str] | None = None,
 ) -> str:
@@ -531,7 +550,9 @@ def knowledge_search_tool(
         query: Search terms describing what evidence you need. Prefer
             sentence-like, source-anchored phrasing over keyword pile-ups or
             meta narration.
-        doc_ids: Optional comma-separated candidate book IDs from `book_search`.
+        doc_ids: Optional candidate book IDs from `book_search`. Supports a
+            string or array input. When passing a string, English commas,
+            Chinese commas, semicolons, `、`, and newlines are all accepted.
             Prefer this for narrowing to known relevant books.
         scopes: Optional comma-separated hard filters: `user`, `thread`, `global`.
             Only set this when you intentionally want to exclude other scopes.

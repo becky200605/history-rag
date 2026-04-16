@@ -487,6 +487,120 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
     assert captured["scopes"] == ["global"]
 
 
+def test_knowledge_search_tool_accepts_loose_doc_id_delimiters(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _DummyRetriever:
+        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None, folder_paths=None):
+            captured["doc_ids"] = doc_ids
+            return []
+
+    retriever_stub = ModuleType("src.community.knowledge_base.retriever")
+    retriever_stub.get_retriever = lambda: _DummyRetriever()
+    monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc-1",
+                title="Global Book 1",
+                filename="global-1.md",
+                scope="global",
+                source_path="/tmp/global-1.md",
+                source_url="/api/knowledge/docs/global-1.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+            ),
+            BookCatalogEntry(
+                doc_id="global-doc-2",
+                title="Global Book 2",
+                filename="global-2.md",
+                scope="global",
+                source_path="/tmp/global-2.md",
+                source_url="/api/knowledge/docs/global-2.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+            ),
+            BookCatalogEntry(
+                doc_id="global-doc-3",
+                title="Global Book 3",
+                filename="global-3.md",
+                scope="global",
+                source_path="/tmp/global-3.md",
+                source_url="/api/knowledge/docs/global-3.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+            ),
+        ],
+    )
+
+    tools_module.knowledge_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        doc_ids="global-doc-1，global-doc-2；\nglobal-doc-3",
+    )
+
+    assert captured["doc_ids"] == ["global-doc-1", "global-doc-2", "global-doc-3"]
+
+
+def test_knowledge_search_tool_accepts_doc_id_arrays(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _DummyRetriever:
+        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None, folder_paths=None):
+            captured["doc_ids"] = doc_ids
+            return []
+
+    retriever_stub = ModuleType("src.community.knowledge_base.retriever")
+    retriever_stub.get_retriever = lambda: _DummyRetriever()
+    monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc-1",
+                title="Global Book 1",
+                filename="global-1.md",
+                scope="global",
+                source_path="/tmp/global-1.md",
+                source_url="/api/knowledge/docs/global-1.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+            ),
+            BookCatalogEntry(
+                doc_id="global-doc-2",
+                title="Global Book 2",
+                filename="global-2.md",
+                scope="global",
+                source_path="/tmp/global-2.md",
+                source_url="/api/knowledge/docs/global-2.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+            ),
+        ],
+    )
+
+    tools_module.knowledge_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        doc_ids=["global-doc-1", "global-doc-2"],
+    )
+
+    assert captured["doc_ids"] == ["global-doc-1", "global-doc-2"]
+
+
 def test_knowledge_search_tool_forwards_folder_paths(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

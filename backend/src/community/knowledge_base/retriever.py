@@ -404,6 +404,15 @@ class KnowledgeBaseRetriever:
             scopes=scopes,
             folder_paths=folder_paths,
         )
+        logger.info(
+            "Knowledge effective doc_ids resolution: requested_doc_ids=%s scopes=%s folder_paths=%s matched_entries=%s thread_id=%s has_user=%s",
+            len(doc_ids or []),
+            ",".join(scopes or []),
+            ",".join(folder_paths or []),
+            len(visible_entries),
+            thread_id,
+            bool(user_id),
+        )
         if not visible_entries:
             return []
         return [entry.doc_id for entry in visible_entries]

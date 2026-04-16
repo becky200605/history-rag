@@ -90,6 +90,7 @@ services:
     working_dir: /app
     environment:
       - CI=true
+      - BG_JOB_ISOLATED_LOOPS=true
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

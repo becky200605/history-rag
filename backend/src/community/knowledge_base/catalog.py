@@ -1,7 +1,9 @@
 """Book-level catalog and lightweight retrieval for knowledge docs."""
 
 import json
+import logging
 import math
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -26,6 +28,8 @@ from src.community.knowledge_base.structured_document import load_structured_doc
 from src.community.knowledge_base.user_store import list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
+
+logger = logging.getLogger(__name__)
 
 BOOK_METADATA_FILENAMES = (".book_metadata.jsonl", ".book_metadata.json")
 UNFILED_FOLDER_NAME = "未分类"
@@ -708,16 +712,34 @@ def _build_user_entries(
 
 def list_book_catalog(thread_id: str | None = None, user_id: str | None = None) -> list[BookCatalogEntry]:
     """List user/global knowledge books plus optional current-thread uploads."""
+    started_at = time.perf_counter()
     kb_config = get_knowledge_base_config()
     docs_root = resolve_project_path(kb_config.docs_path)
     metadata_index = _load_book_metadata_index(docs_root)
     entries = _build_global_entries(docs_root, metadata_index)
+    global_count = len(entries)
+    user_count = 0
+    thread_count = 0
     if user_id:
         user_metadata_index = _load_book_metadata_index(get_paths().user_knowledge_docs_dir(user_id))
-        entries = _build_user_entries(user_id, user_metadata_index) + entries
+        user_entries = _build_user_entries(user_id, user_metadata_index)
+        user_count = len(user_entries)
+        entries = user_entries + entries
     if thread_id:
         thread_metadata_index = _load_book_metadata_index(get_paths().sandbox_uploads_dir(thread_id))
-        entries = _build_thread_entries(thread_id, thread_metadata_index) + entries
+        thread_entries = _build_thread_entries(thread_id, thread_metadata_index)
+        thread_count = len(thread_entries)
+        entries = thread_entries + entries
+    logger.info(
+        "Book catalog built: global=%s user=%s thread=%s total=%s thread_id=%s has_user=%s elapsed_ms=%.1f",
+        global_count,
+        user_count,
+        thread_count,
+        len(entries),
+        thread_id,
+        bool(user_id),
+        (time.perf_counter() - started_at) * 1000,
+    )
     return entries
 
 
@@ -868,6 +890,7 @@ def render_book_catalog_directory_tree(
     include_scope_roots: bool = False,
 ) -> str | None:
     """Render visible catalog entries as a simple directory tree."""
+    started_at = time.perf_counter()
     if not entries:
         return None
 
@@ -930,7 +953,15 @@ def render_book_catalog_directory_tree(
                 _render(child, prefix + ("    " if is_last else "|   "))
 
     _render(tree)
-    return "\n".join(lines)
+    rendered = "\n".join(lines)
+    logger.info(
+        "Book catalog tree rendered: entries=%s include_scope_roots=%s lines=%s elapsed_ms=%.1f",
+        len(entries),
+        include_scope_roots,
+        len(lines),
+        (time.perf_counter() - started_at) * 1000,
+    )
+    return rendered
 
 
 def search_book_catalog(

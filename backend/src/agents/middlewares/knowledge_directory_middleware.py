@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
 
 from langchain.agents import AgentState
@@ -51,16 +52,26 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
     """Add a runtime knowledge tree to the system context for source navigation."""
 
     def _visible_entries(self, request: ModelRequest) -> list:
+        started_at = time.perf_counter()
         runtime_context = request.runtime.context
         entries = list_book_catalog(
             thread_id=runtime_context.get("thread_id"),
             user_id=runtime_context.get("user_id"),
         )
-        return filter_book_catalog_entries(
+        filtered = filter_book_catalog_entries(
             entries,
             doc_ids=_coerce_runtime_string_list(runtime_context.get("selected_doc_ids")),
             scopes=_coerce_runtime_string_list(runtime_context.get("selected_sources_scope")),
         )
+        logger.info(
+            "KnowledgeDirectory visible entries built: total=%s filtered=%s thread_id=%s has_user=%s elapsed_ms=%.1f",
+            len(entries),
+            len(filtered),
+            runtime_context.get("thread_id"),
+            bool(runtime_context.get("user_id")),
+            (time.perf_counter() - started_at) * 1000,
+        )
+        return filtered
 
     def _occupied_folder_paths_by_scope(self, entries: list) -> dict[str, set[str]]:
         occupied: dict[str, set[str]] = {"user": set(), "global": set()}
@@ -77,6 +88,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         return occupied
 
     def _build_empty_folder_section(self, request: ModelRequest, entries: list) -> str | None:
+        started_at = time.perf_counter()
         runtime_context = request.runtime.context
         if _coerce_runtime_string_list(runtime_context.get("selected_doc_ids")):
             return None
@@ -108,6 +120,11 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
                 sections.append(("系统知识库空文件夹", global_folders))
 
         if not sections:
+            logger.info(
+                "KnowledgeDirectory empty folder section skipped: entries=%s elapsed_ms=%.1f",
+                len(entries),
+                (time.perf_counter() - started_at) * 1000,
+            )
             return None
 
         lines = [
@@ -121,6 +138,11 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
                 lines.append(f"- {folder}")
             lines.append("")
         lines.append("</empty_knowledge_folders>")
+        logger.info(
+            "KnowledgeDirectory empty folder section built: section_count=%s elapsed_ms=%.1f",
+            len(sections),
+            (time.perf_counter() - started_at) * 1000,
+        )
         return "\n".join(lines)
 
     def _has_directory_tree(self, request: ModelRequest) -> bool:
@@ -129,6 +151,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         return any(_contains_injected_directory_block(message) for message in request.messages)
 
     def _build_directory_block(self, request: ModelRequest) -> HumanMessage | None:
+        started_at = time.perf_counter()
         try:
             entries = self._visible_entries(request)
             directory_tree = render_book_catalog_directory_tree(entries)
@@ -137,8 +160,19 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
             return None
 
         if not directory_tree:
+            logger.info(
+                "KnowledgeDirectory directory block empty: entries=%s elapsed_ms=%.1f",
+                len(entries),
+                (time.perf_counter() - started_at) * 1000,
+            )
             return None
 
+        logger.info(
+            "KnowledgeDirectory directory block built: entries=%s tree_lines=%s elapsed_ms=%.1f",
+            len(entries),
+            len(directory_tree.splitlines()),
+            (time.perf_counter() - started_at) * 1000,
+        )
         return HumanMessage(
             content=(
                 f"{KNOWLEDGE_DIRECTORY_TAG}\n"
@@ -152,6 +186,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         )
 
     def _inject_directory_block(self, request: ModelRequest) -> ModelRequest:
+        started_at = time.perf_counter()
         if self._has_directory_tree(request):
             logger.info("Knowledge directory tree already present in model request; skipping reinjection")
             return request
@@ -179,11 +214,12 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         injected_message = HumanMessage(content=injected_content)
         patched_request = request.override(messages=[injected_message, *request.messages])
         logger.info(
-            "Injected knowledge directory block into model request: messages_before=%s messages_after=%s first_message=%s second_message=%s",
+            "Injected knowledge directory block into model request: messages_before=%s messages_after=%s first_message=%s second_message=%s elapsed_ms=%.1f",
             len(request.messages),
             len(patched_request.messages),
             _message_preview(patched_request.messages[0]) if patched_request.messages else "",
             _message_preview(patched_request.messages[1]) if len(patched_request.messages) > 1 else "",
+            (time.perf_counter() - started_at) * 1000,
         )
         return patched_request
 

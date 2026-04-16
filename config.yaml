@@ -13,7 +13,7 @@
 # Configure available LLM models for the agent to use
 
 models:
-  - name: gpt-5.4-univibe
+  - name: gpt-5.4
     display_name: gpt-5.4
     use: langchain_openai:ChatOpenAI
     model: gpt-5.4

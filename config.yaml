@@ -13,13 +13,6 @@
 # Configure available LLM models for the agent to use
 
 models:
-  - name: gpt-5.4
-    display_name: gpt-5.4
-    use: langchain_openai:ChatOpenAI
-    model: gpt-5.4
-    api_key: sk-tjPmJVSJ1aN5SHplCNvOMhsRCQjulrkn
-    base_url: https://api.univibe.cc/openai/v1
-    supports_thinking: true
 
   - name: gpt-5.4-mini
     display_name: gpt-5.4-mini
@@ -51,27 +44,6 @@ models:
   #     extra_body:
   #       thinking:
   #         type: enabled
-
-  # KBKBK-compatible OpenAI API model
-  - name: qwen3.5-27b-4bit
-    display_name: Qwen3.5 27B 4bit
-    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
-    model: mlx-community/Qwen3.5-27B-4bit
-    base_url: https://model.kbkbk.xyz/v1
-    api_key: dummy
-    max_tokens: 8192
-    request_timeout: 18000
-    supports_thinking: true
-    supports_vision: true
-
-  - name: openrouter-qwen3.6-plus-preview-free
-    display_name: OpenRouter Qwen3.6 Plus Preview (Free)
-    use: langchain_openai:ChatOpenAI
-    model: qwen/qwen3.6-plus-preview:free
-    base_url: https://openrouter.ai/api/v1
-    api_key: $OPENAI_API_KEY
-    supports_thinking: true
-    supports_vision: true
 
   - name: openrouter-qwen3.5-27b
     display_name: OpenRouter Qwen3.5-27b

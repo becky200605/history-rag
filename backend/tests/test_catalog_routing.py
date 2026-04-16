@@ -354,7 +354,11 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
         lambda query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None: candidates,
     )
 
-    output = tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
+    output = tools_module.book_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        folder_paths=["人物传记/晚清"],
+    )
 
     assert "### 用户书籍" in output
     assert "### 核心通用书" in output
@@ -382,7 +386,11 @@ def test_book_search_tool_does_not_rebuild_directory_tree(monkeypatch) -> None:
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("book_search_tool should not list the catalog")),
     )
 
-    output = tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
+    output = tools_module.book_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        folder_paths=["人物传记/晚清"],
+    )
 
     assert output == "No likely books found for this query."
 
@@ -396,9 +404,26 @@ def test_book_search_tool_uses_larger_top_k(monkeypatch) -> None:
 
     monkeypatch.setattr(tools_module, "search_book_catalog", fake_search)
 
-    tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
+    tools_module.book_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        folder_paths=["人物传记/晚清"],
+    )
 
     assert captured["top_k"] == 20
+
+
+def test_book_search_tool_requires_folder_paths(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tools_module,
+        "search_book_catalog",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("book_search should not run without folder_paths")),
+    )
+
+    output = tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
+
+    assert "Error: `book_search` 禁止整库全量搜索" in output
+    assert "`folder_paths`" in output
 
 
 def test_search_book_catalog_can_reuse_prelisted_entries(monkeypatch) -> None:

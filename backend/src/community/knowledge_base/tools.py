@@ -434,14 +434,21 @@ def book_search_tool(
 
     Args:
         query: The user's research question or topic description.
-        folder_paths: Optional folder-path array. When provided, only search
-            books inside these folders or their subfolders.
+        folder_paths: Required folder-path array. `book_search` is not allowed
+            to run as a whole-corpus catalog search; it must stay inside the
+            folders chosen from the injected knowledge directory tree.
     """
     thread_id = runtime.context.get("thread_id")
     user_id = runtime.context.get("user_id")
     selected_doc_ids = _runtime_selected_doc_ids(runtime)
     selected_scopes = _runtime_selected_scopes(runtime)
     parsed_folder_paths = _parse_folder_paths(folder_paths)
+    if not parsed_folder_paths:
+        return (
+            "Error: `book_search` 禁止整库全量搜索，必须传入 `folder_paths`。\n"
+            "请先阅读 system context 中的 `<knowledge_directory_tree>`，选出最可能相关的文件夹后再调用。\n"
+            "示例: `folder_paths=[\"人物传记/晚清\", \"档案资料/盛宣怀\"]`"
+        )
     candidates = search_book_catalog(
         query,
         thread_id=thread_id,

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -66,6 +67,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--query", default="盛宣怀 生平", help="Query passed to book_search.")
     parser.add_argument("--runs", type=int, default=3, help="Number of runs to execute.")
     parser.add_argument("--top-k", type=int, default=20, help="Top-k for direct catalog search.")
+    parser.add_argument(
+        "--folder-paths",
+        default=None,
+        help="Comma/Chinese-comma/semicolon/newline separated folder paths for book_search.",
+    )
     parser.add_argument("--thread-id", default=None, help="Optional thread_id context.")
     parser.add_argument("--user-id", default=None, help="Optional user_id context.")
     parser.add_argument(
@@ -74,6 +80,13 @@ def _parse_args() -> argparse.Namespace:
         help="Path to config.yaml.",
     )
     return parser.parse_args()
+
+
+def _parse_loose_list(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    parsed = [item.strip() for item in re.split(r"[,，、;\n；]+", value) if item.strip()]
+    return parsed or None
 
 
 def _load_env_files() -> None:
@@ -166,6 +179,7 @@ def _instrument_book_search() -> Iterator[dict[str, TimingProbe]]:
 def _run_once(
     *,
     query: str,
+    folder_paths: list[str] | None,
     thread_id: str | None,
     user_id: str | None,
     top_k: int,
@@ -192,10 +206,16 @@ def _run_once(
         thread_id=thread_id,
         user_id=user_id,
         top_k=top_k,
+        folder_paths=folder_paths,
     )
 
     with _instrument_book_search() as probes:
-        tool_output, tool_seconds = _time_call(tool_callable, runtime, query)
+        tool_output, tool_seconds = _time_call(
+            tool_callable,
+            runtime,
+            query,
+            folder_paths=folder_paths,
+        )
 
     return BenchmarkResult(
         list_seconds=list_seconds,
@@ -258,14 +278,17 @@ def main() -> int:
     print("book_search benchmark")
     print(f"  config: {args.config}")
     print(f"  query: {args.query}")
+    print(f"  folder_paths: {args.folder_paths or '-'}")
     print(f"  runs: {args.runs}")
     print(f"  thread_id: {args.thread_id or '-'}")
     print(f"  user_id: {args.user_id or '-'}")
 
+    parsed_folder_paths = _parse_loose_list(args.folder_paths)
     results: list[BenchmarkResult] = []
     for index in range(1, args.runs + 1):
         result = _run_once(
             query=args.query,
+            folder_paths=parsed_folder_paths,
             thread_id=args.thread_id,
             user_id=args.user_id,
             top_k=args.top_k,

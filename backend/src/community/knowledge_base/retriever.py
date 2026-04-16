@@ -22,6 +22,7 @@ MIN_RESULT_LIMIT = 6
 MIN_PER_QUERY_TOP_K = 4
 MAX_QUERY_VARIANTS = 8
 MAX_DOC_ID_QUERY_VARIANTS = 5
+MIN_SUBSTANTIVE_WORD_UNITS = 50
 EXACT_LOOKUP_HINTS = (
     "原文",
     "原句",
@@ -99,6 +100,17 @@ SCOPE_BOOSTS = {
 
 def _normalize_query_text(query: str) -> str:
     return re.sub(r"\s+", " ", query).strip()
+
+
+def _count_word_units(text: str) -> int:
+    return len(re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9]+", text))
+
+
+def _is_substantive_result(result: dict, *, min_word_units: int = MIN_SUBSTANTIVE_WORD_UNITS) -> bool:
+    content = str(result.get("content") or "").strip()
+    if not content:
+        return False
+    return _count_word_units(content) >= min_word_units
 
 
 def _looks_like_exact_lookup(query: str) -> bool:
@@ -550,6 +562,11 @@ class KnowledgeBaseRetriever:
                 result["query_variant"] = variant_query
                 result["query_variant_weight"] = variant_weight
                 merged_results.append(result)
+
+        if not _looks_like_exact_lookup(query):
+            merged_results = [
+                result for result in merged_results if _is_substantive_result(result)
+            ]
 
         for result in merged_results:
             result["weighted_score"] = self._score_result(result)

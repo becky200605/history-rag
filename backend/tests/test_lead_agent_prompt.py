@@ -25,8 +25,15 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Cross-Book Synthesis Rule" in prompt
     assert "Scattered Evidence Rule" in prompt
     assert "Pre-Answer Sufficiency Check" in prompt
+    assert "Todo-First Decomposition Rule" in prompt
+    assert "Planning-With-Prior-Knowledge Rule" in prompt
+    assert "One-Facet-Per-Query Rule" in prompt
+    assert "Stage-Aware Todo Rule" in prompt
     assert "Historical Person Rule" in prompt
+    assert "Historical Person Todo Rule" in prompt
+    assert "Historical Person Timeline Rule" in prompt
     assert "Historical Period Rule" in prompt
+    assert "Historical Period Stage Rule" in prompt
     assert "北洋政府" in prompt
     assert "Distributed Evidence Rule" in prompt
     assert "Historical Report Rule" in prompt
@@ -37,6 +44,7 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Catalog Rescue Rule" in prompt
     assert "Query Anchoring Rule" in prompt
     assert "Sentence-Like Query Rule" in prompt
+    assert "Detailed Query Rule" in prompt
     assert "phrase bags often miss" in prompt
     assert "Scope Is Hard Filter Rule" in prompt
     assert "Doc-ID Scope Alignment Rule" in prompt

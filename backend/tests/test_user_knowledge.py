@@ -105,6 +105,10 @@ import src.config.paths as paths_module
 from src.config.paths import Paths
 from src.community.knowledge_base.catalog import BookCatalogEntry
 
+
+def _long_text(seed: str) -> str:
+    return (seed * 80)[:240]
+
 _USER_KNOWLEDGE_ROUTER_SPEC = importlib.util.spec_from_file_location(
     "test_user_knowledge_router_module",
     Path(__file__).parent.parent / "src/gateway/routers/user_knowledge.py",
@@ -327,7 +331,7 @@ def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) 
         if "__user__" in collection_name:
             return [
                 {
-                    "content": "用户知识",
+                    "content": _long_text("用户知识"),
                     "score": 1.0,
                     "filename": "user.md",
                     "source": "user",
@@ -339,7 +343,7 @@ def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) 
         if "__thread__" in collection_name:
             return [
                 {
-                    "content": "会话知识",
+                    "content": _long_text("会话知识"),
                     "score": 1.0,
                     "filename": "thread.md",
                     "source": "thread",
@@ -350,7 +354,7 @@ def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) 
             ]
         return [
             {
-                "content": "公共知识",
+                "content": _long_text("公共知识"),
                 "score": 1.0,
                 "filename": "global.md",
                 "source": "global",
@@ -364,7 +368,7 @@ def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) 
 
     results = retriever.search("query", thread_id="thread-1", user_id="user-1")
 
-    assert [result["content"] for result in results[:3]] == ["用户知识", "会话知识", "公共知识"]
+    assert [result["metadata"]["scope"] for result in results[:3]] == ["user", "thread", "global"]
 
 
 def test_retriever_expands_broad_historical_query_and_merges_matched_queries(monkeypatch) -> None:
@@ -395,7 +399,7 @@ def test_retriever_expands_broad_historical_query_and_merges_matched_queries(mon
             filename = "user.md"
         return [
             {
-                "content": "重复片段" if scope == "global" else f"{scope}-独立片段",
+                "content": _long_text("重复片段" if scope == "global" else f"{scope}-独立片段"),
                 "score": 1.0,
                 "filename": filename,
                 "source": filename,
@@ -604,7 +608,7 @@ def test_retriever_returns_at_least_minimum_results_when_doc_ids_are_provided(mo
 
         return [
             {
-                "content": f"{scope}-片段-{index}",
+                "content": _long_text(f"{scope}-片段-{index}"),
                 "score": 1.0 - index * 0.01,
                 "filename": filename,
                 "source": filename,
@@ -631,6 +635,78 @@ def test_retriever_returns_at_least_minimum_results_when_doc_ids_are_provided(mo
     )
 
     assert len(results) == 6
+
+
+def test_retriever_filters_short_noise_for_broad_queries(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            retrieval=SimpleNamespace(top_k=3, score_threshold=0.0),
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
+    monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
+
+    monkeypatch.setattr(
+        retriever,
+        "_search_collection",
+        lambda *args, **kwargs: [
+            {
+                "content": "[盛宣怀]",
+                "score": 1.0,
+                "filename": "global.md",
+                "source": "global",
+                "page": None,
+                "source_type": "structured",
+                "metadata": {"scope": "global", "source_kind": "global_document", "doc_id": "global-doc"},
+            }
+        ],
+    )
+
+    results = retriever.search("盛宣怀 生平", scopes=["global"])
+
+    assert results == []
+
+
+def test_retriever_keeps_short_results_for_exact_lookup_queries(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            retrieval=SimpleNamespace(top_k=3, score_threshold=0.0),
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
+    monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
+
+    monkeypatch.setattr(
+        retriever,
+        "_search_collection",
+        lambda *args, **kwargs: [
+            {
+                "content": "[盛宣怀]",
+                "score": 1.0,
+                "filename": "global.md",
+                "source": "global",
+                "page": None,
+                "source_type": "structured",
+                "metadata": {"scope": "global", "source_kind": "global_document", "doc_id": "global-doc"},
+            }
+        ],
+    )
+
+    results = retriever.search("盛宣怀 第300页原文", scopes=["global"])
+
+    assert len(results) == 1
 
 
 def test_search_collection_retries_without_threshold_when_first_pass_is_empty(monkeypatch) -> None:

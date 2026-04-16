@@ -21,7 +21,10 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "book_search(query=...)" in prompt
     assert "knowledge_folders" in prompt
     assert "Knowledge Folder Semantics Rule" in prompt
+    assert "Scope Label Rule" in prompt
     assert "always pass `knowledge_folders` copied from that tree" in prompt
+    assert "<knowledge_directory_tree>" not in prompt
+    assert "Book Group Label Rule" in prompt
     assert "Knowledge Folder Carry-Forward Rule" in prompt
     assert "Layered Book Routing Rule" in prompt
     assert "Batch-Within-Layer Rule" in prompt
@@ -57,3 +60,6 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Response Staging Rule" in prompt
     assert "回答正文" in prompt
     assert "Do not refuse after the first weak retrieval pass." in prompt
+    assert "`核心通用书`" not in prompt
+    assert "`专题支撑书`" not in prompt
+    assert "`补充材料 / 参考工具书`" not in prompt

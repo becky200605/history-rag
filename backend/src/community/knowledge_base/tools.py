@@ -27,6 +27,7 @@ from src.community.knowledge_base.catalog import (
     REFERENCE_TYPE,
     SPECIALIZED_TYPE,
     BookCatalogEntry,
+    UNFILED_FOLDER_NAME,
     filter_book_catalog_entries,
     list_book_catalog,
     render_book_catalog_directory_tree,
@@ -87,6 +88,8 @@ def _parse_folder_paths(folder_paths: str | list[str] | tuple[str, ...] | None) 
     seen: set[str] = set()
     for candidate in _split_loose_delimited_values(folder_paths) or []:
         normalized = normalize_folder_path(candidate)
+        if normalized == "未归档":
+            normalized = UNFILED_FOLDER_NAME
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
@@ -98,6 +101,13 @@ def _parse_knowledge_folders(
     knowledge_folders: str | list[str] | tuple[str, ...] | None,
 ) -> list[str] | None:
     return _parse_folder_paths(knowledge_folders)
+
+
+def _normalize_knowledge_folder_candidate(value: str) -> str:
+    normalized = normalize_folder_path(value)
+    if normalized:
+        return normalized
+    return re.sub(r"\s+", " ", value.strip()).strip("/")
 
 
 def _coerce_runtime_string_list(value: object) -> list[str] | None:
@@ -142,7 +152,7 @@ def _entry_folder_path(entry: BookCatalogEntry) -> str | None:
     relative_parent = normalize_folder_path(str(Path(entry.filename).parent))
     if relative_parent:
         return relative_parent
-    return None
+    return UNFILED_FOLDER_NAME
 
 
 def _entry_matches_any_knowledge_folder(entry: BookCatalogEntry, knowledge_folders: list[str]) -> bool:
@@ -179,6 +189,7 @@ def _build_knowledge_folder_guidance(
         f"{reason}\n"
         "`knowledge_folders` 指的是知识库目录树中的逻辑目录，不是 sandbox / 容器 / 本地文件系统路径。\n"
         "也不要填写 `用户书籍`、`当前线程书籍`、`核心通用书`、`专题支撑书`、`补充材料`、`参考工具书` 这类层级标签；它们只是系统内部的分层概念，不是可检索目录。\n"
+        "也不要填写 `user`、`thread`、`global` 这类 scope 标签；它们是资料范围过滤标签，不是知识库目录。\n"
         "不要把它理解成 `/mnt/...`、`./...`、`knowledge/docs/...` 这类本地目录，也不要试图通过 `ls`、`read_file`、`bash` 等其他方式自己推断它。\n"
         "请直接从下面的知识库目录树中复制目录名来填写 `knowledge_folders`。\n\n"
         "## 可见知识库目录树\n\n"
@@ -210,11 +221,14 @@ _VIRTUAL_KNOWLEDGE_FOLDER_LABELS = {
     "参考工具书",
     "补充材料 / 参考工具书",
     "其他资料",
+    "user",
+    "thread",
+    "global",
 }
 
 
 def _looks_like_virtual_knowledge_folder_label(value: str) -> bool:
-    normalized = re.sub(r"\s+", " ", value.strip())
+    normalized = _normalize_knowledge_folder_candidate(value)
     return normalized in _VIRTUAL_KNOWLEDGE_FOLDER_LABELS
 
 

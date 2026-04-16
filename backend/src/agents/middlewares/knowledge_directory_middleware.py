@@ -37,6 +37,16 @@ def _coerce_runtime_string_list(value: object) -> list[str] | None:
     return None
 
 
+def _message_preview(message: object, *, max_chars: int = 240) -> str:
+    content = str(getattr(message, "content", "") or "").replace("\n", "\\n")
+    return content[:max_chars]
+
+
+def _contains_injected_directory_block(message: object) -> bool:
+    content = str(getattr(message, "content", "") or "").strip()
+    return content.startswith(KNOWLEDGE_DIRECTORY_TAG) and "</knowledge_directory_tree>" in content
+
+
 class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
     """Add a runtime knowledge tree to the system context for source navigation."""
 
@@ -114,13 +124,9 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         return "\n".join(lines)
 
     def _has_directory_tree(self, request: ModelRequest) -> bool:
-        system_content = str(request.system_message.content or "") if request.system_message else ""
-        if KNOWLEDGE_DIRECTORY_TAG in system_content:
+        if request.system_message and _contains_injected_directory_block(request.system_message):
             return True
-        return any(
-            KNOWLEDGE_DIRECTORY_TAG in str(getattr(message, "content", "") or "")
-            for message in request.messages
-        )
+        return any(_contains_injected_directory_block(message) for message in request.messages)
 
     def _build_directory_block(self, request: ModelRequest) -> HumanMessage | None:
         try:
@@ -147,6 +153,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
 
     def _inject_directory_block(self, request: ModelRequest) -> ModelRequest:
         if self._has_directory_tree(request):
+            logger.info("Knowledge directory tree already present in model request; skipping reinjection")
             return request
 
         directory_message = self._build_directory_block(request)
@@ -160,6 +167,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
             empty_folder_section = None
 
         if directory_message is None and empty_folder_section is None:
+            logger.info("No visible knowledge directory tree or empty-folder section available for injection")
             return request
 
         content_parts: list[str] = []
@@ -169,7 +177,15 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
             content_parts.append(empty_folder_section)
         injected_content = "\n\n".join(content_parts)
         injected_message = HumanMessage(content=injected_content)
-        return request.override(messages=[injected_message, *request.messages])
+        patched_request = request.override(messages=[injected_message, *request.messages])
+        logger.info(
+            "Injected knowledge directory block into model request: messages_before=%s messages_after=%s first_message=%s second_message=%s",
+            len(request.messages),
+            len(patched_request.messages),
+            _message_preview(patched_request.messages[0]) if patched_request.messages else "",
+            _message_preview(patched_request.messages[1]) if len(patched_request.messages) > 1 else "",
+        )
+        return patched_request
 
     def wrap_model_call(
         self,

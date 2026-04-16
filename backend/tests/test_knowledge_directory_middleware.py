@@ -111,6 +111,52 @@ def test_knowledge_directory_middleware_injects_tree_into_hidden_user_message(mo
     assert "晚清财政史料 [doc_id=uk_1]" in str(messages[0].content)
 
 
+def test_knowledge_directory_middleware_does_not_mistake_prompt_reference_for_injected_tree(monkeypatch) -> None:
+    middleware = KnowledgeDirectoryMiddleware()
+    entries = [
+        BookCatalogEntry(
+            doc_id="g_1",
+            title="盛宣怀档案",
+            filename="sheng.pdf",
+            scope="global",
+            source_path="/tmp/sheng.pdf",
+            source_url="/api/knowledge/docs/sheng.pdf",
+            original_url=None,
+            preview="",
+            search_text="盛宣怀档案 晚清人物",
+            search_tokens=["盛宣怀档案", "晚清人物"],
+            folder_path="清史/晚清名人名臣集/盛宣怀档案",
+        )
+    ]
+    monkeypatch.setattr(
+        knowledge_directory_middleware,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: entries,
+    )
+
+    captured: dict[str, object] = {}
+
+    def handler(request):
+        captured["messages"] = request.messages
+        return "ok"
+
+    request = _DummyRequest(
+        runtime=SimpleNamespace(context={"thread_id": "thread-1", "user_id": "user-1"}),
+        system_message=SystemMessage(
+            content="rules mention <knowledge_directory_tree> as a concept, but it is not injected yet"
+        ),
+        messages=[],
+    )
+
+    result = middleware.wrap_model_call(request, handler)
+
+    assert result == "ok"
+    messages = captured["messages"]
+    assert isinstance(messages[0], HumanMessage)
+    assert str(messages[0].content).startswith("<knowledge_directory_tree>")
+    assert "doc_id=g_1" in str(messages[0].content)
+
+
 def test_knowledge_directory_middleware_injects_empty_folder_candidates(monkeypatch, tmp_path) -> None:
     middleware = KnowledgeDirectoryMiddleware()
     monkeypatch.setattr(

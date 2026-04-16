@@ -109,6 +109,14 @@ def _load_knowledge_base_config(config_path: str) -> None:
     with open(config_path, encoding="utf-8") as handle:
         raw_config = yaml.safe_load(handle) or {}
     knowledge_base_config = _resolve_value_leniently(raw_config.get("knowledge_base", {}))
+    if isinstance(knowledge_base_config, dict):
+        # The benchmark only exercises book catalog search. Optional runtime
+        # integrations such as MinerU / translation gRPC are irrelevant here,
+        # and many local environments leave those env vars unset.
+        for optional_section in ("mineru", "translation_rpc"):
+            section_value = knowledge_base_config.get(optional_section)
+            if isinstance(section_value, dict) and any(value is None for value in section_value.values()):
+                knowledge_base_config.pop(optional_section, None)
     load_knowledge_base_config_from_dict(knowledge_base_config)
 
 

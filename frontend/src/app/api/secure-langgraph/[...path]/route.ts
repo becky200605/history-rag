@@ -57,6 +57,20 @@ function buildForwardHeaders(request: NextRequest) {
   return headers;
 }
 
+function nowMs() {
+  return Date.now();
+}
+
+function logSecureLangGraphTiming(
+  stage: string,
+  payload: Record<string, string | number | boolean | undefined>,
+) {
+  const parts = Object.entries(payload)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${value}`);
+  console.info(`[secure-langgraph] ${stage} ${parts.join(" ")}`.trim());
+}
+
 async function parseRequestBody(request: NextRequest) {
   if (request.method === "GET" || request.method === "HEAD") {
     return { rawBody: undefined, jsonBody: undefined as unknown };
@@ -114,11 +128,17 @@ async function getAuthenticatedSession(request: NextRequest) {
 }
 
 async function fetchUpstreamThread(threadId: string) {
+  const startedAt = nowMs();
   const response = await fetch(`${getUpstreamBaseUrl()}/threads/${threadId}`, {
     headers: {
       accept: JSON_CONTENT_TYPE,
     },
     cache: "no-store",
+  });
+  logSecureLangGraphTiming("fetch_thread", {
+    thread_id: threadId,
+    status: response.status,
+    elapsed_ms: nowMs() - startedAt,
   });
 
   if (!response.ok) {
@@ -138,8 +158,14 @@ async function ensureThreadOwnership(
   threadId: string,
   session: AuthenticatedSession,
 ) {
+  const startedAt = nowMs();
   const { response, thread } = await fetchUpstreamThread(threadId);
   if (!response.ok || !thread) {
+    logSecureLangGraphTiming("ownership_check_failed", {
+      thread_id: threadId,
+      status: response.status,
+      elapsed_ms: nowMs() - startedAt,
+    });
     return new Response(response.body, {
       status: response.status,
       headers: response.headers,
@@ -154,6 +180,7 @@ async function ensureThreadOwnership(
     typeof metadata.user_id === "string" ? metadata.user_id : undefined;
 
   if (!ownerId) {
+    const claimStartedAt = nowMs();
     const claimResponse = await fetch(
       `${getUpstreamBaseUrl()}/threads/${threadId}`,
       {
@@ -170,6 +197,11 @@ async function ensureThreadOwnership(
         }),
       },
     );
+    logSecureLangGraphTiming("ownership_claim", {
+      thread_id: threadId,
+      status: claimResponse.status,
+      elapsed_ms: nowMs() - claimStartedAt,
+    });
 
     if (!claimResponse.ok) {
       return new Response(claimResponse.body, {
@@ -178,13 +210,30 @@ async function ensureThreadOwnership(
       });
     }
 
+    logSecureLangGraphTiming("ownership_check", {
+      thread_id: threadId,
+      owner_missing: true,
+      elapsed_ms: nowMs() - startedAt,
+    });
     return null;
   }
 
   if (ownerId !== session.user.id) {
+    logSecureLangGraphTiming("ownership_check", {
+      thread_id: threadId,
+      owner_missing: false,
+      owner_match: false,
+      elapsed_ms: nowMs() - startedAt,
+    });
     return jsonResponse({ message: "Forbidden" }, 403);
   }
 
+  logSecureLangGraphTiming("ownership_check", {
+    thread_id: threadId,
+    owner_missing: false,
+    owner_match: true,
+    elapsed_ms: nowMs() - startedAt,
+  });
   return null;
 }
 
@@ -198,13 +247,26 @@ function isThreadScopedPath(path: string[]) {
 }
 
 async function proxyToLangGraph(request: NextRequest, path: string[]) {
+  const startedAt = nowMs();
+  const pathText = `/${path.join("/")}`;
   try {
+    const sessionStartedAt = nowMs();
     const session = await getAuthenticatedSession(request);
+    const sessionElapsedMs = nowMs() - sessionStartedAt;
     if (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && !session) {
+      logSecureLangGraphTiming("request", {
+        method: request.method,
+        path: pathText,
+        status: 401,
+        session_ms: sessionElapsedMs,
+        total_ms: nowMs() - startedAt,
+      });
       return jsonResponse({ message: "Unauthorized" }, 401);
     }
 
+    const parseStartedAt = nowMs();
     const { rawBody, jsonBody } = await parseRequestBody(request);
+    const parseElapsedMs = nowMs() - parseStartedAt;
     let nextJsonBody = jsonBody as Record<string, unknown> | undefined;
 
     if (session && path[0] === "threads" && request.method === "POST") {
@@ -227,9 +289,21 @@ async function proxyToLangGraph(request: NextRequest, path: string[]) {
       }
     }
 
+    let ownershipElapsedMs = 0;
     if (session && isThreadScopedPath(path)) {
+      const ownershipStartedAt = nowMs();
       const ownershipResponse = await ensureThreadOwnership(path[1]!, session);
+      ownershipElapsedMs = nowMs() - ownershipStartedAt;
       if (ownershipResponse) {
+        logSecureLangGraphTiming("request", {
+          method: request.method,
+          path: pathText,
+          status: ownershipResponse.status,
+          session_ms: sessionElapsedMs,
+          parse_ms: parseElapsedMs,
+          ownership_ms: ownershipElapsedMs,
+          total_ms: nowMs() - startedAt,
+        });
         return ownershipResponse;
       }
 
@@ -247,11 +321,23 @@ async function proxyToLangGraph(request: NextRequest, path: string[]) {
       }
     }
 
+    const upstreamStartedAt = nowMs();
     const upstreamResponse = await fetch(buildUpstreamUrl(path, request), {
       method: request.method,
       headers: buildForwardHeaders(request),
       body: serializeBody(nextJsonBody, rawBody),
       cache: "no-store",
+    });
+    const upstreamElapsedMs = nowMs() - upstreamStartedAt;
+    logSecureLangGraphTiming("request", {
+      method: request.method,
+      path: pathText,
+      status: upstreamResponse.status,
+      session_ms: sessionElapsedMs,
+      parse_ms: parseElapsedMs,
+      ownership_ms: ownershipElapsedMs,
+      upstream_ms: upstreamElapsedMs,
+      total_ms: nowMs() - startedAt,
     });
 
     return new Response(upstreamResponse.body, {
@@ -259,6 +345,12 @@ async function proxyToLangGraph(request: NextRequest, path: string[]) {
       headers: upstreamResponse.headers,
     });
   } catch (error) {
+    logSecureLangGraphTiming("request_error", {
+      method: request.method,
+      path: pathText,
+      total_ms: nowMs() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return upstreamUnavailableResponse(error);
   }
 }

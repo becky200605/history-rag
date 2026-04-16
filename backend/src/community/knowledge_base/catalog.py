@@ -935,27 +935,28 @@ def search_book_catalog(
     doc_ids: list[str] | None = None,
     scopes: list[str] | None = None,
     folder_paths: list[str] | None = None,
+    entries: list[BookCatalogEntry] | None = None,
 ) -> list[BookCatalogEntry]:
     """Return the most relevant candidate books for a query."""
-    entries = filter_book_catalog_entries(
-        list_book_catalog(thread_id=thread_id, user_id=user_id),
+    catalog_entries = filter_book_catalog_entries(
+        entries if entries is not None else list_book_catalog(thread_id=thread_id, user_id=user_id),
         doc_ids=doc_ids,
         scopes=scopes,
         folder_paths=folder_paths,
     )
     tokens = tokenize_search_text(query)
-    if not entries or not tokens:
+    if not catalog_entries or not tokens:
         return []
 
-    doc_frequencies = _build_document_frequencies(entries)
-    avg_doc_len = sum(max(1, len(entry.search_tokens)) for entry in entries) / len(entries)
+    doc_frequencies = _build_document_frequencies(catalog_entries)
+    avg_doc_len = sum(max(1, len(entry.search_tokens)) for entry in catalog_entries) / len(catalog_entries)
     scored: list[tuple[float, BookCatalogEntry]] = []
-    for entry in entries:
+    for entry in catalog_entries:
         score = _bm25_score(
             entry,
             query_tokens=tokens,
             doc_frequencies=doc_frequencies,
-            corpus_size=len(entries),
+            corpus_size=len(catalog_entries),
             avg_doc_len=avg_doc_len,
         )
         score += _exact_match_boost(entry, query, tokens)

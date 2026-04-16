@@ -7,11 +7,15 @@ import { useCallback } from "react";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import type { SelectedMaterial } from "@/core/knowledge/selection";
+import type {
+  ThreadDisplayContextSnapshot,
+} from "@/core/threads/utils";
 import { env } from "@/env";
 import { authClient } from "@/server/better-auth/client";
 
 import { getAPIClient } from "../api";
 import { useUpdateSubtask } from "../tasks/context";
+import { buildThreadDisplayMetadata } from "../threads/utils";
 import { uploadFiles } from "../uploads";
 
 import type {
@@ -93,6 +97,7 @@ export function useSubmitThread({
   threadId,
   thread,
   threadContext,
+  displayContext,
   isNewThread,
   afterSubmit,
 }: {
@@ -100,9 +105,11 @@ export function useSubmitThread({
   threadId: string | null | undefined;
   thread: UseStream<AgentThreadState>;
   threadContext: Omit<AgentThreadContext, "thread_id">;
+  displayContext?: ThreadDisplayContextSnapshot;
   afterSubmit?: () => void | Promise<void>;
 }) {
   const queryClient = useQueryClient();
+  const apiClient = getAPIClient();
   const { data: session } = authClient.useSession();
 
   const buildEffectiveSelection = useCallback(
@@ -154,6 +161,14 @@ export function useSubmitThread({
         throw new Error("Missing authenticated user or thread ID.");
       }
 
+      const threadMetadata =
+        env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && userId
+          ? {
+              user_id: userId,
+              ...buildThreadDisplayMetadata(displayContext ?? {}),
+            }
+          : undefined;
+
       // Upload files first if any
       if (message.files && message.files.length > 0) {
         try {
@@ -194,6 +209,17 @@ export function useSubmitThread({
         }
       }
 
+      if (
+        !isNewThread &&
+        threadId &&
+        threadMetadata &&
+        env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true"
+      ) {
+        await apiClient.threads.update(threadId, {
+          metadata: threadMetadata,
+        });
+      }
+
       await thread.submit(
         {
           messages: [
@@ -210,12 +236,7 @@ export function useSubmitThread({
         },
         {
           threadId: isNewThread ? threadId! : undefined,
-          metadata:
-            env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && userId
-              ? {
-                  user_id: userId,
-                }
-              : undefined,
+          metadata: threadMetadata,
           streamSubgraphs: true,
           streamResumable: true,
           streamMode: ["values", "messages-tuple", "custom"],
@@ -238,6 +259,8 @@ export function useSubmitThread({
       isNewThread,
       threadId,
       threadContext,
+      displayContext,
+      apiClient,
       queryClient,
       afterSubmit,
       buildEffectiveSelection,

@@ -1,6 +1,12 @@
 "use client";
 
-import { FileTextIcon, Loader2Icon } from "lucide-react";
+import {
+  CheckIcon,
+  CopyIcon,
+  FileTextIcon,
+  LanguagesIcon,
+  Loader2Icon,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   Fragment,
@@ -45,6 +51,12 @@ type ContextMenuState = {
   x: number;
   y: number;
   paragraph: ContextParagraph;
+};
+
+type ContextMenuTranslationState = {
+  loading: boolean;
+  error: string | null;
+  text: string;
 };
 
 type CompareLayoutItem = {
@@ -337,6 +349,12 @@ export function KnowledgeSidePane({
   >({});
   const [translationLoading, setTranslationLoading] = useState(false);
   const [translationError, setTranslationError] = useState<string | null>(null);
+  const [contextMenuTranslations, setContextMenuTranslations] = useState<
+    Record<string, ContextMenuTranslationState>
+  >({});
+  const [copiedParagraphKey, setCopiedParagraphKey] = useState<string | null>(
+    null,
+  );
   const isHighlightable = highlightable ?? interactive;
   const isExcerptable = excerptable ?? interactive;
 
@@ -344,12 +362,17 @@ export function KnowledgeSidePane({
     if (!currentPdfPageNo) {
       setPageState({ status: "idle" });
       setPreviousPageData(null);
+      setContextMenu(null);
+      setContextMenuTranslations({});
+      setCopiedParagraphKey(null);
       return;
     }
 
     let cancelled = false;
     setPageState({ status: "loading" });
     setPreviousPageData(null);
+    setContextMenu(null);
+    setCopiedParagraphKey(null);
 
     const previousPagePromise =
       currentPdfPageNo > 1
@@ -618,6 +641,7 @@ export function KnowledgeSidePane({
         y: number;
       },
     ) => {
+      setCopiedParagraphKey(null);
       setContextMenu({
         x: position.x,
         y: position.y,
@@ -625,6 +649,78 @@ export function KnowledgeSidePane({
       });
     },
     [],
+  );
+
+  const handleCopyParagraph = useCallback(async (paragraph: ContextParagraph) => {
+    try {
+      await navigator.clipboard.writeText(paragraph.text);
+      setCopiedParagraphKey(paragraph.key);
+      toast.success("已复制原文");
+      window.setTimeout(() => {
+        setCopiedParagraphKey((current) =>
+          current === paragraph.key ? null : current,
+        );
+      }, 1800);
+    } catch (error) {
+      console.error(error);
+      toast.error("复制失败");
+    }
+  }, []);
+
+  const handleTranslateParagraph = useCallback(
+    async (paragraph: ContextParagraph) => {
+      const cachedTranslation = translationMap?.[paragraph.key];
+      if (cachedTranslation) {
+        setContextMenuTranslations((current) => ({
+          ...current,
+          [paragraph.key]: {
+            loading: false,
+            error: null,
+            text: cachedTranslation,
+          },
+        }));
+        return;
+      }
+
+      setContextMenuTranslations((current) => ({
+        ...current,
+        [paragraph.key]: {
+          loading: true,
+          error: null,
+          text: current[paragraph.key]?.text ?? "",
+        },
+      }));
+
+      try {
+        const [result] = await translateKnowledgeParagraphsToChineseForDocumentUrl(
+          documentUrl,
+          [{ key: paragraph.key, text: paragraph.text }],
+          {
+            sourceLanguageHint: translationSourceLanguageHint,
+          },
+        );
+        const translationText = result?.translation?.trim() ?? "";
+        setContextMenuTranslations((current) => ({
+          ...current,
+          [paragraph.key]: {
+            loading: false,
+            error: translationText ? null : "该段翻译暂未返回结果。",
+            text: translationText,
+          },
+        }));
+      } catch (error) {
+        console.error(error);
+        setContextMenuTranslations((current) => ({
+          ...current,
+          [paragraph.key]: {
+            loading: false,
+            error: error instanceof Error ? error.message : "翻译失败",
+            text: current[paragraph.key]?.text ?? "",
+          },
+        }));
+      }
+    },
+    [documentUrl, translationMap, translationSourceLanguageHint],
   );
 
   const handleCreateExcerpt = useCallback(
@@ -678,38 +774,99 @@ export function KnowledgeSidePane({
       return null;
     }
 
-    const menuWidth = 118;
+    const paragraph = contextMenu.paragraph;
+    const cachedTranslation = translationMap?.[paragraph.key];
+    const translationState = contextMenuTranslations[paragraph.key] ?? {
+      loading: false,
+      error: null,
+      text: "",
+    };
+    const displayedTranslation = cachedTranslation || translationState.text;
+    const isCopied = copiedParagraphKey === paragraph.key;
+    const menuWidth = 320;
     const left =
       typeof window !== "undefined"
         ? Math.min(contextMenu.x, window.innerWidth - menuWidth - 12)
         : contextMenu.x;
     const top =
       typeof window !== "undefined"
-        ? Math.min(contextMenu.y, window.innerHeight - 56)
+        ? Math.min(contextMenu.y, window.innerHeight - 280)
         : contextMenu.y;
 
     return (
       <div
         ref={contextMenuRef}
-        className="fixed z-50 rounded-2xl border border-stone-200 bg-white p-1.5 shadow-[0_18px_40px_-22px_rgba(28,25,23,0.4)]"
+        className="fixed z-50 w-80 rounded-2xl border border-stone-200 bg-white p-2 shadow-[0_18px_40px_-22px_rgba(28,25,23,0.4)]"
         style={{ left, top }}
         onClick={(event) => event.stopPropagation()}
       >
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-9 rounded-xl px-3 text-stone-800 hover:bg-stone-100"
-          disabled={createDerivedMutation.isPending}
-          onClick={() => void handleCreateExcerpt(contextMenu.paragraph)}
-        >
-          {createDerivedMutation.isPending ? (
-            <Loader2Icon className="mr-1.5 size-4 animate-spin" />
-          ) : (
-            <FileTextIcon className="mr-1.5 size-4" />
-          )}
-          摘录
-        </Button>
+        <div className="grid grid-cols-3 gap-1.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-9 justify-start rounded-xl px-3 text-stone-800 hover:bg-stone-100"
+            disabled={translationState.loading}
+            onClick={() => void handleTranslateParagraph(paragraph)}
+          >
+            {translationState.loading ? (
+              <Loader2Icon className="mr-1.5 size-4 animate-spin" />
+            ) : (
+              <LanguagesIcon className="mr-1.5 size-4" />
+            )}
+            翻译
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-9 justify-start rounded-xl px-3 text-stone-800 hover:bg-stone-100"
+            onClick={() => void handleCopyParagraph(paragraph)}
+          >
+            {isCopied ? (
+              <CheckIcon className="mr-1.5 size-4 text-emerald-600" />
+            ) : (
+              <CopyIcon className="mr-1.5 size-4" />
+            )}
+            复制
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-9 justify-start rounded-xl px-3 text-stone-800 hover:bg-stone-100"
+            disabled={createDerivedMutation.isPending}
+            onClick={() => void handleCreateExcerpt(paragraph)}
+          >
+            {createDerivedMutation.isPending ? (
+              <Loader2Icon className="mr-1.5 size-4 animate-spin" />
+            ) : (
+              <FileTextIcon className="mr-1.5 size-4" />
+            )}
+            加入笔记
+          </Button>
+        </div>
+        {translationState.loading || translationState.error || displayedTranslation ? (
+          <div className="mt-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2.5">
+            <div className="mb-1 text-[11px] font-semibold tracking-wide text-stone-500">
+              翻译结果
+            </div>
+            {translationState.loading ? (
+              <div className="flex items-center text-sm text-stone-500">
+                <Loader2Icon className="mr-2 size-4 animate-spin" />
+                正在翻译...
+              </div>
+            ) : translationState.error ? (
+              <div className="text-sm leading-6 text-rose-600">
+                {translationState.error}
+              </div>
+            ) : (
+              <div className="max-h-48 overflow-y-auto text-sm leading-6 whitespace-pre-wrap text-stone-700">
+                {displayedTranslation}
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
     );
   };

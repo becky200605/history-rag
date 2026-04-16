@@ -21,11 +21,11 @@ import {
 import { InputBox } from "@/components/workspace/input-box";
 import { MessageList } from "@/components/workspace/messages";
 import { ThreadContext } from "@/components/workspace/messages/context";
+import { SilkRibbon } from "@/components/workspace/silk-ribbon";
 import { ThreadTitle } from "@/components/workspace/thread-title";
 import { TodoList } from "@/components/workspace/todo-list";
 import { Tooltip } from "@/components/workspace/tooltip";
 import { Welcome } from "@/components/workspace/welcome";
-import { SilkRibbon } from "@/components/workspace/silk-ribbon";
 import { getAPIClient } from "@/core/api";
 import { useI18n } from "@/core/i18n/hooks";
 import {
@@ -38,8 +38,11 @@ import { useLocalSettings } from "@/core/settings";
 import { type AgentThread, type AgentThreadState } from "@/core/threads";
 import { useSubmitThread, useThreadStream } from "@/core/threads/hooks";
 import {
+  buildThreadDisplayMetadata,
   pathOfThread,
+  readThreadDisplayMetadata,
   textOfMessage,
+  type ThreadDisplayContextSnapshot,
   titleOfThread,
 } from "@/core/threads/utils";
 import { uuid } from "@/core/utils/uuid";
@@ -63,6 +66,7 @@ function readThreadRouteHandoff() {
 
     const parsed = JSON.parse(raw) as {
       createdAt?: number;
+      context?: ThreadDisplayContextSnapshot;
       threadId?: string;
     };
     if (
@@ -85,7 +89,10 @@ function readThreadRouteHandoff() {
   }
 }
 
-function rememberThreadRouteHandoff(threadId: string) {
+function rememberThreadRouteHandoff(
+  threadId: string,
+  context?: ThreadDisplayContextSnapshot,
+) {
   if (typeof window === "undefined") {
     return;
   }
@@ -93,6 +100,7 @@ function rememberThreadRouteHandoff(threadId: string) {
   window.sessionStorage.setItem(
     THREAD_ROUTE_HANDOFF_KEY,
     JSON.stringify({
+      context,
       threadId,
       createdAt: Date.now(),
     }),
@@ -230,6 +238,8 @@ function ChatPageContent({
 }) {
   const { t } = useI18n();
   const router = useRouter();
+  const apiClient = getAPIClient();
+  const { data: session } = authClient.useSession();
   const [settings, setSettings] = useLocalSettings();
   const { models } = useModels();
   const { setOpen: setSidebarOpen } = useSidebar();
@@ -277,6 +287,14 @@ function ChatPageContent({
     () => initialThreadIdFromPath === "new",
     [initialThreadIdFromPath],
   );
+  const initialRouteHandoff = useMemo(() => {
+    if (initialThreadIdFromPath === "new") {
+      return null;
+    }
+
+    const handoff = readThreadRouteHandoff();
+    return handoff?.threadId === initialThreadIdFromPath ? handoff : null;
+  }, [initialThreadIdFromPath]);
   const [threadId, setThreadId] = useState<string | null>(null);
   useEffect(() => {
     if (initialThreadIdFromPath !== "new") {
@@ -287,7 +305,30 @@ function ChatPageContent({
   }, [initialThreadIdFromPath]);
 
   const { showNotification } = useNotification();
+  const threadDetailsQuery = useQuery({
+    queryKey: ["thread", "details", threadId, session?.user.id],
+    enabled:
+      !!threadId &&
+      !isNewThread &&
+      (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" || !!session?.user.id),
+    queryFn: async () => apiClient.threads.get<AgentThreadState>(threadId!),
+  });
   const [finalState, setFinalState] = useState<AgentThreadState | null>(null);
+  const threadMetadataContext = useMemo(
+    () => readThreadDisplayMetadata(threadDetailsQuery.data?.metadata),
+    [threadDetailsQuery.data?.metadata],
+  );
+  const persistedContext = useMemo(
+    () => threadMetadataContext ?? initialRouteHandoff?.context ?? null,
+    [initialRouteHandoff?.context, threadMetadataContext],
+  );
+  const baseContext = useMemo(
+    () => ({
+      ...settings.context,
+      ...persistedContext,
+    }),
+    [persistedContext, settings.context],
+  );
   const thread = useThreadStream({
     isNewThread,
     threadId,
@@ -296,7 +337,23 @@ function ChatPageContent({
         return;
       }
       didNavigateForCreatedRunRef.current = true;
-      rememberThreadRouteHandoff(run.thread_id);
+      rememberThreadRouteHandoff(run.thread_id, resolvedContext);
+      if (
+        env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
+        session?.user.id
+      ) {
+        void apiClient
+          .threads
+          .update(run.thread_id, {
+            metadata: {
+              user_id: session.user.id,
+              ...buildThreadDisplayMetadata(resolvedContext),
+            },
+          })
+          .catch((error) => {
+            console.error("Failed to persist thread display context:", error);
+          });
+      }
       const currentQuery = searchParams.toString();
       router.push(
         currentQuery
@@ -400,21 +457,21 @@ function ChatPageContent({
 
   const resolvedModelName = useMemo(() => {
     if (models.length === 0) {
-      return settings.context.model_name;
+      return baseContext.model_name;
     }
 
     return (
-      models.find((model) => model.name === settings.context.model_name)
-        ?.name ?? models[0]?.name
+      models.find((model) => model.name === baseContext.model_name)?.name ??
+      models[0]?.name
     );
-  }, [models, settings.context.model_name]);
+  }, [baseContext.model_name, models]);
 
   const resolvedContext = useMemo(
     () => ({
-      ...settings.context,
+      ...baseContext,
       model_name: resolvedModelName,
     }),
-    [resolvedModelName, settings.context],
+    [baseContext, resolvedModelName],
   );
 
   const threadContext = useMemo(
@@ -438,6 +495,9 @@ function ChatPageContent({
   );
 
   useEffect(() => {
+    if (persistedContext) {
+      return;
+    }
     if (
       resolvedModelName &&
       settings.context.model_name !== resolvedModelName
@@ -446,13 +506,19 @@ function ChatPageContent({
         model_name: resolvedModelName,
       });
     }
-  }, [resolvedModelName, setSettings, settings.context.model_name]);
+  }, [
+    persistedContext,
+    resolvedModelName,
+    setSettings,
+    settings.context.model_name,
+  ]);
 
   const handleSubmit = useSubmitThread({
     isNewThread,
     threadId,
     thread,
     threadContext,
+    displayContext: resolvedContext,
   });
   const handleStop = useCallback(async () => {
     await thread.stop();

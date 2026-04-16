@@ -25,9 +25,7 @@ from src.community.knowledge_base.catalog import (
     REFERENCE_TYPE,
     SPECIALIZED_TYPE,
     BookCatalogEntry,
-    filter_book_catalog_entries,
     list_book_catalog,
-    render_book_catalog_directory_tree,
     search_book_catalog,
 )
 from src.community.knowledge_base.book_metadata import normalize_folder_path
@@ -425,12 +423,6 @@ def book_search_tool(
     selected_doc_ids = _runtime_selected_doc_ids(runtime)
     selected_scopes = _runtime_selected_scopes(runtime)
     parsed_folder_paths = _parse_folder_paths(folder_paths)
-    visible_entries = filter_book_catalog_entries(
-        list_book_catalog(thread_id=thread_id, user_id=user_id),
-        doc_ids=selected_doc_ids,
-        scopes=selected_scopes,
-        folder_paths=parsed_folder_paths,
-    )
     candidates = search_book_catalog(
         query,
         thread_id=thread_id,
@@ -440,29 +432,13 @@ def book_search_tool(
         scopes=selected_scopes,
         folder_paths=parsed_folder_paths,
     )
-    directory_tree = render_book_catalog_directory_tree(visible_entries)
     if not candidates:
-        if directory_tree:
-            return "## 资料目录树\n\n" + directory_tree + "\n\n---\n当前范围内没有找到匹配的候选书目。"
         if selected_doc_ids:
             return "当前对话已限定在所选资料范围内，但这些资料里没有找到匹配的候选书目。"
         return "No likely books found for this query."
 
     grouped = _group_book_candidates(candidates)
     lines = []
-    if directory_tree:
-        lines.extend(
-            [
-                "## 资料目录树",
-                "",
-                "先看目录再决定去哪里找；目录树是导航线索，不是证据。",
-                "",
-                directory_tree,
-                "",
-                "---",
-                "",
-            ]
-        )
     lines.extend(["## 候选书目", ""])
     section_titles = (
         ("user", "用户书籍"),

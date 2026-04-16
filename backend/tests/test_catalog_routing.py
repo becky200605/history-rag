@@ -353,13 +353,9 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
         "search_book_catalog",
         lambda query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None: candidates,
     )
-    monkeypatch.setattr(tools_module, "list_book_catalog", lambda thread_id=None, user_id=None: candidates)
 
     output = tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
 
-    assert "## 资料目录树" in output
-    assert "用户书籍/" in output
-    assert "系统知识库/" in output
     assert "### 用户书籍" in output
     assert "### 核心通用书" in output
     assert "### 专题支撑书" in output
@@ -374,6 +370,23 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料" in output
 
 
+def test_book_search_tool_does_not_rebuild_directory_tree(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tools_module,
+        "search_book_catalog",
+        lambda query, thread_id=None, user_id=None, top_k=8, doc_ids=None, scopes=None, folder_paths=None: [],
+    )
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("book_search_tool should not list the catalog")),
+    )
+
+    output = tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
+
+    assert output == "No likely books found for this query."
+
+
 def test_book_search_tool_uses_larger_top_k(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -386,6 +399,34 @@ def test_book_search_tool_uses_larger_top_k(monkeypatch) -> None:
     tools_module.book_search_tool.func(SimpleNamespace(context={}), "任意问题")
 
     assert captured["top_k"] == 20
+
+
+def test_search_book_catalog_can_reuse_prelisted_entries(monkeypatch) -> None:
+    entries = [
+        BookCatalogEntry(
+            doc_id="core-1",
+            title="Core Book",
+            filename="core.md",
+            scope="global",
+            source_path="/tmp/core.md",
+            source_url="/api/knowledge/docs/core.md",
+            original_url=None,
+            preview="",
+            search_text="财政制度演变 通史",
+            search_tokens=["财政制度演变", "通史"],
+            type="core",
+        )
+    ]
+
+    monkeypatch.setattr(
+        catalog_module,
+        "list_book_catalog",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("search_book_catalog should reuse provided entries")),
+    )
+
+    results = search_book_catalog("财政制度演变", top_k=1, entries=entries)
+
+    assert [item.doc_id for item in results] == ["core-1"]
 
 
 def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:

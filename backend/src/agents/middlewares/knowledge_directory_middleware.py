@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage
 
 from src.community.knowledge_base.catalog import (
     filter_book_catalog_entries,
@@ -118,12 +118,11 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         if KNOWLEDGE_DIRECTORY_TAG in system_content:
             return True
         return any(
-            getattr(message, "type", None) == "system"
-            and KNOWLEDGE_DIRECTORY_TAG in str(getattr(message, "content", "") or "")
+            KNOWLEDGE_DIRECTORY_TAG in str(getattr(message, "content", "") or "")
             for message in request.messages
         )
 
-    def _build_directory_block(self, request: ModelRequest) -> SystemMessage | None:
+    def _build_directory_block(self, request: ModelRequest) -> HumanMessage | None:
         try:
             entries = self._visible_entries(request)
             directory_tree = render_book_catalog_directory_tree(entries)
@@ -134,7 +133,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         if not directory_tree:
             return None
 
-        return SystemMessage(
+        return HumanMessage(
             content=(
                 f"{KNOWLEDGE_DIRECTORY_TAG}\n"
                 "下面是当前可见知识资料的目录树。它是导航线索，不是证据。"
@@ -169,14 +168,8 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         if empty_folder_section is not None:
             content_parts.append(empty_folder_section)
         injected_content = "\n\n".join(content_parts)
-
-        if request.system_message is None:
-            return request.override(system_message=SystemMessage(content=injected_content))
-
-        combined_content = (
-            f"{request.system_message.content}\n\n{injected_content}"
-        )
-        return request.override(system_message=SystemMessage(content=combined_content))
+        injected_message = HumanMessage(content=injected_content)
+        return request.override(messages=[injected_message, *request.messages])
 
     def wrap_model_call(
         self,

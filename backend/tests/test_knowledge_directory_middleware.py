@@ -7,7 +7,7 @@ from pathlib import Path
 from types import ModuleType
 from types import SimpleNamespace
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.community.knowledge_base.catalog import BookCatalogEntry
 
@@ -57,7 +57,7 @@ class _DummyRequest:
         return replace(self, **overrides)
 
 
-def test_knowledge_directory_middleware_injects_tree_into_system_message(monkeypatch) -> None:
+def test_knowledge_directory_middleware_injects_tree_into_hidden_user_message(monkeypatch) -> None:
     middleware = KnowledgeDirectoryMiddleware()
     entries = [
         BookCatalogEntry(
@@ -85,6 +85,7 @@ def test_knowledge_directory_middleware_injects_tree_into_system_message(monkeyp
 
     def handler(request):
         captured["system_message"] = request.system_message
+        captured["messages"] = request.messages
         return "ok"
 
     request = _DummyRequest(
@@ -99,13 +100,15 @@ def test_knowledge_directory_middleware_injects_tree_into_system_message(monkeyp
     system_message = captured["system_message"]
     assert isinstance(system_message, SystemMessage)
     assert "base-system" in str(system_message.content)
-    assert "<knowledge_directory_tree>" in str(system_message.content)
-    assert "直接从这里复制目录名填写 `knowledge_folders`" in str(system_message.content)
-    assert "不是 sandbox / 容器 / 本地文件系统路径" in str(system_message.content)
-    assert "不要填写 `用户书籍`" in str(system_message.content)
-    assert "用户书籍/" not in str(system_message.content)
-    assert "财政史/" in str(system_message.content)
-    assert "晚清财政史料 [doc_id=uk_1]" in str(system_message.content)
+    messages = captured["messages"]
+    assert isinstance(messages[0], HumanMessage)
+    assert "<knowledge_directory_tree>" in str(messages[0].content)
+    assert "直接从这里复制目录名填写 `knowledge_folders`" in str(messages[0].content)
+    assert "不是 sandbox / 容器 / 本地文件系统路径" in str(messages[0].content)
+    assert "不要填写 `用户书籍`" in str(messages[0].content)
+    assert "用户书籍/" not in str(messages[0].content)
+    assert "财政史/" in str(messages[0].content)
+    assert "晚清财政史料 [doc_id=uk_1]" in str(messages[0].content)
 
 
 def test_knowledge_directory_middleware_injects_empty_folder_candidates(monkeypatch, tmp_path) -> None:
@@ -149,6 +152,7 @@ def test_knowledge_directory_middleware_injects_empty_folder_candidates(monkeypa
 
     def handler(request):
         captured["system_message"] = request.system_message
+        captured["messages"] = request.messages
         return "ok"
 
     request = _DummyRequest(
@@ -162,8 +166,11 @@ def test_knowledge_directory_middleware_injects_empty_folder_candidates(monkeypa
     assert result == "ok"
     system_message = captured["system_message"]
     assert isinstance(system_message, SystemMessage)
-    assert "<empty_knowledge_folders>" in str(system_message.content)
-    assert "用户空文件夹" in str(system_message.content)
-    assert "用户资料/未整理" in str(system_message.content)
-    assert "系统知识库空文件夹" in str(system_message.content)
-    assert "系统资料/待归档" in str(system_message.content)
+    assert "base-system" in str(system_message.content)
+    messages = captured["messages"]
+    assert isinstance(messages[0], HumanMessage)
+    assert "<empty_knowledge_folders>" in str(messages[0].content)
+    assert "用户空文件夹" in str(messages[0].content)
+    assert "用户资料/未整理" in str(messages[0].content)
+    assert "系统知识库空文件夹" in str(messages[0].content)
+    assert "系统资料/待归档" in str(messages[0].content)

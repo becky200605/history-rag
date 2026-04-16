@@ -861,7 +861,11 @@ def _entry_tree_leaf(entry: BookCatalogEntry) -> str:
     return f"{display_title} [doc_id={entry.doc_id}]"
 
 
-def render_book_catalog_directory_tree(entries: list[BookCatalogEntry]) -> str | None:
+def render_book_catalog_directory_tree(
+    entries: list[BookCatalogEntry],
+    *,
+    include_scope_roots: bool = False,
+) -> str | None:
     """Render visible catalog entries as a simple directory tree."""
     if not entries:
         return None
@@ -887,7 +891,7 @@ def render_book_catalog_directory_tree(entries: list[BookCatalogEntry]) -> str |
     ordered_entries = sorted(
         entries,
         key=lambda entry: (
-            _entry_tree_root(entry),
+            _entry_tree_root(entry) if include_scope_roots else (),
             _entry_folder_segments(entry),
             entry.title,
             entry.doc_id,
@@ -895,7 +899,8 @@ def render_book_catalog_directory_tree(entries: list[BookCatalogEntry]) -> str |
     )
     for entry in ordered_entries:
         node = tree
-        for segment in [*_entry_tree_root(entry), *_entry_folder_segments(entry)]:
+        root_segments = _entry_tree_root(entry) if include_scope_roots else ()
+        for segment in [*root_segments, *_entry_folder_segments(entry)]:
             node = _children(node).setdefault(segment, {})  # type: ignore[assignment]
         leaf = _entry_tree_leaf(entry)
         node_files = _files(node)

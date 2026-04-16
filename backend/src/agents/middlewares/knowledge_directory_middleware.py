@@ -139,6 +139,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
                 f"{KNOWLEDGE_DIRECTORY_TAG}\n"
                 "下面是当前可见知识资料的目录树。它是导航线索，不是证据。"
                 "请先看目录树，并直接从这里复制目录名填写 `knowledge_folders`，再决定优先去哪些文件夹/书目调用 `book_search` 或 `knowledge_search`。"
+                "不要填写 `用户书籍`、`当前线程书籍`、`核心通用书`、`专题支撑书`、`补充材料`、`参考工具书` 这类层级标签。"
                 "`knowledge_folders` 是知识库逻辑目录，不是 sandbox / 容器 / 本地文件系统路径；不要用 `ls`、`read_file`、`bash` 等其他工具去推断。\n\n"
                 f"{directory_tree}\n"
                 "</knowledge_directory_tree>"

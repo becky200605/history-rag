@@ -178,6 +178,7 @@ def _build_knowledge_folder_guidance(
     return (
         f"{reason}\n"
         "`knowledge_folders` 指的是知识库目录树中的逻辑目录，不是 sandbox / 容器 / 本地文件系统路径。\n"
+        "也不要填写 `用户书籍`、`当前线程书籍`、`核心通用书`、`专题支撑书`、`补充材料`、`参考工具书` 这类层级标签；它们只是系统内部的分层概念，不是可检索目录。\n"
         "不要把它理解成 `/mnt/...`、`./...`、`knowledge/docs/...` 这类本地目录，也不要试图通过 `ls`、`read_file`、`bash` 等其他方式自己推断它。\n"
         "请直接从下面的知识库目录树中复制目录名来填写 `knowledge_folders`。\n\n"
         "## 可见知识库目录树\n\n"
@@ -197,6 +198,24 @@ def _looks_like_local_filesystem_path(value: str) -> bool:
         or "\\" in normalized
         or lowered.endswith((".pdf", ".md", ".txt", ".json", ".jsonl"))
     )
+
+
+_VIRTUAL_KNOWLEDGE_FOLDER_LABELS = {
+    "用户书籍",
+    "当前线程书籍",
+    "系统知识库",
+    "核心通用书",
+    "专题支撑书",
+    "补充材料",
+    "参考工具书",
+    "补充材料 / 参考工具书",
+    "其他资料",
+}
+
+
+def _looks_like_virtual_knowledge_folder_label(value: str) -> bool:
+    normalized = re.sub(r"\s+", " ", value.strip())
+    return normalized in _VIRTUAL_KNOWLEDGE_FOLDER_LABELS
 
 
 def _intersect_doc_ids(
@@ -530,6 +549,11 @@ def book_search_tool(
             visible_entries=visible_entries,
             reason="Error: `book_search` 禁止整库全量搜索，必须传入 `knowledge_folders`。",
         )
+    if any(_looks_like_virtual_knowledge_folder_label(folder) for folder in raw_knowledge_folders):
+        return _build_knowledge_folder_guidance(
+            visible_entries=visible_entries,
+            reason="Error: 你传入的 `knowledge_folders` 是层级标签（如 `用户书籍`、`核心通用书`），不是知识库逻辑目录。",
+        )
     if any(_looks_like_local_filesystem_path(folder) for folder in raw_knowledge_folders):
         return _build_knowledge_folder_guidance(
             visible_entries=visible_entries,
@@ -690,6 +714,11 @@ def knowledge_search_tool(
             return _build_knowledge_folder_guidance(
                 visible_entries=visible_entries,
                 reason="Error: `knowledge_search` 必须传入 `knowledge_folders`，禁止在未指定知识库目录的情况下直接检索。",
+            )
+        if any(_looks_like_virtual_knowledge_folder_label(folder) for folder in raw_knowledge_folders):
+            return _build_knowledge_folder_guidance(
+                visible_entries=visible_entries,
+                reason="Error: 你传入的 `knowledge_folders` 是层级标签（如 `用户书籍`、`核心通用书`），不是知识库逻辑目录。",
             )
         if any(_looks_like_local_filesystem_path(folder) for folder in raw_knowledge_folders):
             return _build_knowledge_folder_guidance(

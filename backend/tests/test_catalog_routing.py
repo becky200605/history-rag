@@ -524,6 +524,39 @@ def test_book_search_tool_rejects_local_filesystem_knowledge_folders(monkeypatch
     assert "## 可见知识库目录树" in output
 
 
+def test_book_search_tool_rejects_virtual_layer_labels_as_knowledge_folders(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="global.md",
+                scope="global",
+                source_path="/tmp/global.md",
+                source_url="/api/knowledge/docs/global.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+                type="core",
+                folder_path="人物传记/晚清",
+            )
+        ],
+    )
+
+    output = tools_module.book_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        knowledge_folders=["核心通用书", "专题支撑书"],
+    )
+
+    assert "层级标签" in output
+    assert "不是知识库逻辑目录" in output
+    assert "人物传记/" in output
+
+
 def test_search_book_catalog_can_reuse_prelisted_entries(monkeypatch) -> None:
     entries = [
         BookCatalogEntry(
@@ -819,6 +852,39 @@ def test_knowledge_search_tool_requires_knowledge_folders(monkeypatch) -> None:
 
     assert "Error: `knowledge_search` 必须传入 `knowledge_folders`" in output
     assert "## 可见知识库目录树" in output
+
+
+def test_knowledge_search_tool_rejects_virtual_layer_labels_as_knowledge_folders(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tools_module,
+        "list_book_catalog",
+        lambda thread_id=None, user_id=None: [
+            BookCatalogEntry(
+                doc_id="global-doc",
+                title="Global Book",
+                filename="global.md",
+                scope="global",
+                source_path="/tmp/global.md",
+                source_url="/api/knowledge/docs/global.md",
+                original_url=None,
+                preview="",
+                search_text="global",
+                search_tokens=["global"],
+                type="core",
+                folder_path="人物传记/晚清",
+            )
+        ],
+    )
+
+    output = tools_module.knowledge_search_tool.func(
+        SimpleNamespace(context={}),
+        "晚清财政情况",
+        knowledge_folders=["用户书籍", "核心通用书"],
+    )
+
+    assert "层级标签" in output
+    assert "不是知识库逻辑目录" in output
+    assert "人物传记/" in output
 
 
 def test_tool_schema_marks_knowledge_folders_as_required() -> None:

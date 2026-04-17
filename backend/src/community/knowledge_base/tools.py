@@ -37,7 +37,7 @@ from src.community.knowledge_base.catalog import (
 )
 from src.community.knowledge_base.book_metadata import normalize_folder_path
 from src.community.knowledge_base.citations import resolve_result_citation_context
-from src.community.knowledge_base.locator import extract_document_context, locate_document
+from src.community.knowledge_base.locator import LocatedDocument, extract_document_context, locate_document
 
 BOOK_SEARCH_TOP_K = 20
 KNOWLEDGE_SEARCH_TOP_K = 6
@@ -500,6 +500,41 @@ def _build_citation(citation_label: str, citation_link: str | None) -> str | Non
     if not citation_link:
         return None
     return f"[citation:{citation_label}]({citation_link})"
+
+
+def _build_locate_excerpt_citation(
+    *,
+    document: LocatedDocument,
+    excerpt: dict[str, Any],
+    thread_id: str | None,
+    user_id: str | None,
+) -> str | None:
+    citation_context = resolve_result_citation_context(
+        {
+            "filename": document.filename,
+            "metadata": {
+                "title": document.title,
+                "filename": document.filename,
+                "scope": document.scope,
+                "page_no": excerpt.get("page_no"),
+                "pdf_page_no": excerpt.get("pdf_page_no"),
+                "paragraph_no": excerpt.get("paragraph_no"),
+            },
+        },
+        thread_id=thread_id,
+        user_id=user_id,
+    )
+    citation_label = _build_citation_label(
+        str(citation_context["citation_title"] or document.title),
+        citation_context["citation_page_no"],
+        citation_context["citation_pdf_page_no"],
+        citation_context["citation_paragraph_no"],
+        page=citation_context["citation_page"],
+    )
+    return _build_citation(
+        citation_label,
+        citation_context.get("citation_url") or citation_context.get("source_url"),
+    )
 
 
 def _looks_like_navigation_page(page_text: str) -> bool:
@@ -1303,6 +1338,12 @@ def knowledge_locate_tool(
         and line_start is None
         and line_end is None
     )
+    page_level_only = (
+        (page_no is not None or pdf_page_no is not None)
+        and paragraph_no is None
+        and line_start is None
+        and line_end is None
+    )
 
     if navigation_mode:
         previews = _build_navigation_locate_preview(payload=document.payload)
@@ -1377,10 +1418,26 @@ def knowledge_locate_tool(
             lines.append(f"行号: {excerpt['line_start']}-{excerpt['line_end']}")
         elif excerpt.get("line_start"):
             lines.append(f"行号: {excerpt['line_start']}")
+        citation = _build_locate_excerpt_citation(
+            document=document,
+            excerpt=excerpt,
+            thread_id=thread_id,
+            user_id=user_id,
+        )
+        if citation:
+            lines.append(f"citation: {citation}")
         lines.append(str(excerpt.get("text") or "").strip())
         lines.append("")
 
     lines.append("---")
+    if page_level_only:
+        lines.append(
+            "如果当前这次 `knowledge_locate` 只定位到页级（只给了 `page_no` / `pdf_page_no`，还没给 `paragraph_no`），"
+            "把这一步当作缩小范围，不要直接据此结束。先从上面的片段里挑出最相关的 `paragraph_no`，"
+            "再追加一次 `knowledge_locate(doc_id=..., page_no=... 或 pdf_page_no=..., paragraph_no=...)`，"
+            "确认到段落级后再写最终答案。"
+        )
+    lines.append("使用答案时，优先直接复制上面的 `citation:` 行，不要自己重写。")
     lines.append(
         "IMPORTANT: Use these excerpts as the follow-up source context. "
         "Do not inspect raw PDFs or `.structured.json` files directly."

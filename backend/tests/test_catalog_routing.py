@@ -1196,3 +1196,68 @@ def test_knowledge_search_tool_no_result_guides_grounded_retries_before_web(monk
     assert "`晚清财政情况如何`" in output
     assert "`晚清财政收入结构发生了哪些变化`" in output
     assert "只有在同一批最相关书里做过这些 grounded retries" in output
+
+
+def test_knowledge_locate_tool_emits_citations_and_page_level_followup_guidance(monkeypatch) -> None:
+    monkeypatch.setattr(tools_module, "_visible_catalog_entries", lambda **kwargs: [])
+    monkeypatch.setattr(
+        tools_module,
+        "_resolve_requested_doc_ids",
+        lambda doc_ids, visible_entries: (doc_ids, [], {}),
+    )
+    monkeypatch.setattr(
+        tools_module,
+        "locate_document",
+        lambda thread_id, user_id=None, doc_id=None, filename=None: SimpleNamespace(
+            doc_id=doc_id or "global-doc",
+            title="财政史",
+            filename="finance.pdf",
+            scope="global",
+            source_url="/api/knowledge/docs/finance.pdf",
+            original_url=None,
+            payload={"pages": []},
+        ),
+    )
+    monkeypatch.setattr(
+        tools_module,
+        "extract_document_context",
+        lambda **kwargs: [
+            {
+                "page_no": 12,
+                "pdf_page_no": 12,
+                "paragraph_no": 3,
+                "text": "这是第 3 段。",
+            },
+            {
+                "page_no": 12,
+                "pdf_page_no": 12,
+                "paragraph_no": 4,
+                "text": "这是第 4 段。",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        tools_module,
+        "resolve_result_citation_context",
+        lambda result, thread_id=None, user_id=None: {
+            "source_url": "/api/knowledge/docs/finance.pdf",
+            "citation_url": "/api/knowledge/docs/finance.pdf?page_no=12&paragraph_no="
+            f"{result['metadata']['paragraph_no']}",
+            "citation_title": "财政史",
+            "citation_page_no": 12,
+            "citation_pdf_page_no": 12,
+            "citation_paragraph_no": result["metadata"]["paragraph_no"],
+            "citation_page": None,
+        },
+    )
+
+    output = tools_module.knowledge_locate_tool.func(
+        SimpleNamespace(context={}),
+        doc_id="global-doc",
+        pdf_page_no=12,
+    )
+
+    assert "citation: [citation:财政史 原书第12页第3段]" in output
+    assert "citation: [citation:财政史 原书第12页第4段]" in output
+    assert "如果当前这次 `knowledge_locate` 只定位到页级" in output
+    assert "再追加一次 `knowledge_locate(doc_id=..., page_no=... 或 pdf_page_no=..., paragraph_no=...)`" in output

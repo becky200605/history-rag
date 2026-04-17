@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 logger = logging.getLogger(__name__)
 
 
-KNOWLEDGE_SEARCH_TOOL_NAME = "knowledge_search"
+GROUNDING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
 CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\([^)]+\)", re.IGNORECASE)
 REFUSAL_PREFIX_PATTERN = re.compile(r"^\s*【无法回答】", re.IGNORECASE)
 REFERENCE_SECTION_PATTERNS = (
@@ -26,10 +26,10 @@ SUGGESTION_SECTION_PATTERNS = (
 )
 RETRY_APPENDIX = (
     "\n\n[System enforcement]\n"
-    "Your previous draft was blocked because it used `knowledge_search` results without the required body citations.\n"
+    "Your previous draft was blocked because it used grounded knowledge results (`knowledge_search` / `knowledge_locate`) without the required body citations.\n"
     "Regenerate the full answer from scratch.\n"
     "Requirements:\n"
-    "1. If you use any knowledge from `knowledge_search`, include at least one `[citation:Title](URL)` citation in the answer body.\n"
+    "1. If you use any knowledge from `knowledge_search` or `knowledge_locate`, include at least one `[citation:Title](URL)` citation in the answer body.\n"
     "2. Do not add `参考文献` or `建议问题` sections. The system will generate them in later stages.\n"
     "3. If you cannot support the answer with citations, refuse using the exact prefix `【无法回答】` followed by a brief reason.\n"
     "4. Do not mention this enforcement message in the final answer."
@@ -39,7 +39,7 @@ RETRY_APPENDIX_FINAL = (
     "Your previous retry still missed the required body citations.\n"
     "Regenerate the full answer from scratch one more time.\n"
     "Additional requirements:\n"
-    "1. Reuse the exact `citation:` lines returned by `knowledge_search` whenever possible; do not rewrite citation links manually.\n"
+    "1. Reuse the exact `citation:` lines returned by `knowledge_search` / `knowledge_locate` whenever possible; do not rewrite citation links manually.\n"
     "2. If you cite a source, the answer body must contain the `[citation:Title](URL)` link itself, not only a plain-text mention.\n"
     "3. Do not add `参考文献` or `建议问题` sections. The system will generate them separately.\n"
     "4. If you still cannot produce a fully cited answer, refuse explicitly using the exact prefix `【无法回答】`.\n"
@@ -198,15 +198,15 @@ def _build_suggestion_prompt(*, user_question: str, answer_body: str, reference_
 class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
     """Require body citations for grounded answers, then assemble references and suggestions."""
 
-    def _turn_used_knowledge_search(self, messages: list) -> bool:
+    def _turn_used_grounding_tools(self, messages: list) -> bool:
         start = _latest_human_index(messages)
         for message in messages[start:]:
-            if isinstance(message, ToolMessage) and getattr(message, "name", None) == KNOWLEDGE_SEARCH_TOOL_NAME:
+            if isinstance(message, ToolMessage) and getattr(message, "name", None) in GROUNDING_TOOL_NAMES:
                 return True
         return False
 
     def _needs_enforcement(self, response: ModelResponse, messages: list) -> bool:
-        if not self._turn_used_knowledge_search(messages):
+        if not self._turn_used_grounding_tools(messages):
             return False
 
         ai_messages = [message for message in response.result if isinstance(message, AIMessage)]

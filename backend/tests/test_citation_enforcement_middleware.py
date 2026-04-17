@@ -22,7 +22,7 @@ class _SuggestionModel:
         return SimpleNamespace(content=self.suggestions)
 
 
-def _build_request(model=None) -> ModelRequest:
+def _build_request(model=None, tool_name: str = "knowledge_search") -> ModelRequest:
     return ModelRequest(
         model=model or _SuggestionModel(),
         messages=[
@@ -30,7 +30,7 @@ def _build_request(model=None) -> ModelRequest:
             ToolMessage(
                 content="citation: [citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)",
                 tool_call_id="tool-call-1",
-                name="knowledge_search",
+                name=tool_name,
             ),
         ],
         system_message=SystemMessage(content="You are a helpful assistant."),
@@ -103,6 +103,25 @@ class TestCitationEnforcementMiddleware:
         assert "reuse the exact `citation:` lines returned by `knowledge_search`" in str(
             seen_requests[2].system_message.content
         ).lower()
+
+    def test_enforces_citations_for_knowledge_locate_too(self):
+        middleware = CitationEnforcementMiddleware()
+        request = _build_request(
+            model=_SuggestionModel("继续缩到段落？\n继续核对上下文？\n继续追问史料差异？"),
+            tool_name="knowledge_locate",
+        )
+        seen_requests: list[ModelRequest] = []
+
+        def handler(current_request: ModelRequest) -> ModelResponse:
+            seen_requests.append(current_request)
+            return _bad_response() if len(seen_requests) < 3 else _good_stage_one_response()
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert len(seen_requests) == 3
+        assert "[citation:史料 第7页第2段]" in content
+        assert "knowledge_locate" in str(seen_requests[1].system_message.content)
 
     def test_returns_final_refusal_after_all_retries_fail_and_skips_reference_stage(self):
         middleware = CitationEnforcementMiddleware()

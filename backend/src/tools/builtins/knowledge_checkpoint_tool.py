@@ -35,10 +35,16 @@ def knowledge_checkpoint_tool(
     must faithfully preserve the findings you will still need after the raw
     `knowledge_search` / `knowledge_locate` outputs are hidden from later model calls.
 
+    This tool should be used proactively as part of the normal retrieval workflow,
+    not only when the user reminds you. If you have already gathered a usable block
+    of grounded findings and are about to switch topics, continue searching elsewhere,
+    or start drafting, you should call this tool first.
+
     When to use:
     - After finishing one major retrieval section and before moving to the next section
     - When you have gathered enough evidence that you can summarize it faithfully
     - When previous `knowledge_search` / `knowledge_locate` outputs are getting verbose
+    - Before drafting the final answer if the current turn gathered substantive new findings
 
     When NOT to use:
     - Before you have substantive findings
@@ -49,6 +55,7 @@ def knowledge_checkpoint_tool(
     - `summary` should be detailed, factual, and limited to what the retrieved material supports
     - `citations` should prefer the exact `citation:` lines returned by the knowledge tools
     - Include unresolved gaps in `open_questions` if more retrieval is still needed
+    - Write enough detail that later steps can rely on the checkpoint without rereading the hidden raw tool outputs
 
     Args:
         title: Short label for this retrieval block, such as `北洋政府时期财政`.

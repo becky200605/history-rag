@@ -47,6 +47,11 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "建议问题" in prompt
     assert "Noise Filtering Rule" in prompt
     assert "Knowledge Checkpoint Rule" in prompt
+    assert "knowledge_checkpoint` is not optional" in prompt
+    assert "Checkpoint Trigger Rule" in prompt
+    assert "Checkpoint Before Draft Rule" in prompt
+    assert "Checkpoint Structure Rule" in prompt
+    assert "Checkpoint Cadence Rule" in prompt
     assert "knowledge_checkpoint" in prompt
     assert "Catalog Rescue Rule" in prompt
     assert "Query Anchoring Rule" in prompt

@@ -8,6 +8,7 @@ from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.prebuilt.tool_node import ToolCallRequest
 
 GROUNDING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
 CHECKPOINT_TOOL_NAME = "knowledge_checkpoint"
@@ -53,6 +54,13 @@ def _stringify_content(content: object) -> str:
 
 class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
     """Hide old grounding payloads and push the model to checkpoint before moving on."""
+
+    def _extract_messages_from_state(self, state: object) -> list:
+        if isinstance(state, dict):
+            messages = state.get("messages")
+            return messages if isinstance(messages, list) else []
+        messages = getattr(state, "messages", None)
+        return messages if isinstance(messages, list) else []
 
     def _latest_human_index(self, messages: list) -> int:
         for index in range(len(messages) - 1, -1, -1):
@@ -187,6 +195,29 @@ class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
         )
         return retry_response
 
+    def _build_blocked_tool_message(self, request: ToolCallRequest) -> ToolMessage:
+        tool_name = request.tool_call.get("name", "unknown")
+        count = self._grounding_count_since_checkpoint(self._extract_messages_from_state(request.state))
+        return ToolMessage(
+            content=(
+                "Error: 已累计达到 knowledge_checkpoint 强制触发阈值。"
+                f"当前自上次 checkpoint 以来已有 {count} 条有效的 `knowledge_search` / `knowledge_locate` 结果。"
+                f"在调用 `{tool_name}` 之前，必须先调用 `knowledge_checkpoint` 总结已完成板块。"
+            ),
+            tool_call_id=request.tool_call.get("id", ""),
+            name=tool_name,
+            status="error",
+        )
+
+    def _should_block_tool_call(self, request: ToolCallRequest) -> bool:
+        tool_name = request.tool_call.get("name")
+        if tool_name == CHECKPOINT_TOOL_NAME:
+            return False
+        messages = self._extract_messages_from_state(request.state)
+        if not messages:
+            return False
+        return self._needs_checkpoint_enforcement(messages)
+
     @override
     def wrap_model_call(
         self,
@@ -206,3 +237,23 @@ class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
         prepared_request = self._prepare_request(request)
         response = await handler(prepared_request)
         return await self._aenforce_with_retry(prepared_request, response, handler)
+
+    @override
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage],
+    ) -> ToolMessage:
+        if self._should_block_tool_call(request):
+            return self._build_blocked_tool_message(request)
+        return handler(request)
+
+    @override
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
+    ) -> ToolMessage:
+        if self._should_block_tool_call(request):
+            return self._build_blocked_tool_message(request)
+        return await handler(request)

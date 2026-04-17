@@ -117,6 +117,7 @@ def _normalize_whitespace(value: str) -> str:
 def _load_env_files() -> None:
     load_dotenv(ROOT_DIR / ".env", override=False)
     load_dotenv(BACKEND_DIR / ".env", override=False)
+    load_dotenv(BACKEND_DIR / ".production.env", override=False)
     load_dotenv(override=False)
 
 

@@ -80,8 +80,12 @@ type TranslationLayoutItem = {
   source: "current" | "previous-spill";
   baseWidth: number;
   baseHeight: number;
+  blockWidth: number;
+  blockHeight: number;
   overflowWidth: number;
   overflowHeight: number;
+  blockLeft: number;
+  blockTop: number;
   textLeft: number;
   textTop: number;
   textWidth: number;
@@ -372,6 +376,7 @@ export function KnowledgePdfReader({
   knowledgeSpaceId,
   originFilename,
   originTitle,
+  onCompareToggle,
   focusedPdfPageNo,
   focusedParagraphNo,
   focusedParagraphText,
@@ -381,6 +386,7 @@ export function KnowledgePdfReader({
   knowledgeSpaceId?: string;
   originFilename: string;
   originTitle: string;
+  onCompareToggle?: (open: boolean) => void;
   focusedPdfPageNo?: number | null;
   focusedParagraphNo?: number | null;
   focusedParagraphText?: string | null;
@@ -418,8 +424,8 @@ export function KnowledgePdfReader({
   const [copiedParagraphKey, setCopiedParagraphKey] = useState<string | null>(
     null,
   );
-  const [translationBlockHeights, setTranslationBlockHeights] = useState<
-    Record<string, number>
+  const [translationBlockMetrics, setTranslationBlockMetrics] = useState<
+    Record<string, { width: number; height: number }>
   >({});
   const [canvasWidth, setCanvasWidth] = useState(0);
   const [pageImageSize, setPageImageSize] = useState({ width: 0, height: 0 });
@@ -525,6 +531,11 @@ export function KnowledgePdfReader({
     ? (translationCache[translationCacheKey] ?? null)
     : null;
 
+  useEffect(() => {
+    onCompareToggle?.(showStructure || mode === "translation");
+    return () => onCompareToggle?.(false);
+  }, [mode, onCompareToggle, showStructure]);
+
   const renderParagraphItems = useMemo(
     () => buildRenderableParagraphItems(pageData, previousPageData, layoutHint),
     [layoutHint, pageData, previousPageData],
@@ -551,7 +562,7 @@ export function KnowledgePdfReader({
   }, [pageWidth, mode, currentPdfPageNo]);
 
   useEffect(() => {
-    setTranslationBlockHeights({});
+    setTranslationBlockMetrics({});
     translationBlockRefs.current = {};
   }, [translationCacheKey]);
 
@@ -838,7 +849,7 @@ export function KnowledgePdfReader({
       error: null,
       text: "",
     };
-    const displayedTranslation = cachedTranslation || translationState.text;
+    const displayedTranslation = cachedTranslation ?? translationState.text;
     const isCopied = copiedParagraphKey === paragraph.key;
     const menuWidth = 320;
     const left =
@@ -938,6 +949,7 @@ export function KnowledgePdfReader({
 
     const items: TranslationLayoutItem[] = [];
     let verticalOffset = 0;
+    let horizontalOffset = 0;
 
     for (const renderItem of renderParagraphItems) {
       const contextParagraph = renderItem.contextParagraph;
@@ -952,9 +964,18 @@ export function KnowledgePdfReader({
       const textHeight = renderItem.textHeight * displayScale;
       const baseWidth = textWidth;
       const baseHeight = textHeight;
-      const blockHeight =
-        translationBlockHeights[contextParagraph.key] ?? baseHeight;
+      const blockMetrics = translationBlockMetrics[contextParagraph.key];
+      const blockWidth = Math.max(baseWidth, blockMetrics?.width ?? baseWidth);
+      const blockHeight = Math.max(
+        baseHeight,
+        blockMetrics?.height ?? baseHeight,
+      );
+      const overflowWidth = Math.max(0, blockWidth - baseWidth);
       const overflowHeight = Math.max(0, blockHeight - baseHeight);
+      const blockLeft = isVerticalLayout
+        ? textLeft - horizontalOffset - overflowWidth
+        : textLeft;
+      const blockTop = textTop;
 
       items.push({
         contextParagraph,
@@ -962,8 +983,12 @@ export function KnowledgePdfReader({
         source: renderItem.source,
         baseWidth,
         baseHeight,
-        overflowWidth: 0,
+        blockWidth,
+        blockHeight,
+        overflowWidth,
         overflowHeight,
+        blockLeft,
+        blockTop,
         textLeft,
         textTop,
         textWidth,
@@ -971,6 +996,9 @@ export function KnowledgePdfReader({
         translatedText,
       });
 
+      if (isVerticalLayout && overflowWidth > 0) {
+        horizontalOffset += overflowWidth;
+      }
       if (!isVerticalLayout && overflowHeight > 0) {
         verticalOffset += overflowHeight;
       }
@@ -984,9 +1012,20 @@ export function KnowledgePdfReader({
     pageHeight,
     pageWidth,
     renderParagraphItems,
-    translationBlockHeights,
+    translationBlockMetrics,
     translationMap,
   ]);
+
+  const translationCanvasWidth = useMemo(() => {
+    if (!pageWidth) {
+      return 0;
+    }
+
+    return Math.max(
+      pageWidth * displayScale,
+      ...translationLayoutItems.map((item) => item.blockLeft + item.blockWidth),
+    );
+  }, [displayScale, pageWidth, translationLayoutItems]);
 
   const translationCanvasHeight = useMemo(() => {
     if (!pageHeight) {
@@ -1006,28 +1045,35 @@ export function KnowledgePdfReader({
   }, [displayScale, isVerticalLayout, pageHeight, translationLayoutItems]);
 
   useLayoutEffect(() => {
-    if (mode !== "translation" || isVerticalLayout) {
+    if (mode !== "translation") {
       return;
     }
 
-    const nextHeights: Record<string, number> = {};
+    const nextMetrics: Record<string, { width: number; height: number }> = {};
     for (const [key, element] of Object.entries(translationBlockRefs.current)) {
       if (!element) {
         continue;
       }
-      nextHeights[key] = Math.ceil(element.getBoundingClientRect().height);
+      nextMetrics[key] = {
+        width: Math.ceil(element.scrollWidth),
+        height: Math.ceil(element.scrollHeight),
+      };
     }
 
-    const currentKeys = Object.keys(translationBlockHeights);
-    const nextKeys = Object.keys(nextHeights);
+    const currentKeys = Object.keys(translationBlockMetrics);
+    const nextKeys = Object.keys(nextMetrics);
     const changed =
       currentKeys.length !== nextKeys.length ||
-      nextKeys.some((key) => translationBlockHeights[key] !== nextHeights[key]);
+      nextKeys.some((key) => {
+        const current = translationBlockMetrics[key];
+        const next = nextMetrics[key];
+        return current?.width !== next?.width || current?.height !== next?.height;
+      });
 
     if (changed) {
-      setTranslationBlockHeights(nextHeights);
+      setTranslationBlockMetrics(nextMetrics);
     }
-  }, [isVerticalLayout, mode, translationBlockHeights, translationLayoutItems]);
+  }, [mode, translationBlockMetrics, translationLayoutItems]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-zinc-50/50 shadow-sm">
@@ -1286,17 +1332,18 @@ export function KnowledgePdfReader({
                 <div className="min-h-full p-6">
                   <div className="flex items-start justify-center">
                     <KnowledgePageSurface
-                      width={pageWidth * displayScale}
+                      width={translationCanvasWidth}
                       height={translationCanvasHeight}
                       className="shadow-[0_24px_50px_-30px_rgba(15,23,42,0.28)]"
                       style={{
+                        minWidth: `${translationCanvasWidth}px`,
                         minHeight: `${translationCanvasHeight}px`,
                       }}
                     >
                       <div
                         className="relative"
                         style={{
-                          width: `${pageWidth * displayScale}px`,
+                          width: `${translationCanvasWidth}px`,
                           height: `${translationCanvasHeight}px`,
                         }}
                       >
@@ -1345,10 +1392,10 @@ export function KnowledgePdfReader({
                                   : "border-transparent hover:border-primary/30 hover:bg-stone-50/40",
                               )}
                               style={{
-                                left: `${item.textLeft - 4}px`,
-                                top: `${item.textTop - 4}px`,
-                                width: `${item.baseWidth + 8}px`,
-                                minHeight: `${item.baseHeight + 8}px`,
+                                left: `${item.blockLeft - 4}px`,
+                                top: `${item.blockTop - 4}px`,
+                                width: `${item.blockWidth + 8}px`,
+                                minHeight: `${item.blockHeight + 8}px`,
                                 padding: "4px",
                               }}
                               onMouseEnter={() =>
@@ -1386,10 +1433,10 @@ export function KnowledgePdfReader({
                                 style={{
                                   minHeight: `${item.baseHeight}px`,
                                   minWidth: isVerticalLayout
-                                    ? `${item.baseWidth}px`
+                                    ? `${item.blockWidth}px`
                                     : undefined,
                                   width: isVerticalLayout
-                                    ? `${item.baseWidth}px`
+                                    ? `${item.blockWidth}px`
                                     : undefined,
                                   height: isVerticalLayout
                                     ? `${item.baseHeight}px`

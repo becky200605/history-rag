@@ -168,6 +168,116 @@ def test_build_chunks_splits_long_structured_paragraph_but_preserves_metadata(mo
         assert len(chunk.page_content) <= 20
 
 
+def test_build_chunks_merges_adjacent_short_structured_paragraphs_to_reach_min_chars(monkeypatch) -> None:
+    _set_chunking_config(monkeypatch, chunk_size=500, chunk_overlap=0)
+
+    documents = [
+        Document(
+            page_content="盛宣怀早年参与洋务事务。",
+            metadata={
+                "source": "/tmp/demo.structured.json",
+                "source_type": "structured",
+                "page_no": 2,
+                "pdf_page_no": 2,
+                "paragraph_id": "page-2-p1",
+                "paragraph_no": 1,
+                "paragraph_no_in_doc": 11,
+                "line_start": 1,
+                "line_end": 2,
+                "bbox": {"x": 1.0, "y": 1.0, "width": 10.0, "height": 5.0},
+                "bbox_source": "mineru_grpc",
+            },
+        ),
+        Document(
+            page_content="随后主持招商局、电报局等实业筹办，并与晚清财政和交通体系改革持续发生联系。",
+            metadata={
+                "source": "/tmp/demo.structured.json",
+                "source_type": "structured",
+                "page_no": 2,
+                "pdf_page_no": 2,
+                "paragraph_id": "page-2-p2",
+                "paragraph_no": 2,
+                "paragraph_no_in_doc": 12,
+                "line_start": 3,
+                "line_end": 5,
+                "bbox": {"x": 2.0, "y": 2.0, "width": 11.0, "height": 6.0},
+                "bbox_source": "mineru_grpc",
+            },
+        ),
+        Document(
+            page_content="相关奏议也常围绕商办、路矿和电政展开。",
+            metadata={
+                "source": "/tmp/demo.structured.json",
+                "source_type": "structured",
+                "page_no": 2,
+                "pdf_page_no": 2,
+                "paragraph_id": "page-2-p3",
+                "paragraph_no": 3,
+                "paragraph_no_in_doc": 13,
+                "line_start": 6,
+                "line_end": 7,
+                "bbox": {"x": 3.0, "y": 3.0, "width": 12.0, "height": 7.0},
+                "bbox_source": "mineru_grpc",
+            },
+        ),
+    ]
+
+    chunks = indexer._build_chunks(documents, scope="global", thread_id=None)
+
+    assert len(chunks) == 1
+    chunk = chunks[0]
+    assert chunk.page_content == "\n".join(document.page_content for document in documents)
+    assert chunk.metadata["paragraph_no"] == 1
+    assert chunk.metadata["paragraph_no_in_doc"] == 11
+    assert chunk.metadata["paragraph_end_no"] == 3
+    assert chunk.metadata["paragraph_end_no_in_doc"] == 13
+    assert chunk.metadata["merged_paragraph_count"] == 3
+    assert chunk.metadata["line_start"] == 1
+    assert chunk.metadata["line_end"] == 7
+    assert chunk.metadata["bbox"] is None
+    assert chunk.metadata["bbox_source"] == "paragraph_merge"
+
+
+def test_build_chunks_does_not_merge_structured_paragraphs_across_pages(monkeypatch) -> None:
+    _set_chunking_config(monkeypatch, chunk_size=500, chunk_overlap=0)
+
+    documents = [
+        Document(
+            page_content="第一页短段。",
+            metadata={
+                "source": "/tmp/demo.structured.json",
+                "source_type": "structured",
+                "page_no": 1,
+                "pdf_page_no": 1,
+                "paragraph_id": "page-1-p1",
+                "paragraph_no": 1,
+                "paragraph_no_in_doc": 1,
+                "line_start": 1,
+                "line_end": 1,
+            },
+        ),
+        Document(
+            page_content="第二页短段。",
+            metadata={
+                "source": "/tmp/demo.structured.json",
+                "source_type": "structured",
+                "page_no": 2,
+                "pdf_page_no": 2,
+                "paragraph_id": "page-2-p1",
+                "paragraph_no": 1,
+                "paragraph_no_in_doc": 2,
+                "line_start": 1,
+                "line_end": 1,
+            },
+        ),
+    ]
+
+    chunks = indexer._build_chunks(documents, scope="global", thread_id=None)
+
+    assert len(chunks) == 2
+    assert [chunk.page_content for chunk in chunks] == ["第一页短段。", "第二页短段。"]
+
+
 def test_build_chunks_merges_vertical_structured_sentences_in_groups_of_five(monkeypatch) -> None:
     _set_chunking_config(monkeypatch, chunk_size=500, chunk_overlap=0)
 

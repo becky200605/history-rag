@@ -361,6 +361,7 @@ function KnowledgeDocumentPdfViewer({
       knowledgeSpaceId={knowledgeSpaceId}
       originFilename={originFilename}
       originTitle={originTitle}
+      onCompareToggle={onCompareToggle}
     />
   );
 }
@@ -440,6 +441,7 @@ function KnowledgeCitationPdfViewer({
       knowledgeSpaceId={knowledgeSpaceId}
       originFilename={state.data.filename}
       originTitle={state.data.title}
+      onCompareToggle={onCompareToggle}
       focusedPdfPageNo={state.data.pdf_page_no ?? null}
       focusedParagraphNo={state.data.paragraph_no ?? null}
       focusedParagraphText={state.data.text ?? null}

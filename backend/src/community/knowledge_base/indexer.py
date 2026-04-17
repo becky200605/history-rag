@@ -34,6 +34,7 @@ UPSERT_RETRY_BASE_DELAY_SECONDS = 5.0
 UPSERT_BATCH_SIZE = 64
 UPSERT_PARALLELISM = 2
 VERTICAL_STRUCTURED_MERGE_SIZE = 5
+STRUCTURED_EMBED_MIN_CHARS = 100
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +248,9 @@ def _annotate_chunks(
                 "paragraph_id": chunk.metadata.get("paragraph_id"),
                 "paragraph_no": chunk.metadata.get("paragraph_no"),
                 "paragraph_no_in_doc": chunk.metadata.get("paragraph_no_in_doc"),
+                "paragraph_end_no": chunk.metadata.get("paragraph_end_no"),
+                "paragraph_end_no_in_doc": chunk.metadata.get("paragraph_end_no_in_doc"),
+                "merged_paragraph_count": chunk.metadata.get("merged_paragraph_count"),
                 "paragraph_chunk_index": chunk.metadata.get("paragraph_chunk_index"),
                 "paragraph_chunk_count": chunk.metadata.get("paragraph_chunk_count"),
                 "bbox": chunk.metadata.get("bbox"),
@@ -264,6 +268,10 @@ def _is_structured_document(document: Document) -> bool:
 
 def _is_vertical_structured_document(document: Document) -> bool:
     return _is_structured_document(document) and str(document.metadata.get("layout_hint") or "").lower() == "vertical"
+
+
+def _is_plain_structured_document(document: Document) -> bool:
+    return _is_structured_document(document) and not str(document.metadata.get("layout_hint") or "").strip()
 
 
 def _build_document_splitter(chunk_size: int, chunk_overlap: int) -> RecursiveCharacterTextSplitter:
@@ -299,6 +307,72 @@ def _split_structured_document(
 def _split_regular_document(document: Document, splitter: RecursiveCharacterTextSplitter) -> list[Document]:
     chunks = splitter.split_documents([document])
     return chunks or [document]
+
+
+def _merge_structured_documents_for_embedding(
+    documents: list[Document],
+    *,
+    min_chars: int,
+) -> list[Document]:
+    if not documents:
+        return []
+
+    merged_documents: list[Document] = []
+    batch: list[Document] = []
+    batch_char_count = 0
+
+    def flush_batch() -> None:
+        nonlocal batch, batch_char_count
+        if not batch:
+            return
+        if len(batch) == 1:
+            merged_documents.append(batch[0])
+            batch = []
+            batch_char_count = 0
+            return
+
+        first = batch[0]
+        last = batch[-1]
+        merged_documents.append(
+            Document(
+                page_content="\n".join(
+                    document.page_content.strip()
+                    for document in batch
+                    if document.page_content.strip()
+                ),
+                metadata={
+                    **first.metadata,
+                    "line_start": first.metadata.get("line_start"),
+                    "line_end": last.metadata.get("line_end"),
+                    "paragraph_no": first.metadata.get("paragraph_no"),
+                    "paragraph_no_in_doc": first.metadata.get("paragraph_no_in_doc"),
+                    "paragraph_end_no": last.metadata.get("paragraph_no"),
+                    "paragraph_end_no_in_doc": last.metadata.get("paragraph_no_in_doc"),
+                    "merged_paragraph_count": len(batch),
+                    "bbox": None,
+                    "bbox_source": "paragraph_merge",
+                },
+            )
+        )
+        batch = []
+        batch_char_count = 0
+
+    for document in documents:
+        text = document.page_content.strip()
+        if not text:
+            continue
+
+        if not batch and len(text) >= min_chars:
+            merged_documents.append(document)
+            continue
+
+        batch.append(document)
+        batch_char_count += len(text)
+        if batch_char_count >= min_chars:
+            flush_batch()
+
+    flush_batch()
+    return merged_documents
 
 
 def _build_vertical_structured_chunk(
@@ -407,10 +481,34 @@ def _build_chunks(documents: list[Document], scope: str, thread_id: str | None) 
             )
             continue
 
+        if _is_plain_structured_document(document):
+            source = str(document.metadata.get("source", ""))
+            pdf_page_no = document.metadata.get("pdf_page_no")
+            grouped_documents: list[Document] = []
+            while index < len(documents):
+                candidate = documents[index]
+                if not _is_plain_structured_document(candidate):
+                    break
+                if str(candidate.metadata.get("source", "")) != source:
+                    break
+                if candidate.metadata.get("pdf_page_no") != pdf_page_no:
+                    break
+                grouped_documents.append(candidate)
+                index += 1
+
+            for merged_document in _merge_structured_documents_for_embedding(
+                grouped_documents,
+                min_chars=min(STRUCTURED_EMBED_MIN_CHARS, chunk_size),
+            ):
+                chunks.extend(_split_structured_document(merged_document, splitter, chunk_size))
+            continue
+
         if _is_structured_document(document):
             chunks.extend(_split_structured_document(document, splitter, chunk_size))
-        else:
-            chunks.extend(_split_regular_document(document, splitter))
+            index += 1
+            continue
+
+        chunks.extend(_split_regular_document(document, splitter))
         index += 1
     return _annotate_chunks(chunks, source_text_by_path, scope=scope, thread_id=thread_id)
 

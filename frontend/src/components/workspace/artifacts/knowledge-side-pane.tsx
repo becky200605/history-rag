@@ -76,6 +76,7 @@ type CompareLayoutItem = {
 const COMPARE_TEXT_PADDING_X = 8;
 const COMPARE_TEXT_PADDING_Y = 4;
 const COMPARE_LINE_HEIGHT = 1.42;
+const COMPARE_VERTICAL_LINE_HEIGHT = 1.18;
 const PAGE_OVERFLOW_TOLERANCE = 8;
 
 function paragraphKey(
@@ -170,7 +171,27 @@ function estimateTextHeight(text: string, width: number, fontSize: number) {
   return lines * fontSize * COMPARE_LINE_HEIGHT;
 }
 
-function paragraphFontSize(paragraph: KnowledgeStructuredParagraph) {
+function estimateVerticalTextWidth(
+  text: string,
+  height: number,
+  fontSize: number,
+) {
+  const normalizedHeight = Math.max(height / fontSize, 1);
+  const columns = text.split("\n").reduce((total, line) => {
+    const lineUnits = Array.from(line).reduce(
+      (sum, character) => sum + characterWidthWeight(character),
+      0,
+    );
+    return total + Math.max(1, Math.ceil(lineUnits / normalizedHeight));
+  }, 0);
+  return columns * fontSize * 1.14;
+}
+
+function paragraphFontSize(
+  paragraph: KnowledgeStructuredParagraph,
+  text: string,
+  layoutHint: string | null | undefined,
+) {
   const bbox = paragraph.bbox;
   if (!bbox) {
     return 14;
@@ -179,18 +200,17 @@ function paragraphFontSize(paragraph: KnowledgeStructuredParagraph) {
   const availableWidth = Math.max(bbox.width - COMPARE_TEXT_PADDING_X, 18);
   const availableHeight = Math.max(bbox.height - COMPARE_TEXT_PADDING_Y, 14);
   const maxSize = Math.max(9, Math.min(28, Math.floor(availableHeight * 0.72)));
+  const isVertical = String(layoutHint ?? "").toLowerCase() === "vertical";
   let low = 8;
   let high = maxSize;
   let best = 8;
 
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
-    const estimatedHeight = estimateTextHeight(
-      paragraph.text,
-      availableWidth,
-      mid,
-    );
-    if (estimatedHeight <= availableHeight) {
+    const fits = isVertical
+      ? estimateVerticalTextWidth(text, availableHeight, mid) <= availableWidth
+      : estimateTextHeight(text, availableWidth, mid) <= availableHeight;
+    if (fits) {
       best = mid;
       low = mid + 1;
     } else {
@@ -204,12 +224,15 @@ function paragraphFontSize(paragraph: KnowledgeStructuredParagraph) {
 function buildCompareLayoutItems(
   currentPage: KnowledgeStructuredPage,
   previousPage: KnowledgeStructuredPage | null,
+  layoutHint: string | null | undefined,
 ) {
+  const currentPageWidth = currentPage.page_meta?.page_width ?? 0;
   const currentPageHeight = currentPage.page_meta?.page_height ?? 0;
-  if (currentPageHeight <= 0) {
+  if (currentPageWidth <= 0 || currentPageHeight <= 0) {
     return [];
   }
 
+  const isVertical = String(layoutHint ?? "").toLowerCase() === "vertical";
   const layoutItems: CompareLayoutItem[] = [];
 
   for (const paragraph of currentPage.paragraphs ?? []) {
@@ -242,20 +265,26 @@ function buildCompareLayoutItems(
   }
 
   const previousPageHeight = previousPage?.page_meta?.page_height ?? 0;
-  if (previousPage && previousPageHeight > 0) {
+  const previousPageWidth = previousPage?.page_meta?.page_width ?? 0;
+  if (
+    previousPage &&
+    previousPageHeight > 0 &&
+    previousPageWidth > 0
+  ) {
     for (const paragraph of previousPage.paragraphs ?? []) {
       const bbox = paragraph.bbox;
       if (!bbox) {
         continue;
       }
-      if (
-        bbox.y + bbox.height <=
-        previousPageHeight + PAGE_OVERFLOW_TOLERANCE
-      ) {
+      const overflowDetected = isVertical
+        ? bbox.x + bbox.width > previousPageWidth + PAGE_OVERFLOW_TOLERANCE
+        : bbox.y + bbox.height > previousPageHeight + PAGE_OVERFLOW_TOLERANCE;
+      if (!overflowDetected) {
         continue;
       }
 
-      const textTop = bbox.y - previousPageHeight;
+      const textLeft = isVertical ? bbox.x - previousPageWidth : bbox.x;
+      const textTop = isVertical ? bbox.y : bbox.y - previousPageHeight;
       const visibleTop = Math.max(textTop, 0);
       const visibleBottom = Math.min(textTop + bbox.height, currentPageHeight);
       if (visibleBottom <= visibleTop) {
@@ -268,7 +297,7 @@ function buildCompareLayoutItems(
         paragraph,
         bbox,
         source: "previous-spill",
-        textLeft: bbox.x,
+        textLeft,
         textTop,
         visibleTop,
         visibleHeight: visibleBottom - visibleTop,
@@ -280,6 +309,15 @@ function buildCompareLayoutItems(
   }
 
   return layoutItems.sort((left, right) => {
+    if (isVertical) {
+      if (left.textLeft !== right.textLeft) {
+        return right.textLeft - left.textLeft;
+      }
+      if (left.visibleTop !== right.visibleTop) {
+        return left.visibleTop - right.visibleTop;
+      }
+      return left.source.localeCompare(right.source);
+    }
     if (left.visibleTop !== right.visibleTop) {
       return left.visibleTop - right.visibleTop;
     }
@@ -412,9 +450,15 @@ export function KnowledgeSidePane({
   const pageData = pageState.status === "ready" ? pageState.data : null;
   const pageWidth = pageData?.page_meta?.page_width ?? 0;
   const pageHeight = pageData?.page_meta?.page_height ?? 0;
+  const layoutHint = pageData?.layout_hint ?? null;
+  const isVerticalLayout =
+    String(layoutHint ?? "").toLowerCase() === "vertical";
   const compareLayoutItems = useMemo(
-    () => (pageData ? buildCompareLayoutItems(pageData, previousPageData) : []),
-    [pageData, previousPageData],
+    () =>
+      pageData
+        ? buildCompareLayoutItems(pageData, previousPageData, layoutHint)
+        : [],
+    [layoutHint, pageData, previousPageData],
   );
 
   const paragraphs = useMemo(
@@ -781,7 +825,7 @@ export function KnowledgeSidePane({
       error: null,
       text: "",
     };
-    const displayedTranslation = cachedTranslation || translationState.text;
+    const displayedTranslation = cachedTranslation ?? translationState.text;
     const isCopied = copiedParagraphKey === paragraph.key;
     const menuWidth = 320;
     const left =
@@ -916,9 +960,17 @@ export function KnowledgeSidePane({
                       width: `${item.bbox.width}px`,
                       height: `${Math.max(item.bbox.height, 24)}px`,
                       padding: "2px 4px",
-                      fontSize: `${paragraphFontSize(item.paragraph)}px`,
-                      lineHeight: COMPARE_LINE_HEIGHT,
+                      fontSize: `${paragraphFontSize(
+                        item.paragraph,
+                        item.paragraph.text,
+                        layoutHint,
+                      )}px`,
+                      lineHeight: isVerticalLayout
+                        ? COMPARE_VERTICAL_LINE_HEIGHT
+                        : COMPARE_LINE_HEIGHT,
                       letterSpacing: "0.01em",
+                      writingMode: isVerticalLayout ? "vertical-rl" : undefined,
+                      textOrientation: isVerticalLayout ? "mixed" : undefined,
                       color: "#1c1917",
                     }}
                     onMouseEnter={

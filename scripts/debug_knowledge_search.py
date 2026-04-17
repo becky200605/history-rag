@@ -174,7 +174,7 @@ def _load_payload(args: argparse.Namespace) -> dict[str, Any]:
     knowledge_folders = payload.get("knowledge_folders") or args.knowledge_folders
     scopes = payload.get("scopes") or args.scopes
 
-    if not query and not args.list_doc_ids:
+    if not query and not args.list_doc_ids and not args.check_embedding:
         raise SystemExit("Missing query. Pass --query or --payload-json.")
 
     return {

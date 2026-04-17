@@ -318,6 +318,9 @@ def _build_no_result_guidance(query: str, doc_ids: list[str] | None) -> str:
     lines.append("2. 把时期词换成正文里更常见的同义叫法，例如 `清代末期` → `晚清` / `清末`。")
     lines.append("3. 像“某时期财政情况”这种宽问题，先拆成 `财政收入结构`、`财政支出结构`、`财政政策` 之类的小问题。")
     lines.append("4. 由于库里大多是长段正文，优先改写成带锚点的句子型专业 query，不要写成关键词堆砌。")
+    if doc_ids:
+        lines.append("5. 如果这是人物生平、经历、机构沿革这类零散分布的问题，不要只反复改 query。直接对同一批 `doc_ids` 调用 `knowledge_locate(doc_id=...)`，先看目录、序言、章节开头这些导航页，再顺着相关板块继续定位正文。")
+        lines.append("6. `knowledge_locate` 现在支持只传 `doc_id` 做导航预览；当你还没有精确页码时，先用它看目录/开篇结构，再决定后续定位点。")
 
     suggestions = _build_retry_query_suggestions(query)
     if suggestions:
@@ -416,6 +419,85 @@ def _build_citation(citation_label: str, citation_link: str | None) -> str | Non
     if not citation_link:
         return None
     return f"[citation:{citation_label}]({citation_link})"
+
+
+def _looks_like_navigation_page(page_text: str) -> bool:
+    normalized = " ".join(page_text.split()).lower()
+    if not normalized:
+        return False
+    if any(keyword in normalized for keyword in ("目录", "contents", "table of contents", "绪论", "引言", "序言", "凡例")):
+        return True
+
+    lines = [line.strip() for line in page_text.splitlines() if line.strip()]
+    if len(lines) < 3:
+        return False
+
+    dotted_lines = sum(1 for line in lines if "....." in line or "……" in line)
+    numbered_lines = sum(1 for line in lines if line and line[-1].isdigit())
+    chapter_lines = sum(1 for line in lines if re.search(r"第[一二三四五六七八九十百〇0-9]+[章节编卷部]", line))
+    return dotted_lines >= 2 or numbered_lines >= 3 or chapter_lines >= 2
+
+
+def _build_navigation_locate_preview(
+    *,
+    payload: dict[str, Any],
+    max_pages: int = 4,
+    max_lines_per_page: int = 12,
+) -> list[dict[str, Any]]:
+    pages = payload.get("pages") or []
+    if not pages:
+        return []
+
+    selected_pages: list[dict[str, Any]] = []
+    seen_pdf_pages: set[int] = set()
+
+    def add_page(page: dict[str, Any]) -> None:
+        pdf_page_no = int(page.get("pdf_page_no") or page.get("page_no") or 0)
+        if pdf_page_no in seen_pdf_pages:
+            return
+        seen_pdf_pages.add(pdf_page_no)
+        selected_pages.append(page)
+
+    for page in pages[: min(len(pages), 20)]:
+        page_text = str(page.get("text") or "")
+        if _looks_like_navigation_page(page_text):
+            add_page(page)
+        if len(selected_pages) >= max_pages:
+            break
+
+    if len(selected_pages) < max_pages:
+        for page in pages[: min(len(pages), 6)]:
+            add_page(page)
+            if len(selected_pages) >= max_pages:
+                break
+
+    previews: list[dict[str, Any]] = []
+    for page in selected_pages[:max_pages]:
+        page_text = str(page.get("text") or "").strip()
+        page_lines = [line.strip() for line in page_text.splitlines() if line.strip()]
+        preview_text = "\n".join(page_lines[:max_lines_per_page]).strip()
+        if not preview_text:
+            paragraphs = page.get("paragraphs") or []
+            preview_text = "\n".join(
+                str(paragraph.get("text") or "").strip()
+                for paragraph in paragraphs[:3]
+                if str(paragraph.get("text") or "").strip()
+            ).strip()
+        if not preview_text:
+            continue
+        previews.append(
+            {
+                "page_no": page.get("page_no"),
+                "pdf_page_no": page.get("pdf_page_no"),
+                "book_page_no": page.get("book_page_no"),
+                "paragraph_no": None,
+                "line_start": None,
+                "line_end": None,
+                "text": preview_text,
+                "is_navigation_page": _looks_like_navigation_page(page_text),
+            }
+        )
+    return previews
 
 
 def _truncate_text(text: str, *, max_chars: int, max_lines: int | None = None) -> str:
@@ -1030,6 +1112,9 @@ def knowledge_locate_tool(
 
     Use this after `knowledge_search` when you already know the relevant `doc_id`
     and need the nearby paragraphs around a cited page, paragraph, or line range.
+    If you only know the relevant book but not the exact location yet, you may
+    call `knowledge_locate` with only `doc_id` (or `filename`) to get a
+    navigation preview of likely目录/序言/开篇页，再据此继续定位正文。
 
     Args:
         doc_id: Optional document ID returned by `book_search` or `knowledge_search`.
@@ -1055,6 +1140,50 @@ def knowledge_locate_tool(
         return f"Error locating document: {e}"
     if not document:
         return "No structured document found for the requested doc_id or filename."
+
+    navigation_mode = (
+        page_no is None
+        and pdf_page_no is None
+        and paragraph_no is None
+        and line_start is None
+        and line_end is None
+    )
+
+    if navigation_mode:
+        previews = _build_navigation_locate_preview(payload=document.payload)
+        if not previews:
+            return "No navigation preview available for the requested document."
+
+        lines = ["## 导航预览结果", ""]
+        lines.append(f"标题: {document.title}")
+        lines.append(f"doc_id: {document.doc_id}")
+        lines.append(f"文件: {document.filename}")
+        lines.append(f"范围: {document.scope}")
+        lines.append(f"文档链接: {document.source_url}")
+        if document.original_url and document.original_url != document.source_url:
+            lines.append(f"原始文件: {document.original_url}")
+        lines.append("")
+
+        for index, preview in enumerate(previews, 1):
+            location_text = _build_location_text(
+                page_no=preview.get("page_no"),
+                pdf_page_no=preview.get("pdf_page_no"),
+                paragraph_no=None,
+            ) or "未标注页码"
+            kind = "目录/导航页" if preview.get("is_navigation_page") else "开篇预览页"
+            lines.append(f"### 导航片段 {index}: {kind} - {location_text}")
+            lines.append(str(preview.get("text") or "").strip())
+            lines.append("")
+
+        lines.append("---")
+        lines.append(
+            "下一步：从这些目录词、章节名、时期划分、专题板块里挑最相关的一项，"
+            "再用对应页码继续调用 `knowledge_locate`，或回到 `knowledge_search` 改成更贴近该板块的句子型 query。"
+        )
+        lines.append(
+            "如果这是人物生平、经历、制度沿革这类零散问题，优先沿目录里的阶段/专题板块继续定位，不要只反复改关键词。"
+        )
+        return "\n".join(lines)
 
     try:
         excerpts = extract_document_context(

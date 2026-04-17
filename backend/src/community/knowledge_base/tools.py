@@ -320,6 +320,31 @@ def _resolve_requested_doc_ids(
     return resolved, missing, ambiguous
 
 
+def _resolve_requested_filename(
+    requested_filename: str | None,
+    *,
+    visible_entries: list[BookCatalogEntry],
+) -> tuple[str | None, bool]:
+    if not requested_filename:
+        return None, False
+
+    exact_filenames = {entry.filename: entry.filename for entry in visible_entries}
+    if requested_filename in exact_filenames:
+        return exact_filenames[requested_filename], False
+
+    normalized_requested = _normalize_doc_id_match_key(requested_filename)
+    normalized_matches = [
+        entry.filename
+        for entry in visible_entries
+        if _normalize_doc_id_match_key(entry.filename) == normalized_requested
+    ]
+    if len(normalized_matches) == 1:
+        return normalized_matches[0], False
+    if len(normalized_matches) > 1:
+        return None, True
+    return None, False
+
+
 def _normalize_retry_query(query: str) -> str:
     return " ".join(query.split()).strip()
 
@@ -375,27 +400,16 @@ def _build_retry_query_suggestions(query: str) -> list[str]:
 def _build_no_result_guidance(query: str, doc_ids: list[str] | None) -> str:
     lines = ["## 检索结果", "", "本轮没有命中到可直接使用的内部知识片段。", "", "---"]
     if doc_ids:
-        lines.append("先不要因为这一轮空结果就直接换到别的书层，更不要立刻放弃当前资料范围。")
-        lines.append("如果这些 `doc_ids` 已经来自 `book_search` 里最匹配的书，先保持同一批相关 `doc_ids`，只改一个变量继续重试。")
+        lines.append("先在同一批 `doc_ids` 里最多 grounded 重试 2 次。")
+        lines.append("如果 2 次后仍然没有结果，直接调用 `knowledge_locate(doc_id=...)` 做原文定位；优先看目录、序言、章节开头，再顺着相关板块继续找正文。")
     else:
-        lines.append("先不要立刻放宽到整库乱搜；优先回到 `book_search` 找到更匹配的书，再在那一层继续检索。")
-
-    lines.append("优先重试顺序：")
-    lines.append("1. 保留原时期/制度/人物锚点，只把 query 缩窄成一个更小的专题分面。")
-    lines.append("2. 把时期词换成正文里更常见的同义叫法，例如 `清代末期` → `晚清` / `清末`。")
-    lines.append("3. 像“某时期财政情况”这种宽问题，先拆成 `财政收入结构`、`财政支出结构`、`财政政策` 之类的小问题。")
-    lines.append("4. 由于库里大多是长段正文，优先改写成带锚点的句子型专业 query，不要写成关键词堆砌。")
-    if doc_ids:
-        lines.append("5. 如果这是人物生平、经历、机构沿革这类零散分布的问题，不要只反复改 query。直接对同一批 `doc_ids` 调用 `knowledge_locate(doc_id=...)`，先看目录、序言、章节开头这些导航页，再顺着相关板块继续定位正文。")
-        lines.append("6. `knowledge_locate` 现在支持只传 `doc_id` 做导航预览；当你还没有精确页码时，先用它看目录/开篇结构，再决定后续定位点。")
+        lines.append("先回到 `book_search` 找更匹配的书，再继续检索。")
 
     suggestions = _build_retry_query_suggestions(query)
     if suggestions:
         lines.append("建议下一轮 query：")
-        for suggestion in suggestions:
+        for suggestion in suggestions[:2]:
             lines.append(f"- `{suggestion}`")
-
-    lines.append("只有在同一批最相关书里做过这些 grounded retries 仍然没有证据时，才考虑换书层或调整资料范围。")
     return "\n".join(lines)
 
 
@@ -1222,12 +1236,60 @@ def knowledge_locate_tool(
     if not doc_id and not filename:
         return "knowledge_locate requires either doc_id or filename."
 
+    thread_id = runtime.context.get("thread_id")
+    user_id = runtime.context.get("user_id")
+    selected_doc_ids = _runtime_selected_doc_ids(runtime)
+    selected_scopes = _runtime_selected_scopes(runtime)
+    visible_entries = _visible_catalog_entries(
+        thread_id=thread_id,
+        user_id=user_id,
+        selected_doc_ids=selected_doc_ids,
+        selected_scopes=selected_scopes,
+    )
+
+    resolved_doc_id = doc_id
+    if doc_id:
+        resolved_doc_ids, missing_doc_ids, ambiguous_doc_ids = _resolve_requested_doc_ids(
+            [doc_id],
+            visible_entries=visible_entries,
+        )
+        if ambiguous_doc_ids:
+            return (
+                "Error: 当前 `knowledge_locate` 传入的 `doc_id` 去除空格后匹配到多个候选："
+                f"{_format_doc_id_blocks(ambiguous_doc_ids)}。"
+                "请改用 `book_search` / `knowledge_search` 返回的原样 `doc_id`。"
+            )
+        if missing_doc_ids:
+            return (
+                "Error: 当前 `knowledge_locate` 传入的 `doc_id` 在可见资料范围内不存在："
+                f"{_format_doc_id_blocks(missing_doc_ids)}。"
+                "请使用 `book_search` / `knowledge_search` 返回的原样 `doc_id`。"
+            )
+        resolved_doc_id = resolved_doc_ids[0] if resolved_doc_ids else doc_id
+
+    resolved_filename = filename
+    if filename:
+        resolved_filename, filename_ambiguous = _resolve_requested_filename(
+            filename,
+            visible_entries=visible_entries,
+        )
+        if filename_ambiguous:
+            return (
+                "Error: 当前 `knowledge_locate` 传入的 `filename` 去除空格后匹配到多个候选。"
+                "请改用更精确的原样文件名或直接传 `doc_id`。"
+            )
+        if resolved_filename is None:
+            return (
+                "Error: 当前 `knowledge_locate` 传入的 `filename` 在可见资料范围内不存在。"
+                "请使用系统返回的原样 `filename` 或改传 `doc_id`。"
+            )
+
     try:
         document = locate_document(
-            runtime.context.get("thread_id"),
-            user_id=runtime.context.get("user_id"),
-            doc_id=doc_id,
-            filename=filename,
+            thread_id,
+            user_id=user_id,
+            doc_id=resolved_doc_id,
+            filename=resolved_filename,
         )
     except Exception as e:
         return f"Error locating document: {e}"

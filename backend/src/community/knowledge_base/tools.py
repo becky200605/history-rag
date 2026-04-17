@@ -280,15 +280,44 @@ def _format_doc_id_blocks(doc_ids: list[str]) -> str:
     return "".join(f"[{doc_id}]" for doc_id in doc_ids)
 
 
-def _find_missing_doc_ids(
+def _normalize_doc_id_match_key(value: str) -> str:
+    return re.sub(r"\s+", "", value).strip()
+
+
+def _resolve_requested_doc_ids(
     requested_doc_ids: list[str] | None,
     *,
     visible_entries: list[BookCatalogEntry],
-) -> list[str]:
+) -> tuple[list[str] | None, list[str], list[str]]:
     if not requested_doc_ids:
-        return []
-    visible_doc_ids = {entry.doc_id for entry in visible_entries}
-    return [doc_id for doc_id in requested_doc_ids if doc_id not in visible_doc_ids]
+        return None, [], []
+
+    exact_doc_ids = {entry.doc_id: entry.doc_id for entry in visible_entries}
+    normalized_doc_ids: dict[str, list[str]] = {}
+    for entry in visible_entries:
+        normalized_key = _normalize_doc_id_match_key(entry.doc_id)
+        normalized_doc_ids.setdefault(normalized_key, []).append(entry.doc_id)
+
+    resolved: list[str] = []
+    missing: list[str] = []
+    ambiguous: list[str] = []
+
+    for requested_doc_id in requested_doc_ids:
+        if requested_doc_id in exact_doc_ids:
+            resolved.append(exact_doc_ids[requested_doc_id])
+            continue
+
+        normalized_key = _normalize_doc_id_match_key(requested_doc_id)
+        matches = normalized_doc_ids.get(normalized_key, [])
+        if len(matches) == 1:
+            resolved.append(matches[0])
+            continue
+        if len(matches) > 1:
+            ambiguous.append(requested_doc_id)
+            continue
+        missing.append(requested_doc_id)
+
+    return resolved, missing, ambiguous
 
 
 def _normalize_retry_query(query: str) -> str:
@@ -937,7 +966,22 @@ def knowledge_search_tool(
             selected_doc_ids=selected_doc_ids,
             selected_scopes=selected_scopes,
         )
-        missing_doc_ids = _find_missing_doc_ids(parsed_doc_ids, visible_entries=visible_entries)
+        resolved_doc_ids, missing_doc_ids, ambiguous_doc_ids = _resolve_requested_doc_ids(
+            parsed_doc_ids,
+            visible_entries=visible_entries,
+        )
+        if ambiguous_doc_ids:
+            logger.info(
+                "Knowledge search rejected: query=%r reason=ambiguous_doc_ids ambiguous_doc_ids=%s elapsed_ms=%.1f",
+                query,
+                len(ambiguous_doc_ids),
+                (time.perf_counter() - started_at) * 1000,
+            )
+            return (
+                "Error: 以下 `doc_ids` 去除空格后匹配到多个候选，当前无法唯一确定："
+                f"{_format_doc_id_blocks(ambiguous_doc_ids)}。"
+                "请改用 `book_search` 返回的原样 `doc_ids`。"
+            )
         if missing_doc_ids:
             logger.info(
                 "Knowledge search rejected: query=%r reason=unknown_doc_ids missing_doc_ids=%s elapsed_ms=%.1f",
@@ -950,7 +994,7 @@ def knowledge_search_tool(
                 f"{_format_doc_id_blocks(missing_doc_ids)}。"
                 "请使用 `book_search` 返回的原样 `doc_ids`，并保持 `[doc_id_1][doc_id_2]` 这种格式。"
             )
-        effective_doc_ids = _intersect_doc_ids(parsed_doc_ids, selected_doc_ids)
+        effective_doc_ids = _intersect_doc_ids(resolved_doc_ids, selected_doc_ids)
         raw_knowledge_folders = _split_loose_delimited_values(knowledge_folders) or []
         parsed_knowledge_folders = _parse_knowledge_folders(knowledge_folders)
         if not effective_doc_ids and not parsed_knowledge_folders:

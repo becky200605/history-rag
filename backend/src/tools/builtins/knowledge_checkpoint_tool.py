@@ -1,3 +1,5 @@
+import ast
+import json
 from typing import Annotated
 
 from langchain.tools import InjectedToolCallId, ToolRuntime, tool
@@ -17,15 +19,55 @@ def _render_list_section(title: str, items: list[str] | None, *, fallback: str) 
     return "\n".join(lines)
 
 
+def _normalize_string_list(value: list[str] | str | None) -> list[str] | None:
+    if value is None:
+        return None
+
+    if isinstance(value, list):
+        normalized = [str(item).strip() for item in value if str(item).strip()]
+        return normalized or None
+
+    text = value.strip()
+    if not text:
+        return None
+
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            parsed = loader(text)
+        except (ValueError, SyntaxError, json.JSONDecodeError, TypeError):
+            continue
+
+        if isinstance(parsed, list):
+            normalized = [str(item).strip() for item in parsed if str(item).strip()]
+            return normalized or None
+
+        if isinstance(parsed, str):
+            stripped = parsed.strip()
+            return [stripped] if stripped else None
+
+    bullet_lines = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(("- ", "* ", "• ")):
+            line = line[2:].strip()
+        bullet_lines.append(line)
+    if len(bullet_lines) > 1:
+        return bullet_lines
+
+    return [text]
+
+
 @tool("knowledge_checkpoint", parse_docstring=True)
 def knowledge_checkpoint_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     title: str,
     summary: str,
-    citations: list[str] | None,
+    citations: list[str] | str | None,
     tool_call_id: Annotated[str, InjectedToolCallId],
     covered_scope: str | None = None,
-    open_questions: list[str] | None = None,
+    open_questions: list[str] | str | None = None,
 ) -> Command:
     """Create a retrieval checkpoint that compresses completed knowledge-search findings.
 
@@ -64,6 +106,9 @@ def knowledge_checkpoint_tool(
         covered_scope: Optional one-line description of what this checkpoint covers.
         open_questions: Optional list of gaps or next retrieval targets that still remain.
     """
+    normalized_citations = _normalize_string_list(citations)
+    normalized_open_questions = _normalize_string_list(open_questions)
+
     sections = [f"# 检索检查点：{title.strip()}"]
     if covered_scope and covered_scope.strip():
         sections.append(f"## 覆盖范围\n{covered_scope.strip()}")
@@ -71,14 +116,14 @@ def knowledge_checkpoint_tool(
     sections.append(
         _render_list_section(
             "关键引文",
-            citations,
+            normalized_citations,
             fallback="（本次检查点未附引文；后续继续使用时请优先补齐 citation。）",
         )
     )
     sections.append(
         _render_list_section(
             "待继续检索",
-            open_questions,
+            normalized_open_questions,
             fallback="（当前板块暂无额外待检索问题）",
         )
     )

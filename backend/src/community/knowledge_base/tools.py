@@ -176,7 +176,12 @@ def _visible_catalog_entries(
     selected_scopes: list[str] | None,
 ) -> list[BookCatalogEntry]:
     return filter_book_catalog_entries(
-        list_book_catalog(thread_id=thread_id, user_id=user_id),
+        list_book_catalog(
+            thread_id=thread_id,
+            user_id=user_id,
+            include_search_content=False,
+            caller="tools._visible_catalog_entries",
+        ),
         doc_ids=selected_doc_ids,
         scopes=selected_scopes,
     )
@@ -347,7 +352,12 @@ def _infer_scopes_from_doc_ids(
 
     candidate_map = {
         candidate.doc_id: candidate.scope
-        for candidate in list_book_catalog(thread_id=thread_id, user_id=user_id)
+        for candidate in list_book_catalog(
+            thread_id=thread_id,
+            user_id=user_id,
+            include_search_content=False,
+            caller="tools._infer_scopes_from_doc_ids",
+        )
         if candidate.scope in ALLOWED_SEARCH_SCOPES
     }
     inferred: list[str] = []
@@ -506,7 +516,12 @@ def _validate_single_layer_doc_ids(
 
     candidate_map = {
         candidate.doc_id: _candidate_layer_key(candidate)
-        for candidate in list_book_catalog(thread_id=thread_id, user_id=user_id)
+        for candidate in list_book_catalog(
+            thread_id=thread_id,
+            user_id=user_id,
+            include_search_content=False,
+            caller="tools._validate_single_layer_doc_ids",
+        )
     }
     matched_layers: dict[str, list[str]] = {}
     for doc_id in doc_ids:
@@ -714,9 +729,9 @@ def book_search_tool(
 def knowledge_search_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     query: str,
-    knowledge_folders: list[str],
     doc_ids: str | list[str] | tuple[str, ...] | set[str] | None = None,
     scopes: str | None = None,
+    knowledge_folders: list[str] | None = None,
 ) -> str:
     """Search the internal knowledge base for domain-specific information.
 
@@ -738,10 +753,10 @@ def knowledge_search_tool(
     5. `scopes` is a hard filter. If you already pass `doc_ids` from
        `book_search`, do not also force an incompatible scope. When in doubt,
        omit `scopes` and let the `doc_ids` control the search.
-    6. Always pass `knowledge_folders` so retrieval stays inside the logical
-       knowledge-base folders chosen from the directory tree.
-    7. Reuse the same `knowledge_folders` you chose for `book_search` unless
-       you are intentionally widening or switching to another knowledge folder.
+    6. If you already have `doc_ids` from `book_search`, let those book IDs
+       drive retrieval directly; do not add an unnecessary folder constraint.
+    7. You may pass `knowledge_folders` only when you intentionally want to
+       constrain a search that is not already narrowed by `doc_ids`.
     8. Keep `query` close to the user's wording and key anchors. Preserve
        book names, people, periods, institutions, years, and policy terms.
        Prefer a sentence-like professional query over a keyword pile-up.
@@ -760,13 +775,14 @@ def knowledge_search_tool(
         doc_ids: Optional candidate book IDs from `book_search`. Supports a
             string or array input. When passing a string, English commas,
             Chinese commas, semicolons, `、`, and newlines are all accepted.
-            Prefer this for narrowing to known relevant books.
+            Prefer this for narrowing to known relevant books. If present,
+            `knowledge_search` should search these books directly.
         scopes: Optional comma-separated hard filters: `user`, `thread`, `global`.
             Only set this when you intentionally want to exclude other scopes.
-        knowledge_folders: Required knowledge-base folder array. These are
+        knowledge_folders: Optional knowledge-base folder array. These are
             logical folders from the injected knowledge directory tree, not
-            sandbox/local filesystem paths. Reuse the same folders chosen for
-            `book_search` unless you intentionally want to widen/switch folders.
+            sandbox/local filesystem paths. Use this only when you want folder
+            scoping without explicit `doc_ids`.
     """
     started_at = time.perf_counter()
     try:
@@ -806,17 +822,17 @@ def knowledge_search_tool(
         )
         raw_knowledge_folders = _split_loose_delimited_values(knowledge_folders) or []
         parsed_knowledge_folders = _parse_knowledge_folders(knowledge_folders)
-        if not parsed_knowledge_folders:
+        if not effective_doc_ids and not parsed_knowledge_folders:
             logger.info(
-                "Knowledge search rejected: query=%r reason=missing_knowledge_folders elapsed_ms=%.1f",
+                "Knowledge search rejected: query=%r reason=missing_doc_ids_and_knowledge_folders elapsed_ms=%.1f",
                 query,
                 (time.perf_counter() - started_at) * 1000,
             )
-            return _build_knowledge_folder_guidance(
-                visible_entries=visible_entries,
-                reason="Error: `knowledge_search` 必须传入 `knowledge_folders`，禁止在未指定知识库目录的情况下直接检索。",
+            return (
+                "Error: `knowledge_search` 需要至少提供一种约束：`doc_ids` 或 `knowledge_folders`。"
+                "如果你已经有 `book_search` 返回的 `doc_ids`，直接传 `doc_ids` 即可。"
             )
-        if any(_looks_like_virtual_knowledge_folder_label(folder) for folder in raw_knowledge_folders):
+        if not effective_doc_ids and any(_looks_like_virtual_knowledge_folder_label(folder) for folder in raw_knowledge_folders):
             logger.info(
                 "Knowledge search rejected: query=%r reason=virtual_folder_labels elapsed_ms=%.1f",
                 query,
@@ -826,7 +842,7 @@ def knowledge_search_tool(
                 visible_entries=visible_entries,
                 reason="Error: 你传入的 `knowledge_folders` 是层级标签（如 `用户书籍`、`核心通用书`），不是知识库逻辑目录。",
             )
-        if any(_looks_like_local_filesystem_path(folder) for folder in raw_knowledge_folders):
+        if not effective_doc_ids and any(_looks_like_local_filesystem_path(folder) for folder in raw_knowledge_folders):
             logger.info(
                 "Knowledge search rejected: query=%r reason=local_filesystem_path elapsed_ms=%.1f",
                 query,
@@ -836,7 +852,7 @@ def knowledge_search_tool(
                 visible_entries=visible_entries,
                 reason="Error: 你传入的 `knowledge_folders` 看起来像本地 sandbox 路径或文件名，不是知识库逻辑目录。",
             )
-        if not any(
+        if not effective_doc_ids and not any(
             _entry_matches_any_knowledge_folder(entry, parsed_knowledge_folders)
             for entry in visible_entries
         ):
@@ -873,6 +889,14 @@ def knowledge_search_tool(
             user_id=user_id,
         )
         effective_scopes = _merge_scopes(selected_scopes, parsed_scopes, inferred_scopes)
+        applied_folder_paths = None if effective_doc_ids else parsed_knowledge_folders
+        if effective_doc_ids and parsed_knowledge_folders:
+            logger.info(
+                "Knowledge search ignoring knowledge_folders because doc_ids are present: query=%r effective_doc_ids=%s raw_knowledge_folders=%s",
+                query,
+                len(effective_doc_ids or []),
+                raw_knowledge_folders,
+            )
         retrieval_started_at = time.perf_counter()
         results = retriever.search(
             query,
@@ -880,15 +904,15 @@ def knowledge_search_tool(
             user_id=user_id,
             doc_ids=effective_doc_ids,
             scopes=effective_scopes,
-            folder_paths=parsed_knowledge_folders,
+            folder_paths=applied_folder_paths,
         )
         logger.info(
-            "Knowledge search retrieval phase complete: query=%r results=%s effective_doc_ids=%s effective_scopes=%s parsed_knowledge_folders=%s elapsed_ms=%.1f",
+            "Knowledge search retrieval phase complete: query=%r results=%s effective_doc_ids=%s effective_scopes=%s applied_folder_paths=%s elapsed_ms=%.1f",
             query,
             len(results),
             len(effective_doc_ids or []),
             ",".join(effective_scopes or []),
-            ",".join(parsed_knowledge_folders),
+            ",".join(applied_folder_paths or []),
             (time.perf_counter() - retrieval_started_at) * 1000,
         )
     except Exception as e:

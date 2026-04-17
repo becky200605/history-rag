@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from threading import Lock
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
@@ -24,6 +25,9 @@ from src.config.paths import get_paths
 
 logger = logging.getLogger(__name__)
 KNOWLEDGE_DIRECTORY_TAG = "<knowledge_directory_tree>"
+KNOWLEDGE_DIRECTORY_CACHE_TTL_SECONDS = 15.0
+_directory_block_cache: dict[tuple[str, str, tuple[str, ...], tuple[str, ...]], tuple[float, str]] = {}
+_directory_block_cache_lock = Lock()
 
 
 def _coerce_runtime_string_list(value: object) -> list[str] | None:
@@ -48,6 +52,42 @@ def _contains_injected_directory_block(message: object) -> bool:
     return content.startswith(KNOWLEDGE_DIRECTORY_TAG) and "</knowledge_directory_tree>" in content
 
 
+def _directory_cache_key(request: ModelRequest) -> tuple[str, str, tuple[str, ...], tuple[str, ...]]:
+    runtime_context = request.runtime.context
+    return (
+        str(runtime_context.get("thread_id") or ""),
+        str(runtime_context.get("user_id") or ""),
+        tuple(_coerce_runtime_string_list(runtime_context.get("selected_doc_ids")) or ()),
+        tuple(_coerce_runtime_string_list(runtime_context.get("selected_sources_scope")) or ()),
+    )
+
+
+def _get_cached_directory_block(
+    key: tuple[str, str, tuple[str, ...], tuple[str, ...]],
+) -> str | None:
+    now = time.perf_counter()
+    with _directory_block_cache_lock:
+        cached = _directory_block_cache.get(key)
+        if cached is None:
+            return None
+        expires_at, content = cached
+        if expires_at <= now:
+            _directory_block_cache.pop(key, None)
+            return None
+        return content
+
+
+def _store_cached_directory_block(
+    key: tuple[str, str, tuple[str, ...], tuple[str, ...]],
+    content: str,
+) -> None:
+    with _directory_block_cache_lock:
+        _directory_block_cache[key] = (
+            time.perf_counter() + KNOWLEDGE_DIRECTORY_CACHE_TTL_SECONDS,
+            content,
+        )
+
+
 class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
     """Add a runtime knowledge tree to the system context for source navigation."""
 
@@ -58,6 +98,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
             thread_id=runtime_context.get("thread_id"),
             user_id=runtime_context.get("user_id"),
             include_search_content=False,
+            caller="KnowledgeDirectoryMiddleware._visible_entries",
         )
         filtered = filter_book_catalog_entries(
             entries,
@@ -177,7 +218,8 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
             content=(
                 f"{KNOWLEDGE_DIRECTORY_TAG}\n"
                 "下面是当前可见知识资料的目录树。它是导航线索，不是证据。"
-                "请先看目录树，并直接从这里复制目录名填写 `knowledge_folders`，再决定优先去哪些文件夹/书目调用 `book_search` 或 `knowledge_search`。"
+                "请先看目录树，并直接从这里复制目录名填写 `knowledge_folders`，优先用于 `book_search` 选定目录与书目。"
+                "进入 `knowledge_search` 后，优先直接使用 `book_search` 返回的 `doc_ids`；不要再额外强加 `knowledge_folders`，除非你明确要做 folder-only 范围约束。"
                 "不要填写 `用户书籍`、`当前线程书籍`、`核心通用书`、`专题支撑书`、`补充材料`、`参考工具书` 这类层级标签。"
                 "`knowledge_folders` 是知识库逻辑目录，不是 sandbox / 容器 / 本地文件系统路径；不要用 `ls`、`read_file`、`bash` 等其他工具去推断。\n\n"
                 f"{directory_tree}\n"
@@ -190,6 +232,27 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         if self._has_directory_tree(request):
             logger.info("Knowledge directory tree already present in model request; skipping reinjection")
             return request
+
+        cache_key = _directory_cache_key(request)
+        cached_content = _get_cached_directory_block(cache_key)
+        if cached_content is not None:
+            injected_message = HumanMessage(content=cached_content)
+            patched_request = request.override(messages=[injected_message, *request.messages])
+            logger.info(
+                "KnowledgeDirectory cache hit: messages_before=%s messages_after=%s cache_ttl_seconds=%s elapsed_ms=%.1f",
+                len(request.messages),
+                len(patched_request.messages),
+                KNOWLEDGE_DIRECTORY_CACHE_TTL_SECONDS,
+                (time.perf_counter() - started_at) * 1000,
+            )
+            return patched_request
+        logger.info(
+            "KnowledgeDirectory cache miss: thread_id=%s has_user=%s selected_doc_ids=%s selected_scopes=%s",
+            request.runtime.context.get("thread_id"),
+            bool(request.runtime.context.get("user_id")),
+            len(_coerce_runtime_string_list(request.runtime.context.get("selected_doc_ids")) or []),
+            ",".join(_coerce_runtime_string_list(request.runtime.context.get("selected_sources_scope")) or []),
+        )
 
         visible_entries = self._visible_entries(request)
         directory_message = self._build_directory_block(visible_entries)
@@ -212,6 +275,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         if empty_folder_section is not None:
             content_parts.append(empty_folder_section)
         injected_content = "\n\n".join(content_parts)
+        _store_cached_directory_block(cache_key, injected_content)
         injected_message = HumanMessage(content=injected_content)
         patched_request = request.override(messages=[injected_message, *request.messages])
         logger.info(

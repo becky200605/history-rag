@@ -733,6 +733,7 @@ def list_book_catalog(
     user_id: str | None = None,
     *,
     include_search_content: bool = True,
+    caller: str | None = None,
 ) -> list[BookCatalogEntry]:
     """List user/global knowledge books plus optional current-thread uploads."""
     started_at = time.perf_counter()
@@ -766,7 +767,7 @@ def list_book_catalog(
         thread_count = len(thread_entries)
         entries = thread_entries + entries
     logger.info(
-        "Book catalog built: global=%s user=%s thread=%s total=%s thread_id=%s has_user=%s include_search_content=%s elapsed_ms=%.1f",
+        "Book catalog built: global=%s user=%s thread=%s total=%s thread_id=%s has_user=%s include_search_content=%s caller=%s elapsed_ms=%.1f",
         global_count,
         user_count,
         thread_count,
@@ -774,6 +775,7 @@ def list_book_catalog(
         thread_id,
         bool(user_id),
         include_search_content,
+        caller or "",
         (time.perf_counter() - started_at) * 1000,
     )
     return entries
@@ -1013,7 +1015,13 @@ def search_book_catalog(
     """Return the most relevant candidate books for a query."""
     started_at = time.perf_counter()
     catalog_entries = filter_book_catalog_entries(
-        entries if entries is not None else list_book_catalog(thread_id=thread_id, user_id=user_id),
+        entries
+        if entries is not None
+        else list_book_catalog(
+            thread_id=thread_id,
+            user_id=user_id,
+            caller="catalog.search_book_catalog",
+        ),
         doc_ids=doc_ids,
         scopes=scopes,
         folder_paths=folder_paths,

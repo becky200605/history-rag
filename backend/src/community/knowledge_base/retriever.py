@@ -399,7 +399,12 @@ class KnowledgeBaseRetriever:
             return doc_ids
 
         visible_entries = filter_book_catalog_entries(
-            list_book_catalog(thread_id=thread_id, user_id=user_id),
+            list_book_catalog(
+                thread_id=thread_id,
+                user_id=user_id,
+                include_search_content=False,
+                caller="retriever._resolve_effective_doc_ids",
+            ),
             doc_ids=doc_ids,
             scopes=scopes,
             folder_paths=folder_paths,
@@ -414,6 +419,14 @@ class KnowledgeBaseRetriever:
             bool(user_id),
         )
         if not visible_entries:
+            logger.info(
+                "Knowledge effective doc_ids empty after filtering: requested_doc_ids=%s scopes=%s folder_paths=%s thread_id=%s has_user=%s",
+                len(doc_ids or []),
+                ",".join(scopes or []),
+                ",".join(folder_paths or []),
+                thread_id,
+                bool(user_id),
+            )
             return []
         return [entry.doc_id for entry in visible_entries]
 

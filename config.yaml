@@ -359,7 +359,7 @@ knowledge_base:
     max_message_bytes: ${MINERU_GRPC_MAX_MESSAGE_BYTES:-536870912}
     enable_pdf_chunking: ${MINERU_GRPC_ENABLE_PDF_CHUNKING:-true}
     pdf_split_page_threshold: ${MINERU_GRPC_PDF_SPLIT_PAGE_THRESHOLD:-1200}
-    pdf_chunk_page_count: ${MINERU_GRPC_PDF_CHUNK_PAGE_COUNT:-250}
+    pdf_chunk_page_count: ${MINERU_GRPC_PDF_CHUNK_PAGE_COUNT:-1000}
     pdf_split_size_threshold_bytes: ${MINERU_GRPC_PDF_SPLIT_SIZE_THRESHOLD_BYTES:-268435456}
 
   book_metadata:

@@ -1,7 +1,6 @@
 import importlib.util
 from pathlib import Path
 
-
 _PROMPT_SPEC = importlib.util.spec_from_file_location(
     "test_lead_agent_prompt_module",
     Path(__file__).parent.parent / "src/agents/lead_agent/prompt.py",
@@ -22,10 +21,9 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "knowledge_folders" in prompt
     assert "Knowledge Folder Semantics Rule" in prompt
     assert "Scope Label Rule" in prompt
-    assert "always pass `knowledge_folders` copied from that tree" in prompt
+    assert "pass `knowledge_folders` copied from that tree into `book_search`" in prompt
     assert "<knowledge_directory_tree>" not in prompt
     assert "Book Group Label Rule" in prompt
-    assert "Knowledge Folder Carry-Forward Rule" in prompt
     assert "Layered Book Routing Rule" in prompt
     assert "Batch-Within-Layer Rule" in prompt
     assert "Book Coverage Rule" in prompt
@@ -48,6 +46,8 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Suggested Questions Rule" in prompt
     assert "建议问题" in prompt
     assert "Noise Filtering Rule" in prompt
+    assert "Knowledge Checkpoint Rule" in prompt
+    assert "knowledge_checkpoint" in prompt
     assert "Catalog Rescue Rule" in prompt
     assert "Query Anchoring Rule" in prompt
     assert "Sentence-Like Query Rule" in prompt

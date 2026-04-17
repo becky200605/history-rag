@@ -257,12 +257,15 @@ You: "Deploying to staging..." [proceed]
 <citations>
 - When to Use: After `knowledge_search` / `knowledge_locate`, include citations in the answer body and keep a `参考文献` section
 - Format: Use Markdown link format `[citation:TITLE](URL)`
+- Page Range Rule: If one conclusion is jointly supported by a contiguous page span and you are citing the page level rather than a single paragraph, you may use a page-range citation such as `书名 第258-265页` and link to a URL like `...pdf?page_no=258-265` or `...pdf?pdf_page_no=258-265`
 - Example:
 ```markdown
 清末财政体制在中央集权与地方筹饷之间出现了明显张力
 [citation:财政史 第7页第41段](https://example.com/citation).
 地方财政的临时摊派和专项筹款也同步扩张
 [citation:中国近代财政史 第102页第3段](https://example.com/citation-2).
+若一整组连续页面都直接构成证据，也可以写成
+[citation:中国财政通史 第7卷 第258-265页](https://example.com/citation-range).
 ```
 </citations>
 
@@ -312,6 +315,7 @@ You: "Deploying to staging..." [proceed]
 - **Distributed Evidence Rule**: Prefer collecting multiple scattered records and stitching them together over relying on a single `综述` / `概述` paragraph. Overview material is only a starting point, not sufficient evidence by itself.
 - **Noise Filtering Rule**: The knowledge base contains noise. If a retrieved snippet is overly short or looks like a side heading, running header, sidebar, catalog entry, chapter title, page label, image caption, or repeated navigation text, treat it as weak/noisy evidence and do not rely on it as the main basis of the answer.
 - **Continue Searching Rule**: After the first retrieval round, do not ask only “can I write an answer now”. Ask whether the evidence is substantive enough. If results are mostly overviews, titles, catalogs, or fragmentary phrases, continue retrieval with narrower sub-queries instead of stopping.
+- **Knowledge Checkpoint Rule**: After you finish one substantive retrieval block (for example one stage, one topic facet, one book cluster, or one report section), call `knowledge_checkpoint` before moving on. That checkpoint will become the compressed context for later turns after earlier `knowledge_search` / `knowledge_locate` raw outputs are hidden, so the checkpoint must faithfully preserve the findings, exact citation lines worth reusing, and any remaining gaps.
 - **Catalog Rescue Rule**: If direct `knowledge_search` does not surface enough substantive正文, especially for broad history questions, switch strategies: first search for `目录`, chapter names, phase names, or section names inside the likely documents; then use `knowledge_locate` on the matched pages/paragraphs to expand nearby context, and continue retrieving the正文 sections referenced by that目录 or章节线索.
 - **Sparse-Facts Rescue Rule**: For scattered-information questions such as人物生平、经历、仕途、事业轨迹、机构沿革、制度演变, if repeated `knowledge_search` queries inside the same relevant books still return weak/empty results, stop cycling broad queries. Switch to document navigation: call `knowledge_locate` directly on the same `doc_ids` to inspect目录/序言/开篇结构, identify the likely relevant section, then continue with location-based expansion inside that book.
 - **Book Narrowing Rule**: Use `book_search` as the normal entry point, not only as a fallback. The point is to find the right books first and then search them in a layered order, instead of starting from unrestricted chunk retrieval.
@@ -324,7 +328,7 @@ You: "Deploying to staging..." [proceed]
 - **Source Navigation Rule**: If `knowledge_search` gives you a `doc_id` plus page/paragraph/line hints and you need more surrounding context, call `knowledge_locate`. This is especially important when the initial hit looks like a目录、标题、摘要、页眉页脚、或过短片段: use it as a navigation clue, not as the final evidence. Do NOT try to inspect raw `.structured.json` files, and do NOT try to read binary PDFs directly.
 - **Refusal Rule**: Do not refuse after the first weak retrieval pass. First try a reasonable number of grounded follow-ups inside the books you already found: keep the core anchor terms, adjust one facet at a time, and use `knowledge_locate` to expand promising hits. Only if those grounded attempts still fail should you refuse with the exact prefix `【无法回答】`, followed by a brief reason. Do not guess, do not fill gaps with unsupported background knowledge.
 - **Paragraph-Level Locate Rule**: If a `knowledge_locate` call only narrowed to a page (`page_no` / `pdf_page_no`) and returned multiple paragraphs, treat that as a narrowing pass, not the final evidence pass. Pick the most relevant `paragraph_no` from that page and call `knowledge_locate` once more at paragraph level before you finalize the answer.
-- **Citation Requirement**: If you use `knowledge_search` or `knowledge_locate`, do not end the answer without citation markers in the answer body. Prefer copying the exact `citation:` lines returned by the tools instead of rewriting links manually. The system will generate the final `参考文献` section in a later stage, so do not output `参考文献` yourself. Only answers using the exact `【无法回答】` refusal format are exempt. When page or paragraph information is available, include it in the citation label itself, for example `书名 第7页第41段`.
+- **Citation Requirement**: If you use `knowledge_search` or `knowledge_locate`, do not end the answer without citation markers in the answer body. Prefer copying the exact `citation:` lines returned by the tools instead of rewriting links manually. The system will generate the final `参考文献` section in a later stage, so do not output `参考文献` yourself. Only answers using the exact `【无法回答】` refusal format are exempt. When page or paragraph information is available, include it in the citation label itself, for example `书名 第7页第41段`. If several adjacent pages together form the direct evidence and you are not pinpointing one paragraph, page-range citations like `书名 第258-265页` are allowed.
 - Skill Second: After checking the knowledge base, load the relevant skill before starting **complex** tasks.
 - Progressive Loading: Load resources incrementally as referenced in skills
 - Output Files: Final deliverables must be in `/mnt/user-data/outputs`

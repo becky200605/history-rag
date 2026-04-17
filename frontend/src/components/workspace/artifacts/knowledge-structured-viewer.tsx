@@ -197,11 +197,11 @@ export function KnowledgeStructuredViewer({
 
       <div
         className={cn(
-          "min-h-0 flex-1",
+          "min-h-0 flex-1 overflow-hidden",
           showTranslation && "grid min-h-0 grid-cols-1 md:grid-cols-2",
         )}
       >
-        <div className="min-h-0 min-w-0">
+        <div className="min-h-0 min-w-0 overflow-hidden">
           <KnowledgeSidePane
             currentPdfPageNo={resolvedCurrentPdfPageNo}
             documentUrl={documentUrl}
@@ -221,7 +221,7 @@ export function KnowledgeStructuredViewer({
           />
         </div>
         {showTranslation && (
-          <div className="min-h-0 min-w-0 border-t border-[rgba(57,130,152,0.14)] md:border-t-0 md:border-l">
+          <div className="min-h-0 min-w-0 overflow-hidden border-t border-[rgba(57,130,152,0.14)] md:border-t-0 md:border-l">
             <KnowledgeSidePane
               currentPdfPageNo={resolvedCurrentPdfPageNo}
               documentUrl={documentUrl}

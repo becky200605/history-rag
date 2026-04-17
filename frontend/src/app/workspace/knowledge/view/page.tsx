@@ -9,8 +9,10 @@ import {
   buildKnowledgeDocumentUrl,
   buildKnowledgePageImageURLForDocumentUrl,
   getKnowledgeParagraphLocationForDocumentUrl,
+  getKnowledgeStructuredPageForDocumentUrl,
   type KnowledgeParagraphLocation,
 } from "@/core/knowledge/api";
+import { getKnowledgeCitationPageRef } from "@/core/knowledge/citation-meta";
 
 type LoadState =
   | { status: "loading" }
@@ -116,6 +118,18 @@ function KnowledgeCitationView({
   explicitOriginalUrl: string | null;
 }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const pageRef = useMemo(() => {
+    if (!documentUrl) {
+      return {
+        queryParam: null,
+        startPage: null,
+        endPage: null,
+        isRange: false,
+        label: null,
+      } as ReturnType<typeof getKnowledgeCitationPageRef>;
+    }
+    return getKnowledgeCitationPageRef(documentUrl);
+  }, [documentUrl]);
 
   useEffect(() => {
     if (!documentUrl || (!pageNo && !pdfPageNo && !paragraphNo)) {
@@ -125,11 +139,33 @@ function KnowledgeCitationView({
 
     let cancelled = false;
     setState({ status: "loading" });
-    getKnowledgeParagraphLocationForDocumentUrl(documentUrl, {
-      pageNo,
-      pdfPageNo,
-      paragraphNo,
-    })
+    const isPageRange =
+      pageRef.isRange && !paragraphNo && (pageRef.queryParam === "page_no" || pageRef.queryParam === "pdf_page_no");
+    const request = isPageRange && pageRef.startPage
+      ? getKnowledgeStructuredPageForDocumentUrl(documentUrl, {
+          pageNo: pageRef.queryParam === "page_no" ? pageRef.startPage : null,
+          pdfPageNo: pageRef.queryParam === "pdf_page_no" ? pageRef.startPage : null,
+        }).then((data) => ({
+          filename: data.filename,
+          title: data.title,
+          page_count: data.page_count ?? null,
+          page_no: data.page_no ?? null,
+          pdf_page_no: data.pdf_page_no ?? pageRef.startPage ?? null,
+          book_page_no: data.book_page_no ?? null,
+          paragraph_no: null,
+          bbox: null,
+          page_meta: data.page_meta ?? null,
+          text: "",
+          source_url: data.source_url ?? null,
+          original_url: data.original_url ?? null,
+        }))
+      : getKnowledgeParagraphLocationForDocumentUrl(documentUrl, {
+          pageNo,
+          pdfPageNo,
+          paragraphNo,
+        });
+
+    request
       .then((data) => {
         if (!cancelled) {
           setState({ status: "ready", data });
@@ -143,7 +179,7 @@ function KnowledgeCitationView({
     return () => {
       cancelled = true;
     };
-  }, [documentUrl, pageNo, pdfPageNo, paragraphNo]);
+  }, [documentUrl, pageNo, pageRef, paragraphNo, pdfPageNo]);
 
   const originalUrl = explicitOriginalUrl
     ?? (state.status === "ready" ? state.data.original_url ?? null : null);

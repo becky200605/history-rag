@@ -23,9 +23,13 @@ import { CodeEditor } from "@/components/workspace/code-editor";
 import { useI18n } from "@/core/i18n/hooks";
 import {
   getKnowledgeParagraphLocationForDocumentUrl,
+  getKnowledgeStructuredPageForDocumentUrl,
   type KnowledgeParagraphLocation,
 } from "@/core/knowledge/api";
-import { getKnowledgeCitationMeta } from "@/core/knowledge/citation-meta";
+import {
+  getKnowledgeCitationMeta,
+  getKnowledgeCitationPageRef,
+} from "@/core/knowledge/citation-meta";
 import { streamdownPlugins } from "@/core/streamdown";
 import { cn } from "@/lib/utils";
 
@@ -89,22 +93,8 @@ export function KnowledgeDocumentDetail({
   }, [documentUrl]);
 
   const knowledgePdfPage = useMemo(() => {
-    try {
-      const url = parseKnowledgeDocumentUrl(documentUrl);
-      const pageStr = url.searchParams.get("page");
-      if (pageStr) {
-        const page = parseInt(pageStr, 10);
-        return Number.isNaN(page) ? null : page;
-      }
-      const pdfPageStr = url.searchParams.get("pdf_page_no");
-      if (pdfPageStr) {
-        const pdfPage = parseInt(pdfPageStr, 10);
-        return Number.isNaN(pdfPage) || pdfPage <= 0 ? null : pdfPage - 1;
-      }
-      return null;
-    } catch {
-      return null;
-    }
+    const pageRef = getKnowledgeCitationPageRef(documentUrl);
+    return pageRef.startPage ? pageRef.startPage - 1 : null;
   }, [documentUrl]);
 
   const isKnowledgePdf = useMemo(() => {
@@ -139,11 +129,13 @@ export function KnowledgeDocumentDetail({
     }
     try {
       const url = parseKnowledgeDocumentUrl(documentUrl);
+      const pageRef = getKnowledgeCitationPageRef(documentUrl);
       return {
         filename: decodeURIComponent(url.pathname.split("/").pop() ?? ""),
         pageNo: url.searchParams.get("page_no"),
         pdfPageNo: url.searchParams.get("pdf_page_no"),
         paragraphNo: url.searchParams.get("paragraph_no"),
+        pageRef,
       };
     } catch {
       return null;
@@ -298,6 +290,7 @@ export function KnowledgeDocumentDetail({
               pageNo={knowledgePdfLocator.pageNo}
               pdfPageNo={knowledgePdfLocator.pdfPageNo}
               paragraphNo={knowledgePdfLocator.paragraphNo}
+              pageRef={knowledgePdfLocator.pageRef}
               onCompareToggle={onCompareToggle}
             />
           ) : (
@@ -372,6 +365,7 @@ function KnowledgeCitationPdfViewer({
   pageNo,
   pdfPageNo,
   paragraphNo,
+  pageRef,
   onCompareToggle,
 }: {
   documentUrl: string;
@@ -379,12 +373,23 @@ function KnowledgeCitationPdfViewer({
   pageNo: string | null;
   pdfPageNo: string | null;
   paragraphNo: string | null;
+  pageRef: ReturnType<typeof getKnowledgeCitationPageRef>;
   onCompareToggle?: (open: boolean) => void;
 }) {
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
-    | { status: "ready"; data: KnowledgeParagraphLocation }
+    | {
+        status: "ready";
+        data: {
+          filename: string;
+          title: string;
+          initialPdfPageNo: number;
+          focusedPdfPageNo: number | null;
+          focusedParagraphNo: number | null;
+          focusedParagraphText: string | null;
+        };
+      }
   >({ status: "loading" });
 
   useEffect(() => {
@@ -395,11 +400,35 @@ function KnowledgeCitationPdfViewer({
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
-    getKnowledgeParagraphLocationForDocumentUrl(documentUrl, {
-      pageNo,
-      pdfPageNo,
-      paragraphNo,
-    })
+    const isPageRange =
+      pageRef.isRange && !paragraphNo && (pageRef.queryParam === "page_no" || pageRef.queryParam === "pdf_page_no");
+
+    const request = isPageRange && pageRef.startPage
+      ? getKnowledgeStructuredPageForDocumentUrl(documentUrl, {
+          pageNo: pageRef.queryParam === "page_no" ? pageRef.startPage : null,
+          pdfPageNo: pageRef.queryParam === "pdf_page_no" ? pageRef.startPage : null,
+        }).then((data) => ({
+          filename: data.filename,
+          title: data.title,
+          initialPdfPageNo: data.pdf_page_no ?? pageRef.startPage ?? 1,
+          focusedPdfPageNo: null,
+          focusedParagraphNo: null,
+          focusedParagraphText: null,
+        }))
+      : getKnowledgeParagraphLocationForDocumentUrl(documentUrl, {
+          pageNo,
+          pdfPageNo,
+          paragraphNo,
+        }).then((data: KnowledgeParagraphLocation) => ({
+          filename: data.filename,
+          title: data.title,
+          initialPdfPageNo: data.pdf_page_no ?? 1,
+          focusedPdfPageNo: data.pdf_page_no ?? null,
+          focusedParagraphNo: data.paragraph_no ?? null,
+          focusedParagraphText: data.text ?? null,
+        }));
+
+    request
       .then((data) => {
         if (!cancelled) {
           setState({ status: "ready", data });
@@ -416,7 +445,7 @@ function KnowledgeCitationPdfViewer({
     return () => {
       cancelled = true;
     };
-  }, [documentUrl, pageNo, pdfPageNo, paragraphNo]);
+  }, [documentUrl, pageNo, pageRef, paragraphNo, pdfPageNo]);
 
   if (state.status === "loading") {
     return (
@@ -437,14 +466,14 @@ function KnowledgeCitationPdfViewer({
   return (
     <KnowledgePdfReader
       documentUrl={documentUrl}
-      initialPdfPageNo={state.data.pdf_page_no ?? 1}
+      initialPdfPageNo={state.data.initialPdfPageNo}
       knowledgeSpaceId={knowledgeSpaceId}
       originFilename={state.data.filename}
       originTitle={state.data.title}
       onCompareToggle={onCompareToggle}
-      focusedPdfPageNo={state.data.pdf_page_no ?? null}
-      focusedParagraphNo={state.data.paragraph_no ?? null}
-      focusedParagraphText={state.data.text ?? null}
+      focusedPdfPageNo={state.data.focusedPdfPageNo}
+      focusedParagraphNo={state.data.focusedParagraphNo}
+      focusedParagraphText={state.data.focusedParagraphText}
     />
   );
 }

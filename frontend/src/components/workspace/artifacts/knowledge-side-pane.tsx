@@ -1187,7 +1187,7 @@ export function KnowledgeSidePane({
   return (
     <div
       className={cn(
-        "relative min-h-0 bg-zinc-50/50",
+        "relative h-full min-h-0 overflow-hidden bg-zinc-50/50",
         fluid ? "w-full" : "shrink-0",
         bordered && "border-l",
       )}

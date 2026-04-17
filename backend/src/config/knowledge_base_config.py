@@ -145,7 +145,7 @@ class MineruConfig(BaseModel):
         description="Automatically split PDFs when page count exceeds this threshold.",
     )
     pdf_chunk_page_count: int = Field(
-        default=250,
+        default=1000,
         ge=1,
         description="Maximum number of pages per auto-split PDF chunk sent to MinerU.",
     )

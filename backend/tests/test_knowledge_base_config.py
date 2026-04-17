@@ -33,7 +33,7 @@ class TestMineruConfig:
         assert cfg.max_message_bytes == 512 * 1024 * 1024
         assert cfg.enable_pdf_chunking is True
         assert cfg.pdf_split_page_threshold == 1200
-        assert cfg.pdf_chunk_page_count == 250
+        assert cfg.pdf_chunk_page_count == 1000
         assert cfg.pdf_split_size_threshold_bytes == 256 * 1024 * 1024
 
     def test_mineru_custom_config(self):

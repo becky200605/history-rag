@@ -278,7 +278,7 @@ def test_build_chunks_does_not_merge_structured_paragraphs_across_pages(monkeypa
     assert [chunk.page_content for chunk in chunks] == ["第一页短段。", "第二页短段。"]
 
 
-def test_build_chunks_merges_vertical_structured_sentences_in_groups_of_five(monkeypatch) -> None:
+def test_build_chunks_merges_vertical_structured_sentences_in_groups_of_five_when_still_short(monkeypatch) -> None:
     _set_chunking_config(monkeypatch, chunk_size=500, chunk_overlap=0)
 
     documents = [
@@ -314,6 +314,83 @@ def test_build_chunks_merges_vertical_structured_sentences_in_groups_of_five(mon
     assert chunks[1].metadata["paragraph_no"] == 6
     assert chunks[1].metadata["paragraph_end_no"] == 7
     assert chunks[1].metadata["merged_paragraph_count"] == 2
+
+
+def test_build_chunks_merges_vertical_structured_sentences_until_min_chars(monkeypatch) -> None:
+    _set_chunking_config(monkeypatch, chunk_size=500, chunk_overlap=0)
+
+    documents = [
+        Document(
+            page_content=content,
+            metadata={
+                "source": "/tmp/vertical.structured.json",
+                "source_type": "structured",
+                "layout_hint": "vertical",
+                "page_no": 3,
+                "pdf_page_no": 3,
+                "paragraph_id": f"page-3-p{i}",
+                "paragraph_no": i,
+                "paragraph_no_in_doc": i,
+                "line_start": i,
+                "line_end": i,
+            },
+        )
+        for i, content in enumerate(["甲" * 35, "乙" * 35, "丙" * 35], start=1)
+    ]
+
+    chunks = indexer._build_chunks(documents, scope="global", thread_id=None)
+
+    assert len(chunks) == 1
+    assert chunks[0].page_content == "\n".join(document.page_content for document in documents)
+    assert chunks[0].metadata["paragraph_no"] == 1
+    assert chunks[0].metadata["paragraph_end_no"] == 3
+    assert chunks[0].metadata["merged_paragraph_count"] == 3
+    assert chunks[0].metadata["bbox_source"] == "vertical_sentence_merge"
+
+
+def test_build_chunks_does_not_merge_long_vertical_structured_sentence(monkeypatch) -> None:
+    _set_chunking_config(monkeypatch, chunk_size=500, chunk_overlap=0)
+
+    documents = [
+        Document(
+            page_content="甲" * 120,
+            metadata={
+                "source": "/tmp/vertical.structured.json",
+                "source_type": "structured",
+                "layout_hint": "vertical",
+                "page_no": 3,
+                "pdf_page_no": 3,
+                "paragraph_id": "page-3-p1",
+                "paragraph_no": 1,
+                "paragraph_no_in_doc": 1,
+                "line_start": 1,
+                "line_end": 1,
+            },
+        ),
+        Document(
+            page_content="乙" * 10,
+            metadata={
+                "source": "/tmp/vertical.structured.json",
+                "source_type": "structured",
+                "layout_hint": "vertical",
+                "page_no": 3,
+                "pdf_page_no": 3,
+                "paragraph_id": "page-3-p2",
+                "paragraph_no": 2,
+                "paragraph_no_in_doc": 2,
+                "line_start": 2,
+                "line_end": 2,
+            },
+        ),
+    ]
+
+    chunks = indexer._build_chunks(documents, scope="global", thread_id=None)
+
+    assert len(chunks) == 2
+    assert chunks[0].page_content == "甲" * 120
+    assert chunks[0].metadata.get("merged_paragraph_count") is None
+    assert chunks[1].page_content == "乙" * 10
+    assert chunks[1].metadata.get("merged_paragraph_count") is None
 
 
 def test_build_chunks_keeps_horizontal_structured_sentences_unmerged(monkeypatch) -> None:

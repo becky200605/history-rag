@@ -10,13 +10,16 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
 import { useArtifacts } from "@/components/workspace/artifacts";
-import { getKnowledgeCitationMeta } from "@/core/knowledge/citation-meta";
+import {
+  getKnowledgeCitationMeta,
+  getKnowledgeCitationPageRef,
+} from "@/core/knowledge/citation-meta";
 import { cn } from "@/lib/utils";
 
 interface KnowledgeDocInfo {
   filename: string;
   isPdf: boolean;
-  page: number | null;
+  pageLabel: string | null;
   sourceLabel: string | null;
   sourceTitle: string | null;
   originTitle: string | null;
@@ -34,26 +37,12 @@ function parseKnowledgeDocUrl(url: string): KnowledgeDocInfo | null {
     const pathParts = urlObj.pathname.split("/");
     const filename = decodeURIComponent(pathParts[pathParts.length - 1] ?? "");
     const isPdf = filename.toLowerCase().endsWith(".pdf");
-
-    const pageParam = urlObj.searchParams.get("page");
-    const pdfPageParam = urlObj.searchParams.get("pdf_page_no");
-    let page: number | null = null;
-
-    if (pageParam !== null) {
-      const parsedPage = parseInt(pageParam, 10);
-      page = Number.isNaN(parsedPage) ? null : parsedPage;
-    } else if (pdfPageParam !== null) {
-      const parsedPdfPage = parseInt(pdfPageParam, 10);
-      page =
-        Number.isNaN(parsedPdfPage) || parsedPdfPage <= 0
-          ? null
-          : parsedPdfPage - 1;
-    }
+    const pageRef = getKnowledgeCitationPageRef(urlObj.toString());
 
     return {
       filename,
       isPdf,
-      page,
+      pageLabel: pageRef.label,
       ...getKnowledgeCitationMeta(urlObj.toString()),
     };
   } catch {
@@ -119,9 +108,9 @@ export function CitationLink({
           >
             {knowledgeDocInfo?.isPdf ? <FileTextIcon className="size-3" /> : null}
             {displayText}
-            {knowledgeDocInfo?.isPdf && knowledgeDocInfo.page !== null && (
+            {knowledgeDocInfo?.isPdf && knowledgeDocInfo.pageLabel && (
               <span className="text-muted-foreground">
-                (第{knowledgeDocInfo.page + 1}页)
+                ({knowledgeDocInfo.pageLabel})
               </span>
             )}
             {!isKnowledgeDoc && <ExternalLinkIcon className="size-3" />}
@@ -145,8 +134,8 @@ export function CitationLink({
                   <p className="truncate">{knowledgeDocInfo.sourceTitle}</p>
                 )}
                 <p className="truncate">{knowledgeDocInfo.filename}</p>
-                {knowledgeDocInfo.isPdf && knowledgeDocInfo.page !== null && (
-                  <p>第 {knowledgeDocInfo.page + 1} 页</p>
+                {knowledgeDocInfo.isPdf && knowledgeDocInfo.pageLabel && (
+                  <p>{knowledgeDocInfo.pageLabel}</p>
                 )}
                 {knowledgeDocInfo.originTitle &&
                   knowledgeDocInfo.originTitle !== knowledgeDocInfo.sourceTitle && (

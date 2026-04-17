@@ -542,7 +542,7 @@ function ChatPageContent({
           <div className="relative flex size-full min-h-0 justify-between">
             <header
               className={cn(
-                "absolute top-0 right-0 left-0 z-30 flex h-12 shrink-0 items-center px-4",
+                "absolute top-0 right-0 left-0 z-30 flex h-14 shrink-0 items-center px-4",
                 isNewThread
                   ? "bg-background/0 backdrop-blur-none"
                   : "bg-background/80 shadow-xs backdrop-blur",
@@ -573,32 +573,31 @@ function ChatPageContent({
             </header>
             <main className="flex min-h-0 max-w-full grow flex-col">
               <div className="flex size-full justify-center">
-                <MessageList
-                  className={cn("size-full", !isNewThread && "pt-10")}
-                  threadId={threadId}
-                  thread={thread}
-                  messagesOverride={
-                    !thread.isLoading && finalState?.messages
-                      ? (finalState.messages as Message[])
-                      : undefined
-                  }
-                  paddingBottom={todoListCollapsed ? 160 : 280}
-                />
-              </div>
-              <div className="absolute right-0 bottom-0 left-0 z-30 flex justify-center px-4">
-                <div
-                  className={cn(
-                    "relative w-full",
-                    isNewThread && "-translate-y-[calc(50vh-96px)]",
-                    isNewThread
-                      ? "max-w-(--container-width-sm)"
-                      : "max-w-(--container-width-md)",
-                  )}
-                >
-                  <div className="absolute -top-4 right-0 left-0 z-0">
-                    <div className="absolute right-0 bottom-0 left-0">
+                  <MessageList
+                    className={cn("size-full", !isNewThread && "pt-14")}
+                    threadId={threadId}
+                    thread={thread}
+                    messagesOverride={
+                      !thread.isLoading && finalState?.messages
+                        ? (finalState.messages as Message[])
+                        : undefined
+                    }
+                    paddingBottom={todoListCollapsed ? 140 : 400}
+                  />
+                </div>
+                <div className="absolute right-0 bottom-0 left-0 z-30 flex justify-center px-4">
+                  <div
+                    className={cn(
+                      "relative w-full mb-4",
+                      isNewThread && "-translate-y-[calc(50vh-96px)]",
+                      isNewThread
+                        ? "max-w-(--container-width-sm)"
+                        : "max-w-(--container-width-md)",
+                    )}
+                  >
+                    <div className="absolute bottom-full right-0 left-0 mb-1 z-0">
                       <TodoList
-                        className="bg-background/5"
+                        className="bg-transparent"
                         todos={thread.values.todos ?? []}
                         collapsed={todoListCollapsed}
                         hidden={
@@ -610,9 +609,8 @@ function ChatPageContent({
                         }
                       />
                     </div>
-                  </div>
-                  <InputBox
-                    className={cn("bg-background/5 w-full -translate-y-4")}
+                    <InputBox
+                      className={cn("w-full shadow-2xl")}
                     isNewThread={isNewThread}
                     autoFocus={isNewThread}
                     status={thread.isLoading ? "streaming" : "ready"}

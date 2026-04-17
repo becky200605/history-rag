@@ -313,6 +313,8 @@ def _merge_structured_documents_for_embedding(
     documents: list[Document],
     *,
     min_chars: int,
+    max_group_size: int | None = None,
+    bbox_source: str = "paragraph_merge",
 ) -> list[Document]:
     if not documents:
         return []
@@ -350,7 +352,7 @@ def _merge_structured_documents_for_embedding(
                     "paragraph_end_no_in_doc": last.metadata.get("paragraph_no_in_doc"),
                     "merged_paragraph_count": len(batch),
                     "bbox": None,
-                    "bbox_source": "paragraph_merge",
+                    "bbox_source": bbox_source,
                 },
             )
         )
@@ -368,44 +370,14 @@ def _merge_structured_documents_for_embedding(
 
         batch.append(document)
         batch_char_count += len(text)
+        if max_group_size is not None and len(batch) >= max_group_size:
+            flush_batch()
+            continue
         if batch_char_count >= min_chars:
             flush_batch()
 
     flush_batch()
     return merged_documents
-
-
-def _build_vertical_structured_chunk(
-    documents: list[Document],
-    *,
-    splitter: RecursiveCharacterTextSplitter,
-    chunk_size: int,
-) -> list[Document]:
-    if not documents:
-        return []
-
-    first = documents[0]
-    last = documents[-1]
-    merged_document = Document(
-        page_content="\n".join(
-            document.page_content.strip()
-            for document in documents
-            if document.page_content.strip()
-        ),
-        metadata={
-            **first.metadata,
-            "line_start": first.metadata.get("line_start"),
-            "line_end": last.metadata.get("line_end"),
-            "paragraph_no": first.metadata.get("paragraph_no"),
-            "paragraph_no_in_doc": first.metadata.get("paragraph_no_in_doc"),
-            "paragraph_end_no": last.metadata.get("paragraph_no"),
-            "paragraph_end_no_in_doc": last.metadata.get("paragraph_no_in_doc"),
-            "merged_paragraph_count": len(documents),
-            "bbox": None,
-            "bbox_source": "vertical_sentence_merge",
-        },
-    )
-    return _split_structured_document(merged_document, splitter, chunk_size)
 
 
 def _split_vertical_structured_documents(
@@ -415,28 +387,14 @@ def _split_vertical_structured_documents(
     chunk_size: int,
 ) -> list[Document]:
     chunks: list[Document] = []
-    batch: list[Document] = []
-
-    for document in documents:
-        batch.append(document)
-        if len(batch) == VERTICAL_STRUCTURED_MERGE_SIZE:
-            chunks.extend(
-                _build_vertical_structured_chunk(
-                    batch,
-                    splitter=splitter,
-                    chunk_size=chunk_size,
-                )
-            )
-            batch = []
-
-    if batch:
-        chunks.extend(
-            _build_vertical_structured_chunk(
-                batch,
-                splitter=splitter,
-                chunk_size=chunk_size,
-            )
-        )
+    min_chars = min(STRUCTURED_EMBED_MIN_CHARS, chunk_size)
+    for merged_document in _merge_structured_documents_for_embedding(
+        documents,
+        min_chars=min_chars,
+        max_group_size=VERTICAL_STRUCTURED_MERGE_SIZE,
+        bbox_source="vertical_sentence_merge",
+    ):
+        chunks.extend(_split_structured_document(merged_document, splitter, chunk_size))
 
     return chunks
 

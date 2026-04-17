@@ -393,6 +393,7 @@ export function KnowledgePdfReader({
 }) {
   const router = useRouter();
   const createDerivedMutation = useCreateUserDerivedKnowledge();
+  const pdfViewportRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const pageImageRef = useRef<HTMLImageElement | null>(null);
@@ -542,7 +543,7 @@ export function KnowledgePdfReader({
   );
 
   useEffect(() => {
-    const viewport = viewportRef.current;
+    const viewport = pdfViewportRef.current;
     if (!viewport || !pageWidth) {
       setCanvasWidth(0);
       return;
@@ -559,7 +560,7 @@ export function KnowledgePdfReader({
     return () => {
       observer.disconnect();
     };
-  }, [pageWidth, mode, currentPdfPageNo]);
+  }, [pageWidth, mode, currentPdfPageNo, showStructure]);
 
   useEffect(() => {
     setTranslationBlockMetrics({});
@@ -942,6 +943,26 @@ export function KnowledgePdfReader({
   const displayScale =
     pageWidth > 0 ? Math.min((canvasWidth || pageWidth) / pageWidth, 1) : 1;
 
+  useLayoutEffect(() => {
+    const image = pageImageRef.current;
+    if (!image) {
+      return;
+    }
+
+    const updateImageSize = () => {
+      setPageImageSize({
+        width: image.clientWidth,
+        height: image.clientHeight,
+      });
+    };
+
+    updateImageSize();
+    const frame = window.requestAnimationFrame(updateImageSize);
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [displayScale, mode, showStructure]);
+
   const translationLayoutItems = useMemo(() => {
     if (!pageData || pageWidth <= 0 || pageHeight <= 0) {
       return [];
@@ -1220,7 +1241,10 @@ export function KnowledgePdfReader({
                 "xl:grid-cols-2",
             )}
           >
-            <div className="min-h-0 overflow-auto bg-zinc-50/30">
+            <div
+              ref={pdfViewportRef}
+              className="min-h-0 overflow-auto bg-zinc-50/30"
+            >
               <div className="flex min-h-full items-start justify-center p-6">
                 <div className="relative">
                   <img
@@ -1306,7 +1330,7 @@ export function KnowledgePdfReader({
             </div>
 
             {showStructure && (
-              <div className="min-h-0 overflow-hidden border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l">
+              <div className="min-h-0 min-w-0 overflow-hidden border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l">
                 <KnowledgeSidePane
                   currentPdfPageNo={currentPdfPageNo}
                   documentUrl={documentUrl}
@@ -1327,7 +1351,7 @@ export function KnowledgePdfReader({
             {mode === "translation" && (
               <div
                 ref={viewportRef}
-                className="min-h-0 overflow-auto border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l"
+                className="min-h-0 min-w-0 overflow-auto border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l"
               >
                 <div className="min-h-full p-6">
                   <div className="flex items-start justify-center">

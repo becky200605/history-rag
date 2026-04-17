@@ -8,6 +8,7 @@ from src.agents.lead_agent.prompt import apply_prompt_template
 from src.agents.middlewares.citation_enforcement_middleware import CitationEnforcementMiddleware
 from src.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from src.agents.middlewares.dangling_tool_call_middleware import DanglingToolCallMiddleware
+from src.agents.middlewares.knowledge_checkpoint_middleware import KnowledgeCheckpointMiddleware
 from src.agents.middlewares.knowledge_directory_middleware import KnowledgeDirectoryMiddleware
 from src.agents.middlewares.memory_middleware import MemoryMiddleware
 from src.agents.middlewares.subagent_limit_middleware import SubagentLimitMiddleware
@@ -201,6 +202,7 @@ Being proactive with task management demonstrates thoroughness and ensures all r
 # ThreadDataMiddleware must be before SandboxMiddleware to ensure thread_id is available
 # UploadsMiddleware should be after ThreadDataMiddleware to access thread_id
 # DanglingToolCallMiddleware patches missing ToolMessages before model sees the history
+# KnowledgeCheckpointMiddleware compresses old knowledge_search / knowledge_locate payloads
 # SummarizationMiddleware should be early to reduce context before other processing
 # TodoListMiddleware should be before ClarificationMiddleware to allow todo management
 # TitleMiddleware generates title after first exchange
@@ -222,6 +224,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
         KnowledgeDirectoryMiddleware(),
         SandboxMiddleware(),
         DanglingToolCallMiddleware(),
+        KnowledgeCheckpointMiddleware(),
         CitationEnforcementMiddleware(),
     ]
 

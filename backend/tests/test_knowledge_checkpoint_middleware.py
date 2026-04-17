@@ -1,6 +1,5 @@
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langgraph.prebuilt.tool_node import ToolCallRequest
 
 from src.agents.middlewares.knowledge_checkpoint_middleware import (
     KnowledgeCheckpointMiddleware,
@@ -39,17 +38,6 @@ def _tool_call_response(name: str) -> ModelResponse:
             )
         ]
     )
-
-
-def _tool_request(name: str, messages: list) -> ToolCallRequest:
-    return ToolCallRequest(
-        tool_call={"id": f"{name}-tool-call", "name": name, "args": {}, "type": "tool_call"},
-        tool=None,
-        state={"messages": messages},
-        runtime=None,
-    )
-
-
 def test_replaces_grounding_payloads_before_latest_checkpoint_only():
     middleware = KnowledgeCheckpointMiddleware()
     seen_messages: list = []
@@ -119,9 +107,9 @@ def test_retries_until_model_calls_checkpoint_after_grounding_threshold():
     final_response = middleware.wrap_model_call(request, handler)
 
     assert len(seen_requests) == 2
-    assert "NEXT action must be exactly one call to `knowledge_checkpoint`" in str(
-        seen_requests[1].system_message.content
-    )
+    assert seen_requests[1].messages[-1].type == "human"
+    assert "系统插入提示（不是用户的新问题）" in str(seen_requests[1].messages[-1].content)
+    assert "必须且只能调用一次 `knowledge_checkpoint`" in str(seen_requests[1].messages[-1].content)
     final_ai = final_response.result[-1]
     assert isinstance(final_ai, AIMessage)
     assert final_ai.tool_calls[0]["name"] == "knowledge_checkpoint"
@@ -153,50 +141,3 @@ def test_does_not_enforce_checkpoint_for_non_substantive_grounding_results():
     middleware.wrap_model_call(request, handler)
 
     assert len(seen_requests) == 1
-
-
-def test_blocks_non_checkpoint_tool_call_after_threshold():
-    middleware = KnowledgeCheckpointMiddleware()
-    request = _tool_request(
-        "knowledge_locate",
-        [
-            HumanMessage(content="请继续整理表格"),
-            ToolMessage(content="substantive search result 1", tool_call_id="ks-1", name="knowledge_search"),
-            ToolMessage(content="substantive locate result 2", tool_call_id="kl-1", name="knowledge_locate"),
-            ToolMessage(content="substantive search result 3", tool_call_id="ks-2", name="knowledge_search"),
-            ToolMessage(content="substantive locate result 4", tool_call_id="kl-2", name="knowledge_locate"),
-            ToolMessage(content="substantive search result 5", tool_call_id="ks-3", name="knowledge_search"),
-        ],
-    )
-
-    def handler(_: ToolCallRequest) -> ToolMessage:
-        return ToolMessage(content="should not execute", tool_call_id="knowledge_locate-tool-call")
-
-    result = middleware.wrap_tool_call(request, handler)
-
-    assert result.status == "error"
-    assert "必须先调用 `knowledge_checkpoint`" in str(result.content)
-    assert result.name == "knowledge_locate"
-
-
-def test_allows_checkpoint_tool_call_after_threshold():
-    middleware = KnowledgeCheckpointMiddleware()
-    request = _tool_request(
-        "knowledge_checkpoint",
-        [
-            HumanMessage(content="请继续整理表格"),
-            ToolMessage(content="substantive search result 1", tool_call_id="ks-1", name="knowledge_search"),
-            ToolMessage(content="substantive locate result 2", tool_call_id="kl-1", name="knowledge_locate"),
-            ToolMessage(content="substantive search result 3", tool_call_id="ks-2", name="knowledge_search"),
-            ToolMessage(content="substantive locate result 4", tool_call_id="kl-2", name="knowledge_locate"),
-            ToolMessage(content="substantive search result 5", tool_call_id="ks-3", name="knowledge_search"),
-        ],
-    )
-
-    def handler(_: ToolCallRequest) -> ToolMessage:
-        return ToolMessage(content="checkpoint executed", tool_call_id="knowledge_checkpoint-tool-call")
-
-    result = middleware.wrap_tool_call(request, handler)
-
-    assert result.status == "success"
-    assert str(result.content) == "checkpoint executed"

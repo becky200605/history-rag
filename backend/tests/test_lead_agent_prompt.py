@@ -28,17 +28,12 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Batch-Within-Layer Rule" in prompt
     assert "Book Coverage Rule" in prompt
     assert "Cross-Book Synthesis Rule" in prompt
-    assert "Scattered Evidence Rule" in prompt
-    assert "Pre-Answer Sufficiency Check" in prompt
-    assert "Todo-First Decomposition Rule" in prompt
+    assert "Evidence Sufficiency Rule" in prompt
+    assert "Decomposition Workflow Rule" in prompt
     assert "Planning-With-Prior-Knowledge Rule" in prompt
     assert "One-Facet-Per-Query Rule" in prompt
-    assert "Stage-Aware Todo Rule" in prompt
     assert "Historical Person Rule" in prompt
-    assert "Historical Person Todo Rule" in prompt
-    assert "Historical Person Timeline Rule" in prompt
     assert "Historical Period Rule" in prompt
-    assert "Historical Period Stage Rule" in prompt
     assert "北洋政府" in prompt
     assert "Distributed Evidence Rule" in prompt
     assert "Historical Report Rule" in prompt
@@ -47,17 +42,19 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "建议问题" in prompt
     assert "Noise Filtering Rule" in prompt
     assert "Knowledge Checkpoint Rule" in prompt
-    assert "knowledge_checkpoint` is not optional" in prompt
+    assert "knowledge_checkpoint` is mandatory" in prompt
     assert "Checkpoint Trigger Rule" in prompt
-    assert "Checkpoint Before Draft Rule" in prompt
-    assert "Checkpoint Structure Rule" in prompt
     assert "Checkpoint Cadence Rule" in prompt
+    assert "High-Volume Context Rule" in prompt
+    assert "Checkpoint Direction Rule" in prompt
+    assert "stop adding more raw retrieval and checkpoint first" in prompt
+    assert "next investigation" in prompt
+    assert "exact citation lines worth reusing" in prompt
     assert "knowledge_checkpoint" in prompt
     assert "Catalog Rescue Rule" in prompt
-    assert "Query Anchoring Rule" in prompt
-    assert "Sentence-Like Query Rule" in prompt
-    assert "Detailed Query Rule" in prompt
-    assert "phrase bags often miss" in prompt
+    assert "Query Formation Rule" in prompt
+    assert "keyword pile-up" in prompt
+    assert "vague" in prompt
     assert "Scope Is Hard Filter Rule" in prompt
     assert "Doc-ID Scope Alignment Rule" in prompt
     assert "Retry Discipline Rule" in prompt

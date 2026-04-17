@@ -7,8 +7,7 @@ from typing import override
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langgraph.prebuilt.tool_node import ToolCallRequest
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 GROUNDING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
 CHECKPOINT_TOOL_NAME = "knowledge_checkpoint"
@@ -20,19 +19,14 @@ NON_SUBSTANTIVE_MARKERS = (
     "当前对话已限定在所选资料范围内，但这些资料里没有找到匹配的候选书目",
 )
 CHECKPOINT_RETRY_APPENDICES = (
-    "\n\n[System checkpoint enforcement]\n"
-    "This turn has already accumulated multiple substantive grounded retrieval results "
-    "from `knowledge_search` / `knowledge_locate` without a new `knowledge_checkpoint`.\n"
-    "Your NEXT action must be exactly one call to `knowledge_checkpoint`.\n"
-    "Do not call any other tool yet.\n"
-    "Do not draft the final answer yet.\n"
-    "Write the checkpoint so it faithfully preserves the finished retrieval block, "
-    "the exact citation lines worth reusing, and any remaining gaps.\n",
-    "\n\n[System checkpoint enforcement - final retry]\n"
-    "You still did not call `knowledge_checkpoint`.\n"
-    "Retry now and make your NEXT action exactly one `knowledge_checkpoint` tool call.\n"
-    "Do not call `knowledge_search`, `knowledge_locate`, or any other tool in this step.\n"
-    "Do not answer the user directly in this step.\n",
+    "系统插入提示（不是用户的新问题）：本轮自上次 checkpoint 以来，已经积累了多条有效的 "
+    "`knowledge_search` / `knowledge_locate` 检索结果。\n"
+    "你下一步必须且只能调用一次 `knowledge_checkpoint`。\n"
+    "此时不要再调用 `knowledge_search`、`knowledge_locate` 或其他工具，也不要直接起草最终答案。\n"
+    "请把已完成板块的发现、可复用 citation、以及剩余待查问题如实写进 checkpoint。",
+    "系统再次插入提示（不是用户的新问题）：你刚才仍未先调用 `knowledge_checkpoint`。\n"
+    "现在请立刻把下一步改成且仅改成一次 `knowledge_checkpoint` 工具调用。\n"
+    "不要继续检索，不要直接回答。",
 )
 
 logger = logging.getLogger(__name__)
@@ -54,13 +48,6 @@ def _stringify_content(content: object) -> str:
 
 class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
     """Hide old grounding payloads and push the model to checkpoint before moving on."""
-
-    def _extract_messages_from_state(self, state: object) -> list:
-        if isinstance(state, dict):
-            messages = state.get("messages")
-            return messages if isinstance(messages, list) else []
-        messages = getattr(state, "messages", None)
-        return messages if isinstance(messages, list) else []
 
     def _latest_human_index(self, messages: list) -> int:
         for index in range(len(messages) - 1, -1, -1):
@@ -135,9 +122,8 @@ class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
         return bool(tool_names) and all(name == CHECKPOINT_TOOL_NAME for name in tool_names)
 
     def _build_retry_request(self, request: ModelRequest, appendix: str) -> ModelRequest:
-        current_system = _stringify_content(request.system_message.content) if request.system_message else ""
-        retry_system = SystemMessage(content=f"{current_system}{appendix}" if current_system else appendix)
-        return request.override(system_message=retry_system)
+        reminder = HumanMessage(content=appendix)
+        return request.override(messages=[*request.messages, reminder])
 
     def _prepare_request(self, request: ModelRequest) -> ModelRequest:
         patched = self._build_patched_messages(request.messages)
@@ -195,29 +181,6 @@ class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
         )
         return retry_response
 
-    def _build_blocked_tool_message(self, request: ToolCallRequest) -> ToolMessage:
-        tool_name = request.tool_call.get("name", "unknown")
-        count = self._grounding_count_since_checkpoint(self._extract_messages_from_state(request.state))
-        return ToolMessage(
-            content=(
-                "Error: 已累计达到 knowledge_checkpoint 强制触发阈值。"
-                f"当前自上次 checkpoint 以来已有 {count} 条有效的 `knowledge_search` / `knowledge_locate` 结果。"
-                f"在调用 `{tool_name}` 之前，必须先调用 `knowledge_checkpoint` 总结已完成板块。"
-            ),
-            tool_call_id=request.tool_call.get("id", ""),
-            name=tool_name,
-            status="error",
-        )
-
-    def _should_block_tool_call(self, request: ToolCallRequest) -> bool:
-        tool_name = request.tool_call.get("name")
-        if tool_name == CHECKPOINT_TOOL_NAME:
-            return False
-        messages = self._extract_messages_from_state(request.state)
-        if not messages:
-            return False
-        return self._needs_checkpoint_enforcement(messages)
-
     @override
     def wrap_model_call(
         self,
@@ -237,23 +200,3 @@ class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
         prepared_request = self._prepare_request(request)
         response = await handler(prepared_request)
         return await self._aenforce_with_retry(prepared_request, response, handler)
-
-    @override
-    def wrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage],
-    ) -> ToolMessage:
-        if self._should_block_tool_call(request):
-            return self._build_blocked_tool_message(request)
-        return handler(request)
-
-    @override
-    async def awrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
-    ) -> ToolMessage:
-        if self._should_block_tool_call(request):
-            return self._build_blocked_tool_message(request)
-        return await handler(request)

@@ -15,6 +15,7 @@ import {
   useDeleteKnowledgeFolder,
   useDeleteKnowledgeFile,
   useKnowledgeFiles,
+  useReparseKnowledgeFile,
   useRenameKnowledgeFolder,
   useRegenerateKnowledgeFileMetadata,
   useRetryKnowledgeFileIndexing,
@@ -79,6 +80,7 @@ export default function KnowledgeManagementPage() {
   const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [retryingFilename, setRetryingFilename] = useState<string | null>(null);
+  const [reparsingFilename, setReparsingFilename] = useState<string | null>(null);
   const [movingRecord, setMovingRecord] = useState<ManagedKnowledgeFile | null>(null);
   const [moveTargetFolderPath, setMoveTargetFolderPath] = useState("");
   const [newFolderName, setNewFolderName] = useState("");
@@ -106,6 +108,7 @@ export default function KnowledgeManagementPage() {
   const deleteMutation = useDeleteKnowledgeFile();
   const deleteUserRecordMutation = useDeleteUserKnowledgeRecord();
   const retryMutation = useRetryKnowledgeFileIndexing();
+  const reparseMutation = useReparseKnowledgeFile();
   const moveUserRecordMutation = useMoveUserKnowledgeRecord();
   const updateMetadataMutation = useUpdateKnowledgeFileMetadata();
   const regenerateMetadataMutation = useRegenerateKnowledgeFileMetadata();
@@ -410,6 +413,18 @@ export default function KnowledgeManagementPage() {
       toast.error(retryError instanceof Error ? retryError.message : "重新入库失败");
     } finally {
       setRetryingFilename(null);
+    }
+  };
+
+  const handleReparse = async (filename: string) => {
+    setReparsingFilename(filename);
+    try {
+      const result = await reparseMutation.mutateAsync(filename);
+      toast.success(result.message);
+    } catch (reparseError) {
+      toast.error(reparseError instanceof Error ? reparseError.message : "重新解析失败");
+    } finally {
+      setReparsingFilename(null);
     }
   };
 
@@ -785,6 +800,8 @@ export default function KnowledgeManagementPage() {
                               deletingRecordId === file.userRecordId);
                           const isRetrying =
                             retryMutation.isPending && retryingFilename === file.filename;
+                          const isReparsing =
+                            reparseMutation.isPending && reparsingFilename === file.filename;
 
                           return (
                             <KnowledgeFileCard
@@ -798,6 +815,7 @@ export default function KnowledgeManagementPage() {
                                 setMoveTargetFolderPath(file.folderDisplay);
                               }}
                               onRetry={() => void handleRetryIndexing(file.filename)}
+                              onReparse={() => void handleReparse(file.filename)}
                               onDelete={() =>
                                 file.source === "global"
                                   ? void handleDelete(file.filename)
@@ -807,6 +825,7 @@ export default function KnowledgeManagementPage() {
                               personalSpacesCount={personalFolderPaths.length}
                               isDeleting={isDeleting}
                               isRetrying={isRetrying}
+                              isReparsing={isReparsing}
                             />
                           );
                         })}

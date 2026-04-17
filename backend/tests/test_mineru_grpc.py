@@ -30,10 +30,12 @@ def test_build_structured_document_from_mineru_response_with_full_text() -> None
     assert payload["provider_result_meta"] == {"task_id": "task-1"}
     assert payload["pages"][0]["pdf_page_no"] == 1
     assert payload["pages"][0]["page_no"] == 1
-    assert payload["pages"][0]["book_page_no"] == 1
+    assert payload["pages"][0]["book_page_no"] is None
+    assert payload["pages"][0]["page_number_source"] == "pdf"
     assert payload["pages"][1]["pdf_page_no"] == 2
-    assert payload["pages"][1]["page_no"] == 2
-    assert payload["pages"][1]["book_page_no"] == 2
+    assert payload["pages"][1]["page_no"] == 1
+    assert payload["pages"][1]["book_page_no"] == 1
+    assert payload["pages"][1]["page_number_source"] == "book"
 
 
 def test_build_structured_document_from_mineru_response_with_pages() -> None:
@@ -71,6 +73,35 @@ def test_build_structured_document_from_mineru_response_with_pages() -> None:
     assert payload["pages"][0]["paragraphs"][0]["bbox"]["x"] == 10.0
     assert payload["pages"][0]["paragraphs"][0]["bbox_source"] == "mineru_grpc"
     assert payload["pages"][0]["paragraphs"][1]["paragraph_no"] == 2
+
+
+def test_build_structured_document_from_mineru_response_preserves_provider_page_mapping() -> None:
+    response = mineru_pb2.ParsePdfResponse(
+        document=mineru_pb2.StructuredDocument(
+            pages=[
+                mineru_pb2.Page(
+                    pdf_page_no=8,
+                    page_no=5,
+                    book_page_no=5,
+                    page_number_source="book",
+                    text="正文页",
+                )
+            ]
+        )
+    )
+
+    payload = build_structured_document_from_mineru_response(
+        source_filename="demo.pdf",
+        title="Demo",
+        parser_name="ocr_pdf_mineru_grpc",
+        response=response,
+        hints=None,
+    )
+
+    assert payload["pages"][0]["pdf_page_no"] == 8
+    assert payload["pages"][0]["page_no"] == 5
+    assert payload["pages"][0]["book_page_no"] == 5
+    assert payload["pages"][0]["page_number_source"] == "book"
 
 
 def test_build_structured_document_from_mineru_response_without_proto_paragraphs_keeps_single_page_paragraph() -> None:
@@ -123,7 +154,10 @@ def test_build_structured_document_from_mineru_grpc_auto_splits_large_pdf(
         lambda: config,
     )
 
+    requested_hints: list[dict[str, str] | None] = []
+
     def fake_parse_pdf_response(file_path: Path, **_: object) -> mineru_pb2.ParsePdfResponse:
+        requested_hints.append(dict(_.get("hints") or {}))
         chunk_reader = PdfReader(str(file_path))
         return mineru_pb2.ParsePdfResponse(
             task_id=file_path.stem,
@@ -147,6 +181,10 @@ def test_build_structured_document_from_mineru_grpc_auto_splits_large_pdf(
         pdf_path,
         title="Big PDF",
         parser_name="ocr_pdf_mineru_grpc",
+        hints={
+            "book_page_start_pdf_page": "3",
+            "book_page_start_value": "1",
+        },
     )
 
     assert payload["provider"] == "mineru_grpc"
@@ -158,6 +196,19 @@ def test_build_structured_document_from_mineru_grpc_auto_splits_large_pdf(
         {"start_pdf_page": 3, "end_pdf_page": 4},
         {"start_pdf_page": 5, "end_pdf_page": 5},
     ]
+    assert requested_hints == [
+        {},
+        {
+            "book_page_start_pdf_page": "1",
+            "book_page_start_value": "1",
+        },
+        {
+            "book_page_start_pdf_page": "1",
+            "book_page_start_value": "3",
+        },
+    ]
     assert [page["pdf_page_no"] for page in payload["pages"]] == [1, 2, 3, 4, 5]
+    assert [page["page_no"] for page in payload["pages"]] == [1, 2, 1, 2, 3]
+    assert [page["book_page_no"] for page in payload["pages"]] == [None, None, 1, 2, 3]
     assert payload["pages"][4]["paragraphs"][0]["paragraph_id"] == "page-5-p1"
     assert payload["pages"][4]["paragraphs"][0]["paragraph_no_in_doc"] == 5

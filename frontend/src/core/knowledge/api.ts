@@ -352,6 +352,24 @@ export async function retryKnowledgeFileIndexing(
   return (await response.json()) as { success: boolean; message: string };
 }
 
+export async function reparseKnowledgeFile(
+  filename: string,
+): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/knowledge/uploads/${encodeURIComponent(filename)}/reparse`,
+    {
+      method: "POST",
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ detail: "Failed to reparse file" }));
+    throw new Error(error.detail ?? "Failed to reparse file");
+  }
+  return (await response.json()) as { success: boolean; message: string };
+}
+
 export async function updateKnowledgeFileMetadata(
   filename: string,
   payload: KnowledgeMetadataUpdateInput,

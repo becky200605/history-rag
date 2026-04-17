@@ -83,6 +83,8 @@ def _build_parse_pdf_request(
         language_hint=language_hint or "",
         layout_hint=hints.get("layout_hint", ""),
         document_type_hint=hints.get("document_type_hint", ""),
+        book_page_start_pdf_page=hints.get("book_page_start_pdf_page", ""),
+        book_page_start_value=hints.get("book_page_start_value", ""),
         model_version=config.model_version,
     )
 
@@ -190,6 +192,37 @@ def _bbox_to_payload(bbox: mineru_pb2.BBox | None) -> dict[str, float] | None:
     return build_bbox(x=bbox.x, y=bbox.y, width=bbox.width, height=bbox.height)
 
 
+def _build_chunk_local_hints(
+    *,
+    hints: dict[str, str] | None,
+    start_page_index: int,
+    end_page_index: int,
+) -> dict[str, str]:
+    local_hints = dict(hints or {})
+    start_pdf_page = _coerce_positive_int(local_hints.get("book_page_start_pdf_page"))
+    start_value = _coerce_positive_int(local_hints.get("book_page_start_value"))
+    if start_pdf_page is None or start_value is None:
+        local_hints.pop("book_page_start_pdf_page", None)
+        local_hints.pop("book_page_start_value", None)
+        return local_hints
+
+    chunk_start_pdf_page = start_page_index + 1
+    chunk_end_pdf_page = end_page_index
+    if start_pdf_page > chunk_end_pdf_page:
+        local_hints.pop("book_page_start_pdf_page", None)
+        local_hints.pop("book_page_start_value", None)
+        return local_hints
+
+    if start_pdf_page >= chunk_start_pdf_page:
+        local_hints["book_page_start_pdf_page"] = str(start_pdf_page - chunk_start_pdf_page + 1)
+        local_hints["book_page_start_value"] = str(start_value)
+        return local_hints
+
+    local_hints["book_page_start_pdf_page"] = "1"
+    local_hints["book_page_start_value"] = str(start_value + (chunk_start_pdf_page - start_pdf_page))
+    return local_hints
+
+
 def _build_single_paragraph_from_page_text(
     *,
     page_text: str,
@@ -246,7 +279,13 @@ def build_structured_document_from_mineru_response(
 
     for page_index, page in enumerate(response.document.pages, start=1):
         pdf_page_no = page.pdf_page_no or page.page_no or page_index
-        page_reference = build_page_reference(pdf_page_no, hints)
+        page_reference = build_page_reference(
+            pdf_page_no,
+            hints,
+            page_no=page.page_no or None,
+            book_page_no=page.book_page_no or None,
+            page_number_source=page.page_number_source or None,
+        )
         paragraphs: list[dict[str, Any]] = []
         page_text_parts: list[str] = []
 
@@ -334,15 +373,24 @@ def _merge_chunked_structured_documents(
     global_line = 1
     task_ids: list[str] = []
 
-    for payload in chunk_payloads:
+    for payload, (start_page_index, end_page_index) in zip(chunk_payloads, chunk_plan.chunk_ranges, strict=False):
         provider_meta = payload.get("provider_result_meta")
         if isinstance(provider_meta, dict):
             task_id = str(provider_meta.get("task_id") or "").strip()
             if task_id:
                 task_ids.append(task_id)
 
-        for page in payload.get("pages") or []:
-            page_number = len(merged_pages) + 1
+        chunk_page_count = end_page_index - start_page_index
+        for page_offset, page in enumerate(payload.get("pages") or [], start=1):
+            raw_pdf_page_no = _coerce_positive_int(page.get("pdf_page_no"))
+            if raw_pdf_page_no is None:
+                raw_pdf_page_no = _coerce_positive_int(page.get("page_no")) or page_offset
+
+            if 1 <= raw_pdf_page_no <= chunk_page_count:
+                global_pdf_page_no = start_page_index + raw_pdf_page_no
+            else:
+                global_pdf_page_no = raw_pdf_page_no
+
             page_text = str(page.get("text") or "").strip()
             raw_paragraphs = page.get("paragraphs") or []
             paragraphs: list[dict[str, Any]] = []
@@ -357,7 +405,7 @@ def _merge_chunked_structured_documents(
                 line_end = line_start + max(1, text.count("\n") + 1) - 1
 
                 paragraph_payload = {
-                    "paragraph_id": f"page-{page_number}-p{paragraph_index}",
+                    "paragraph_id": f"page-{global_pdf_page_no}-p{paragraph_index}",
                     "paragraph_no": paragraph_index,
                     "paragraph_no_in_doc": paragraph_no_in_doc,
                     "text": text,
@@ -376,13 +424,13 @@ def _merge_chunked_structured_documents(
             if not paragraphs and page_text:
                 paragraphs, paragraph_no_in_doc, global_line = _build_single_paragraph_from_page_text(
                     page_text=page_text,
-                    pdf_page_no=page_number,
+                    pdf_page_no=global_pdf_page_no,
                     paragraph_no_in_doc_start=paragraph_no_in_doc,
                     global_line_start=global_line,
                 )
 
             page_payload = {
-                **build_page_reference(page_number, hints),
+                **build_page_reference(global_pdf_page_no, hints),
                 "text": page_text,
                 "paragraphs": paragraphs,
             }
@@ -469,10 +517,15 @@ def build_structured_document_from_mineru_grpc(
             with chunk_path.open("wb") as handle:
                 writer.write(handle)
 
+            chunk_hints = _build_chunk_local_hints(
+                hints=hints,
+                start_page_index=start_page_index,
+                end_page_index=end_page_index,
+            )
             response = _parse_pdf_response_via_mineru_grpc(
                 chunk_path,
                 config=config,
-                hints=hints,
+                hints=chunk_hints,
                 language_hint=language_hint,
             )
             chunk_payloads.append(
@@ -481,7 +534,7 @@ def build_structured_document_from_mineru_grpc(
                     title=title,
                     parser_name=parser_name,
                     response=response,
-                    hints=hints,
+                    hints=chunk_hints,
                 )
             )
 

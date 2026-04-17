@@ -1519,6 +1519,42 @@ async def retry_global_knowledge_file(filename: str) -> dict:
     }
 
 
+@router.post("/uploads/{filename}/reparse", response_model=dict, summary="Reparse Global Knowledge File")
+async def reparse_global_knowledge_file(filename: str) -> dict:
+    """Re-run OCR/parsing for a single tracked global knowledge file."""
+    config = get_knowledge_base_config()
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    record = _find_global_record(filename)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+    if not record.get("indexable"):
+        raise HTTPException(status_code=400, detail="This file type does not support indexing")
+
+    source_filename = str(record.get("source_filename") or filename)
+    file_path = get_global_docs_dir() / source_filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Source file missing: {source_filename}")
+
+    current_status = str(record.get("parse_status") or "")
+    if current_status in {"queued", "queued_ocr", "parsing", "queued_embedding", "indexing"}:
+        raise HTTPException(status_code=409, detail="This file is already being processed")
+
+    record["error"] = None
+    record["embedding_checkpoint"] = None
+    record["parse_status"] = "queued_ocr"
+    _save_global_record(source_filename, record)
+    _ensure_global_queue_workers_started()
+    _enqueue_global_ocr(source_filename)
+    return {
+        "success": True,
+        "message": f"已重新加入解析队列：{source_filename}",
+    }
+
+
 @router.get("/search", response_model=SearchResponse, summary="Search Knowledge Base")
 def search_knowledge_base(
     q: str = Query(..., description="Search query"),

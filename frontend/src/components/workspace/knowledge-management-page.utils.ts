@@ -83,6 +83,7 @@ const ACTIVE_PARSE_STATUSES = new Set(["queued", "parsing", "indexing"]);
 const FAILED_PARSE_STATUSES = new Set(["failed", "index_failed"]);
 const READER_READY_STATUSES = new Set(["indexed", "parsed"]);
 const RETRYABLE_GLOBAL_STATUSES = new Set(["failed", "index_failed", "indexed"]);
+const REPARSEABLE_GLOBAL_STATUSES = new Set(["failed", "index_failed", "indexed", "parsed", "uploaded", "pending_parse"]);
 const EDIT_DISABLED_STATUSES = new Set(["queued", "queued_ocr", "parsing"]);
 
 export const knowledgeTypeOptions: Array<{ value: KnowledgeType; label: string }> = [
@@ -735,7 +736,7 @@ export function getCascadingLevels(
     return levels;
   }
 
-  const findPath = (nodes: FolderTreeNode[], currentPath: string): boolean => {
+  const findPath = (nodes: FolderTreeNode[]): boolean => {
     for (const node of nodes) {
       if (node.path === targetPath) {
         if (node.children.length > 0) {
@@ -748,7 +749,7 @@ export function getCascadingLevels(
       if (isSubPath) {
         if (node.children.length > 0) {
           levels.push(node.children);
-          if (findPath(node.children, targetPath)) {
+          if (findPath(node.children)) {
             return true;
           }
         }
@@ -758,7 +759,7 @@ export function getCascadingLevels(
     return false;
   };
 
-  findPath(rootNodes, targetPath);
+  findPath(rootNodes);
   return levels;
 }
 
@@ -775,6 +776,14 @@ export function canRetryManagedFile(file: ManagedKnowledgeFile) {
     file.source === "global" &&
     file.indexable &&
     RETRYABLE_GLOBAL_STATUSES.has(file.parseStatus ?? "")
+  );
+}
+
+export function canReparseManagedFile(file: ManagedKnowledgeFile) {
+  return (
+    file.source === "global" &&
+    file.indexable &&
+    REPARSEABLE_GLOBAL_STATUSES.has(file.parseStatus ?? "")
   );
 }
 

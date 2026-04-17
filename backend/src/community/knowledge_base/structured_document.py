@@ -18,13 +18,52 @@ def _normalize_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def build_page_reference(pdf_page_no: int, hints: dict[str, str] | None = None) -> dict[str, Any]:
-    """Return page numbering metadata for a physical PDF page."""
+def _coerce_positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _derive_book_page_no(pdf_page_no: int, hints: dict[str, str] | None = None) -> int | None:
+    if not hints:
+        return None
+
+    start_pdf_page = _coerce_positive_int(hints.get("book_page_start_pdf_page"))
+    start_value = _coerce_positive_int(hints.get("book_page_start_value"))
+    if start_pdf_page is None or start_value is None or pdf_page_no < start_pdf_page:
+        return None
+    return start_value + (pdf_page_no - start_pdf_page)
+
+
+def build_page_reference(
+    pdf_page_no: int,
+    hints: dict[str, str] | None = None,
+    *,
+    page_no: int | None = None,
+    book_page_no: int | None = None,
+    page_number_source: str | None = None,
+) -> dict[str, Any]:
+    """Return normalized page numbering metadata for a physical PDF page."""
+    normalized_pdf_page_no = _coerce_positive_int(pdf_page_no) or 1
+    normalized_book_page_no = _coerce_positive_int(book_page_no)
+    if normalized_book_page_no is None:
+        normalized_book_page_no = _derive_book_page_no(normalized_pdf_page_no, hints)
+
+    normalized_page_no = _coerce_positive_int(page_no)
+    if normalized_page_no is None:
+        normalized_page_no = normalized_book_page_no or normalized_pdf_page_no
+
+    normalized_page_number_source = (page_number_source or "").strip().lower()
+    if normalized_page_number_source not in {"book", "pdf"}:
+        normalized_page_number_source = "book" if normalized_book_page_no is not None else "pdf"
+
     return {
-        "page_no": pdf_page_no,
-        "pdf_page_no": pdf_page_no,
-        "book_page_no": pdf_page_no,
-        "page_number_source": "book",
+        "page_no": normalized_page_no,
+        "pdf_page_no": normalized_pdf_page_no,
+        "book_page_no": normalized_book_page_no,
+        "page_number_source": normalized_page_number_source,
     }
 
 

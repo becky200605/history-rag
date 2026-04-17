@@ -9,6 +9,7 @@ import {
   listKnowledgeDocuments,
   listKnowledgeFiles,
   loadKnowledgeStatus,
+  reparseKnowledgeFile,
   renameKnowledgeFolder,
   regenerateKnowledgeFileMetadata,
   retryKnowledgeFileIndexing,
@@ -118,6 +119,18 @@ export function useRetryKnowledgeFileIndexing() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (filename: string) => retryKnowledgeFileIndexing(filename),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
+    },
+  });
+}
+
+export function useReparseKnowledgeFile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (filename: string) => reparseKnowledgeFile(filename),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });

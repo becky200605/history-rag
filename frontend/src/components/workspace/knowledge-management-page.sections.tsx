@@ -19,34 +19,26 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 import {
-  buildFileTags,
   canOpenManagedFile,
+  canReparseManagedFile,
   canRetryManagedFile,
   formatCompactTime,
   getCoverTone,
-  findFolderNode,
-  getCascadingLevels,
   getFolderDisplayName,
   getManagedFileCoverImageUrl,
   knowledgeTypeLabel,
   statusLabel,
-  statusVariant,
   type FolderTreeNode,
   type ManagedKnowledgeFile,
 } from "./knowledge-management-page.utils";
@@ -403,11 +395,13 @@ export function KnowledgeFileCard({
   onOpenMetadata,
   onMoveFile,
   onRetry,
+  onReparse,
   onDelete,
   readerHref,
   personalSpacesCount,
   isDeleting,
   isRetrying,
+  isReparsing,
 }: {
   file: ManagedKnowledgeFile;
   isSelected: boolean;
@@ -415,16 +409,19 @@ export function KnowledgeFileCard({
   onOpenMetadata: () => void;
   onMoveFile: () => void;
   onRetry: () => void;
+  onReparse: () => void;
   onDelete: () => void;
   readerHref: string | null;
   personalSpacesCount: number;
   isDeleting: boolean;
   isRetrying: boolean;
+  isReparsing: boolean;
 }) {
-  const tags = buildFileTags(file);
   const coverTone = getCoverTone(file.title);
   const canOpenReader = canOpenManagedFile(file, readerHref);
   const canRetry = canRetryManagedFile(file);
+  const canReparse = canReparseManagedFile(file);
+  const isRefreshing = isRetrying || isReparsing;
   const coverImageUrl = useMemo(() => getManagedFileCoverImageUrl(file), [file]);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
   const showCoverImage = Boolean(coverImageUrl) && !coverImageFailed;
@@ -517,17 +514,36 @@ export function KnowledgeFileCard({
                       </Button>
                     )}
 
-                    {canRetry ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 rounded-sm text-stone-400 hover:bg-stone-100 hover:text-primary"
-                        onClick={onRetry}
-                        disabled={isRetrying}
-                      >
-                        {isRetrying ? <Loader2Icon className="size-3.5 animate-spin" /> : <RefreshCwIcon className="size-3.5" />}
-                      </Button>
+                    {canRetry || canReparse ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 rounded-sm text-stone-400 hover:bg-stone-100 hover:text-primary"
+                            disabled={isRefreshing}
+                          >
+                            {isRefreshing ? (
+                              <Loader2Icon className="size-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCwIcon className="size-3.5" />
+                            )}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="min-w-32">
+                          {canRetry ? (
+                            <DropdownMenuItem onClick={onRetry}>
+                              重新入库
+                            </DropdownMenuItem>
+                          ) : null}
+                          {canReparse ? (
+                            <DropdownMenuItem onClick={onReparse}>
+                              重新解析
+                            </DropdownMenuItem>
+                          ) : null}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     ) : null}
 
                     <Button

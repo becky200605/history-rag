@@ -281,6 +281,10 @@ async def _call_retry_global_knowledge_file(filename: str):
     return await knowledge_router.retry_global_knowledge_file(filename)
 
 
+async def _call_reparse_global_knowledge_file(filename: str):
+    return await knowledge_router.reparse_global_knowledge_file(filename)
+
+
 def test_retry_global_knowledge_file_requeues_indexed_document_for_embedding(monkeypatch, tmp_path) -> None:
     source_path = tmp_path / "indexed.pdf"
     source_path.write_text("pdf", encoding="utf-8")
@@ -324,6 +328,57 @@ def test_retry_global_knowledge_file_requeues_indexed_document_for_embedding(mon
     assert enqueued == ["indexed.pdf"]
 
 
+def test_reparse_global_knowledge_file_requeues_indexed_document_for_ocr(monkeypatch, tmp_path) -> None:
+    source_path = tmp_path / "indexed.pdf"
+    source_path.write_text("pdf", encoding="utf-8")
+    records = {
+        "indexed.pdf": {
+            "source_filename": "indexed.pdf",
+            "indexable": True,
+            "parse_status": "indexed",
+            "index_target_path": "/tmp/indexed.structured.json",
+            "error": "old error",
+            "embedding_checkpoint": {
+                "next_chunk_index": 8,
+                "total_chunks": 24,
+                "content_fingerprint": "fp-old",
+                "batch_size": 8,
+            },
+        },
+    }
+    enqueued: list[str] = []
+
+    monkeypatch.setattr(
+        knowledge_router,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(enabled=True),
+    )
+    monkeypatch.setattr(
+        knowledge_router,
+        "_find_global_record",
+        lambda filename: dict(records[filename]) if filename in records else None,
+    )
+    monkeypatch.setattr(knowledge_router, "get_global_docs_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        knowledge_router,
+        "_save_global_record",
+        lambda filename, record: records.__setitem__(filename, dict(record)),
+    )
+    monkeypatch.setattr(knowledge_router, "_ensure_global_queue_workers_started", lambda: None)
+    monkeypatch.setattr(knowledge_router, "_enqueue_global_ocr", enqueued.append)
+
+    import asyncio
+
+    result = asyncio.run(_call_reparse_global_knowledge_file("indexed.pdf"))
+
+    assert result["success"] is True
+    assert "重新加入解析队列" in result["message"]
+    assert records["indexed.pdf"]["parse_status"] == "queued_ocr"
+    assert records["indexed.pdf"]["error"] is None
+    assert records["indexed.pdf"]["embedding_checkpoint"] is None
+    assert enqueued == ["indexed.pdf"]
+
+
 def test_update_global_knowledge_metadata_updates_hints(monkeypatch) -> None:
     record = {
         "source_filename": "demo.pdf",
@@ -341,6 +396,7 @@ def test_update_global_knowledge_metadata_updates_hints(monkeypatch) -> None:
         "get_knowledge_base_config",
         lambda: SimpleNamespace(
             enabled=True,
+            docs_path="knowledge/docs",
             book_metadata=SimpleNamespace(model_name="demo-model", front_page_limit=10, max_excerpt_chars=1200),
         ),
     )

@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 GROUNDING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
-CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\([^)]+\)", re.IGNORECASE)
+LINKED_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\([^)]+\)", re.IGNORECASE)
+CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\](?:\([^)]+\))?", re.IGNORECASE)
 REFUSAL_PREFIX_PATTERN = re.compile(r"^\s*【无法回答】", re.IGNORECASE)
 REFERENCE_SECTION_PATTERNS = (
     re.compile(r"(?im)^\s{0,3}(?:#{1,6}\s*)?参考文献\s*$"),
@@ -29,7 +30,7 @@ RETRY_APPENDIX = (
     "Your previous draft was blocked because it used grounded knowledge results (`knowledge_search` / `knowledge_locate`) without the required body citations.\n"
     "Regenerate the full answer from scratch.\n"
     "Requirements:\n"
-    "1. If you use any knowledge from `knowledge_search` or `knowledge_locate`, include at least one `[citation:Title](URL)` citation in the answer body.\n"
+    "1. If you use any knowledge from `knowledge_search` or `knowledge_locate`, the answer body must contain full Markdown citation links in the form `[citation:Title](URL)`.\n"
     "2. Do not add `参考文献` or `建议问题` sections. The system will generate them in later stages.\n"
     "3. If you cannot support the answer with citations, refuse using the exact prefix `【无法回答】` followed by a brief reason.\n"
     "4. Do not mention this enforcement message in the final answer."
@@ -40,7 +41,7 @@ RETRY_APPENDIX_FINAL = (
     "Regenerate the full answer from scratch one more time.\n"
     "Additional requirements:\n"
     "1. Reuse the exact `citation:` lines returned by `knowledge_search` / `knowledge_locate` whenever possible; do not rewrite citation links manually.\n"
-    "2. If you cite a source, the answer body must contain the `[citation:Title](URL)` link itself, not only a plain-text mention.\n"
+    "2. If you cite a source, the answer body must contain the full `[citation:Title](URL)` markdown link, not only a plain-text mention and not a bare `[citation:Title]` label.\n"
     "3. Do not add `参考文献` or `建议问题` sections. The system will generate them separately.\n"
     "4. If you still cannot produce a fully cited answer, refuse explicitly using the exact prefix `【无法回答】`.\n"
     "5. Do not mention this enforcement message in the final answer."
@@ -117,6 +118,43 @@ def _extract_citations(content: str) -> list[str]:
         seen.add(citation)
         citations.append(citation)
     return citations
+
+
+def _citation_label(citation: str) -> str:
+    if "](" in citation:
+        return citation.split("](", 1)[0] + "]"
+    return citation
+
+
+def _grounding_citation_map(messages: list) -> dict[str, str]:
+    start = _latest_human_index(messages)
+    citation_map: dict[str, str] = {}
+    for message in messages[start:]:
+        if not isinstance(message, ToolMessage) or getattr(message, "name", None) not in GROUNDING_TOOL_NAMES:
+            continue
+        content = _stringify_content(message.content)
+        for citation in LINKED_CITATION_PATTERN.findall(content):
+            citation_map.setdefault(_citation_label(citation), citation)
+    return citation_map
+
+
+def _available_citation_lines(messages: list) -> list[str]:
+    citation_map = _grounding_citation_map(messages)
+    return [f"citation: {citation}" for citation in citation_map.values()]
+
+
+def _normalize_answer_citations(answer_body: str, messages: list) -> str:
+    citation_map = _grounding_citation_map(messages)
+    if not citation_map:
+        return answer_body
+
+    def _replace(match: re.Match[str]) -> str:
+        citation = match.group(0)
+        if "](" in citation:
+            return citation
+        return citation_map.get(citation, citation)
+
+    return CITATION_PATTERN.sub(_replace, answer_body)
 
 
 def _build_reference_section(answer_body: str) -> str:
@@ -218,14 +256,24 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
             return False
 
         content = _stringify_content(final_message.content)
-        answer_body = _strip_generated_sections(content)
+        answer_body = _normalize_answer_citations(_strip_generated_sections(content), messages)
         if _is_refusal(answer_body):
             return False
         return not CITATION_PATTERN.search(answer_body)
 
     def _build_retry_request(self, request: ModelRequest, appendix: str) -> ModelRequest:
         current_system = _stringify_content(request.system_message.content) if request.system_message else ""
-        retry_system = SystemMessage(content=f"{current_system}{appendix}" if current_system else appendix)
+        available_citations = _available_citation_lines(request.messages)
+        citation_hint = ""
+        if available_citations:
+            joined = "\n".join(f"- {line}" for line in available_citations)
+            citation_hint = (
+                "\n\nAvailable citation lines from this turn. Copy these exact markdown links into the answer body:\n"
+                f"{joined}"
+            )
+        retry_system = SystemMessage(
+            content=f"{current_system}{appendix}{citation_hint}" if current_system else f"{appendix}{citation_hint}"
+        )
         return request.override(system_message=retry_system)
 
     def _fallback_response(self, response: ModelResponse) -> ModelResponse:
@@ -360,7 +408,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
             return _fallback_suggested_questions(user_question=user_question, refusal=refusal)
 
     def _compose_content_sync(self, request: ModelRequest, content: str) -> str:
-        answer_body = _strip_generated_sections(content)
+        answer_body = _normalize_answer_citations(_strip_generated_sections(content), request.messages)
         if not answer_body:
             return content
 
@@ -380,7 +428,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         return "\n\n".join(parts)
 
     async def _compose_content_async(self, request: ModelRequest, content: str) -> str:
-        answer_body = _strip_generated_sections(content)
+        answer_body = _normalize_answer_citations(_strip_generated_sections(content), request.messages)
         if not answer_body:
             return content
 

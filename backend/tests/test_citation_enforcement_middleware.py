@@ -54,6 +54,10 @@ def _good_stage_one_response() -> ModelResponse:
     )
 
 
+def _good_stage_one_response_with_bare_citation() -> ModelResponse:
+    return ModelResponse(result=[AIMessage(content="根据现有资料，可以得出相关结论。[citation:史料 第7页第2段]")])
+
+
 def _response_with_prebuilt_sections() -> ModelResponse:
     return ModelResponse(
         result=[
@@ -99,6 +103,10 @@ class TestCitationEnforcementMiddleware:
         assert len(seen_requests) == 3
         assert seen_requests[1].system_message is not None
         assert "previous draft was blocked" in str(seen_requests[1].system_message.content)
+        assert "Available citation lines from this turn" in str(seen_requests[1].system_message.content)
+        assert "citation: [citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)" in str(
+            seen_requests[1].system_message.content
+        )
         assert seen_requests[2].system_message is not None
         assert "reuse the exact `citation:` lines returned by `knowledge_search`" in str(
             seen_requests[2].system_message.content
@@ -122,6 +130,19 @@ class TestCitationEnforcementMiddleware:
         assert len(seen_requests) == 3
         assert "[citation:史料 第7页第2段]" in content
         assert "knowledge_locate" in str(seen_requests[1].system_message.content)
+
+    def test_accepts_bare_citation_and_upgrades_it_from_grounding_messages(self):
+        middleware = CitationEnforcementMiddleware()
+        request = _build_request(model=_SuggestionModel("继续追问一？\n继续追问二？\n继续追问三？"))
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return _good_stage_one_response_with_bare_citation()
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert "[citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)" in content
+        assert "参考文献" in content
 
     def test_returns_final_refusal_after_all_retries_fail_and_skips_reference_stage(self):
         middleware = CitationEnforcementMiddleware()

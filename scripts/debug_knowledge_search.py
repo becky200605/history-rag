@@ -68,10 +68,20 @@ def _parse_args() -> argparse.Namespace:
         help="Path to config.yaml.",
     )
     parser.add_argument(
+        "--docs-path",
+        default=None,
+        help="Optional knowledge docs root override, e.g. /var/lib/history-rag/knowledge/docs.",
+    )
+    parser.add_argument(
         "--show-catalog-limit",
         type=int,
         default=20,
         help="How many catalog entries to show in the preview.",
+    )
+    parser.add_argument(
+        "--list-doc-ids",
+        action="store_true",
+        help="Only list visible catalog doc_ids / filenames / titles, then exit.",
     )
     return parser.parse_args()
 
@@ -87,6 +97,17 @@ def _parse_loose_list(value: str | list[str] | tuple[str, ...] | None) -> list[s
             if normalized:
                 parsed.append(normalized)
     return parsed
+
+
+def _parse_bracket_doc_ids(value: str | None) -> list[str]:
+    if not value:
+        return []
+    stripped = value.strip()
+    matches = re.findall(r"\[([^\[\]]+)\]", stripped)
+    remainder = re.sub(r"\[[^\[\]]+\]", "", stripped).strip()
+    if matches and not remainder:
+        return [item.strip() for item in matches if item.strip()]
+    return _parse_loose_list(value)
 
 
 def _normalize_whitespace(value: str) -> str:
@@ -122,10 +143,12 @@ def _resolve_value_leniently(value: Any) -> Any:
     return value
 
 
-def _load_knowledge_base_config(config_path: str) -> None:
+def _load_knowledge_base_config(config_path: str, docs_path_override: str | None = None) -> None:
     with open(config_path, encoding="utf-8") as handle:
         raw_config = yaml.safe_load(handle) or {}
     knowledge_base_config = _resolve_value_leniently(raw_config.get("knowledge_base", {}))
+    if isinstance(knowledge_base_config, dict) and docs_path_override:
+        knowledge_base_config["docs_path"] = docs_path_override
     if isinstance(knowledge_base_config, dict):
         for optional_section in ("mineru", "translation_rpc"):
             section_value = knowledge_base_config.get(optional_section)
@@ -144,11 +167,11 @@ def _load_payload(args: argparse.Namespace) -> dict[str, Any]:
     knowledge_folders = payload.get("knowledge_folders") or args.knowledge_folders
     scopes = payload.get("scopes") or args.scopes
 
-    if not query:
+    if not query and not args.list_doc_ids:
         raise SystemExit("Missing query. Pass --query or --payload-json.")
 
     return {
-        "query": query,
+        "query": query or "",
         "doc_ids": doc_ids,
         "knowledge_folders": knowledge_folders,
         "scopes": scopes,
@@ -186,10 +209,10 @@ def _describe_match(candidate: str, entries: list[BookCatalogEntry]) -> None:
 def main() -> int:
     args = _parse_args()
     _load_env_files()
-    _load_knowledge_base_config(args.config)
+    _load_knowledge_base_config(args.config, args.docs_path)
     payload = _load_payload(args)
 
-    parsed_doc_ids = _parse_loose_list(payload["doc_ids"])
+    parsed_doc_ids = _parse_bracket_doc_ids(payload["doc_ids"])
     parsed_knowledge_folders = _parse_loose_list(payload["knowledge_folders"])
 
     started = perf_counter()
@@ -232,6 +255,25 @@ def main() -> int:
                 ensure_ascii=False,
             )
         )
+
+    if args.list_doc_ids:
+        _print_header("VISIBLE DOC IDS")
+        if not entries:
+            print("(none)")
+        for entry in entries:
+            print(
+                json.dumps(
+                    {
+                        "doc_id": entry.doc_id,
+                        "filename": entry.filename,
+                        "title": entry.title,
+                        "scope": entry.scope,
+                        "folder_path": entry.folder_path,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        return 0
 
     runtime = SimpleNamespace(context={})
     if args.thread_id:

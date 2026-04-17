@@ -57,6 +57,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
         entries = list_book_catalog(
             thread_id=runtime_context.get("thread_id"),
             user_id=runtime_context.get("user_id"),
+            include_search_content=False,
         )
         filtered = filter_book_catalog_entries(
             entries,
@@ -150,10 +151,9 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
             return True
         return any(_contains_injected_directory_block(message) for message in request.messages)
 
-    def _build_directory_block(self, request: ModelRequest) -> HumanMessage | None:
+    def _build_directory_block(self, entries: list) -> HumanMessage | None:
         started_at = time.perf_counter()
         try:
-            entries = self._visible_entries(request)
             directory_tree = render_book_catalog_directory_tree(entries)
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.warning("Failed to build knowledge directory tree: %s", exc)
@@ -191,11 +191,12 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
             logger.info("Knowledge directory tree already present in model request; skipping reinjection")
             return request
 
-        directory_message = self._build_directory_block(request)
+        visible_entries = self._visible_entries(request)
+        directory_message = self._build_directory_block(visible_entries)
         try:
             empty_folder_section = self._build_empty_folder_section(
                 request,
-                self._visible_entries(request),
+                visible_entries,
             )
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.warning("Failed to build empty-folder section: %s", exc)

@@ -1011,6 +1011,7 @@ def search_book_catalog(
     entries: list[BookCatalogEntry] | None = None,
 ) -> list[BookCatalogEntry]:
     """Return the most relevant candidate books for a query."""
+    started_at = time.perf_counter()
     catalog_entries = filter_book_catalog_entries(
         entries if entries is not None else list_book_catalog(thread_id=thread_id, user_id=user_id),
         doc_ids=doc_ids,
@@ -1019,6 +1020,13 @@ def search_book_catalog(
     )
     tokens = tokenize_search_text(query)
     if not catalog_entries or not tokens:
+        logger.info(
+            "Book catalog search short-circuit: query=%r catalog_entries=%s token_count=%s elapsed_ms=%.1f",
+            query,
+            len(catalog_entries),
+            len(tokens),
+            (time.perf_counter() - started_at) * 1000,
+        )
         return []
 
     doc_frequencies = _build_document_frequencies(catalog_entries)
@@ -1046,4 +1054,14 @@ def search_book_catalog(
 
     scored.sort(key=lambda item: item[0], reverse=True)
     ordered = [entry for _, entry in scored]
-    return _expand_book_catalog_results(ordered, top_k=top_k)
+    expanded = _expand_book_catalog_results(ordered, top_k=top_k)
+    logger.info(
+        "Book catalog search complete: query=%r catalog_entries=%s token_count=%s top_k=%s returned=%s elapsed_ms=%.1f",
+        query,
+        len(catalog_entries),
+        len(tokens),
+        top_k,
+        len(expanded),
+        (time.perf_counter() - started_at) * 1000,
+    )
+    return expanded

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
+import time
 from pathlib import Path
 from typing import Any, Generic, TYPE_CHECKING, TypeVar
 try:
@@ -52,6 +54,7 @@ HISTORICAL_PERIOD_ALIASES = {
 }
 HISTORICAL_TOPIC_RETRY_HINTS = ("情况", "概况", "变化", "变迁", "问题", "状况")
 FINANCE_RETRY_FACETS = ("财政收入结构", "财政支出结构", "财政政策")
+logger = logging.getLogger(__name__)
 
 
 def _split_loose_delimited_values(
@@ -546,10 +549,20 @@ def book_search_tool(
             as a whole-corpus catalog search; it must stay inside the chosen
             knowledge folders.
     """
+    started_at = time.perf_counter()
     thread_id = runtime.context.get("thread_id")
     user_id = runtime.context.get("user_id")
     selected_doc_ids = _runtime_selected_doc_ids(runtime)
     selected_scopes = _runtime_selected_scopes(runtime)
+    logger.info(
+        "Book search start: query=%r thread_id=%s has_user=%s selected_doc_ids=%s selected_scopes=%s raw_knowledge_folders=%s",
+        query,
+        thread_id,
+        bool(user_id),
+        len(selected_doc_ids or []),
+        ",".join(selected_scopes or []),
+        _split_loose_delimited_values(knowledge_folders) or [],
+    )
     visible_entries = _visible_catalog_entries(
         thread_id=thread_id,
         user_id=user_id,
@@ -559,16 +572,31 @@ def book_search_tool(
     raw_knowledge_folders = _split_loose_delimited_values(knowledge_folders) or []
     parsed_knowledge_folders = _parse_knowledge_folders(knowledge_folders)
     if not parsed_knowledge_folders:
+        logger.info(
+            "Book search rejected: query=%r reason=missing_knowledge_folders elapsed_ms=%.1f",
+            query,
+            (time.perf_counter() - started_at) * 1000,
+        )
         return _build_knowledge_folder_guidance(
             visible_entries=visible_entries,
             reason="Error: `book_search` 禁止整库全量搜索，必须传入 `knowledge_folders`。",
         )
     if any(_looks_like_virtual_knowledge_folder_label(folder) for folder in raw_knowledge_folders):
+        logger.info(
+            "Book search rejected: query=%r reason=virtual_folder_labels elapsed_ms=%.1f",
+            query,
+            (time.perf_counter() - started_at) * 1000,
+        )
         return _build_knowledge_folder_guidance(
             visible_entries=visible_entries,
             reason="Error: 你传入的 `knowledge_folders` 是层级标签（如 `用户书籍`、`核心通用书`），不是知识库逻辑目录。",
         )
     if any(_looks_like_local_filesystem_path(folder) for folder in raw_knowledge_folders):
+        logger.info(
+            "Book search rejected: query=%r reason=local_filesystem_path elapsed_ms=%.1f",
+            query,
+            (time.perf_counter() - started_at) * 1000,
+        )
         return _build_knowledge_folder_guidance(
             visible_entries=visible_entries,
             reason="Error: 你传入的 `knowledge_folders` 看起来像本地 sandbox 路径或文件名，不是知识库逻辑目录。",
@@ -577,10 +605,18 @@ def book_search_tool(
         _entry_matches_any_knowledge_folder(entry, parsed_knowledge_folders)
         for entry in visible_entries
     ):
+        logger.info(
+            "Book search rejected: query=%r reason=folder_not_visible visible_entries=%s parsed_knowledge_folders=%s elapsed_ms=%.1f",
+            query,
+            len(visible_entries),
+            ",".join(parsed_knowledge_folders),
+            (time.perf_counter() - started_at) * 1000,
+        )
         return _build_knowledge_folder_guidance(
             visible_entries=visible_entries,
             reason="Error: 当前 `knowledge_folders` 在知识库目录树中没有匹配到任何可见目录。",
         )
+    search_started_at = time.perf_counter()
     candidates = search_book_catalog(
         query,
         thread_id=thread_id,
@@ -591,9 +627,28 @@ def book_search_tool(
         folder_paths=parsed_knowledge_folders,
         entries=visible_entries,
     )
+    logger.info(
+        "Book search catalog phase complete: query=%r candidates=%s visible_entries=%s parsed_knowledge_folders=%s elapsed_ms=%.1f",
+        query,
+        len(candidates),
+        len(visible_entries),
+        ",".join(parsed_knowledge_folders),
+        (time.perf_counter() - search_started_at) * 1000,
+    )
     if not candidates:
         if selected_doc_ids:
+            logger.info(
+                "Book search no candidates: query=%r selected_doc_ids=%s elapsed_ms=%.1f",
+                query,
+                len(selected_doc_ids or []),
+                (time.perf_counter() - started_at) * 1000,
+            )
             return "当前对话已限定在所选资料范围内，但这些资料里没有找到匹配的候选书目。"
+        logger.info(
+            "Book search no candidates: query=%r elapsed_ms=%.1f",
+            query,
+            (time.perf_counter() - started_at) * 1000,
+        )
         return "No likely books found for this query."
 
     grouped = _group_book_candidates(candidates)
@@ -642,6 +697,16 @@ def book_search_tool(
         lines.append(f"reference doc_ids: {reference_doc_ids}")
     if parsed_knowledge_folders:
         lines.append(f"knowledge_folders: {', '.join(parsed_knowledge_folders)}")
+    logger.info(
+        "Book search complete: query=%r grouped_user=%s grouped_thread=%s grouped_core=%s grouped_specialized=%s grouped_reference=%s elapsed_ms=%.1f",
+        query,
+        len(grouped["user"]),
+        len(grouped["thread"]),
+        len(grouped[CORE_TYPE]),
+        len(grouped[SPECIALIZED_TYPE]),
+        len(grouped[REFERENCE_TYPE]),
+        (time.perf_counter() - started_at) * 1000,
+    )
     return "\n".join(lines)
 
 
@@ -703,13 +768,30 @@ def knowledge_search_tool(
             sandbox/local filesystem paths. Reuse the same folders chosen for
             `book_search` unless you intentionally want to widen/switch folders.
     """
+    started_at = time.perf_counter()
     try:
         thread_id = runtime.context.get("thread_id")
         user_id = runtime.context.get("user_id")
         parsed_doc_ids = _parse_doc_ids(doc_ids)
         selected_doc_ids = _runtime_selected_doc_ids(runtime)
         effective_doc_ids = _intersect_doc_ids(parsed_doc_ids, selected_doc_ids)
+        logger.info(
+            "Knowledge search start: query=%r thread_id=%s has_user=%s requested_doc_ids=%s selected_doc_ids=%s effective_doc_ids=%s scopes_arg=%r knowledge_folders=%s",
+            query,
+            thread_id,
+            bool(user_id),
+            len(parsed_doc_ids or []),
+            len(selected_doc_ids or []),
+            len(effective_doc_ids or []),
+            scopes,
+            _split_loose_delimited_values(knowledge_folders) or [],
+        )
         if parsed_doc_ids and selected_doc_ids and not effective_doc_ids:
+            logger.info(
+                "Knowledge search rejected: query=%r reason=doc_ids_outside_selected_range elapsed_ms=%.1f",
+                query,
+                (time.perf_counter() - started_at) * 1000,
+            )
             return (
                 "当前 `knowledge_search` 传入的 `doc_ids` 不在本轮已选资料范围内。"
                 "请改用已选资料对应的 `doc_ids`，或重新发起不带资料限制的对话。"
@@ -725,16 +807,31 @@ def knowledge_search_tool(
         raw_knowledge_folders = _split_loose_delimited_values(knowledge_folders) or []
         parsed_knowledge_folders = _parse_knowledge_folders(knowledge_folders)
         if not parsed_knowledge_folders:
+            logger.info(
+                "Knowledge search rejected: query=%r reason=missing_knowledge_folders elapsed_ms=%.1f",
+                query,
+                (time.perf_counter() - started_at) * 1000,
+            )
             return _build_knowledge_folder_guidance(
                 visible_entries=visible_entries,
                 reason="Error: `knowledge_search` 必须传入 `knowledge_folders`，禁止在未指定知识库目录的情况下直接检索。",
             )
         if any(_looks_like_virtual_knowledge_folder_label(folder) for folder in raw_knowledge_folders):
+            logger.info(
+                "Knowledge search rejected: query=%r reason=virtual_folder_labels elapsed_ms=%.1f",
+                query,
+                (time.perf_counter() - started_at) * 1000,
+            )
             return _build_knowledge_folder_guidance(
                 visible_entries=visible_entries,
                 reason="Error: 你传入的 `knowledge_folders` 是层级标签（如 `用户书籍`、`核心通用书`），不是知识库逻辑目录。",
             )
         if any(_looks_like_local_filesystem_path(folder) for folder in raw_knowledge_folders):
+            logger.info(
+                "Knowledge search rejected: query=%r reason=local_filesystem_path elapsed_ms=%.1f",
+                query,
+                (time.perf_counter() - started_at) * 1000,
+            )
             return _build_knowledge_folder_guidance(
                 visible_entries=visible_entries,
                 reason="Error: 你传入的 `knowledge_folders` 看起来像本地 sandbox 路径或文件名，不是知识库逻辑目录。",
@@ -743,6 +840,13 @@ def knowledge_search_tool(
             _entry_matches_any_knowledge_folder(entry, parsed_knowledge_folders)
             for entry in visible_entries
         ):
+            logger.info(
+                "Knowledge search rejected: query=%r reason=folder_not_visible visible_entries=%s parsed_knowledge_folders=%s elapsed_ms=%.1f",
+                query,
+                len(visible_entries),
+                ",".join(parsed_knowledge_folders),
+                (time.perf_counter() - started_at) * 1000,
+            )
             return _build_knowledge_folder_guidance(
                 visible_entries=visible_entries,
                 reason="Error: 当前 `knowledge_folders` 在知识库目录树中没有匹配到任何可见目录。",
@@ -756,6 +860,12 @@ def knowledge_search_tool(
             user_id=user_id,
         )
         if mixed_layer_error:
+            logger.info(
+                "Knowledge search rejected: query=%r reason=mixed_layer_doc_ids effective_doc_ids=%s elapsed_ms=%.1f",
+                query,
+                len(effective_doc_ids or []),
+                (time.perf_counter() - started_at) * 1000,
+            )
             return mixed_layer_error
         inferred_scopes = _infer_scopes_from_doc_ids(
             effective_doc_ids,
@@ -763,6 +873,7 @@ def knowledge_search_tool(
             user_id=user_id,
         )
         effective_scopes = _merge_scopes(selected_scopes, parsed_scopes, inferred_scopes)
+        retrieval_started_at = time.perf_counter()
         results = retriever.search(
             query,
             thread_id=thread_id,
@@ -771,10 +882,30 @@ def knowledge_search_tool(
             scopes=effective_scopes,
             folder_paths=parsed_knowledge_folders,
         )
+        logger.info(
+            "Knowledge search retrieval phase complete: query=%r results=%s effective_doc_ids=%s effective_scopes=%s parsed_knowledge_folders=%s elapsed_ms=%.1f",
+            query,
+            len(results),
+            len(effective_doc_ids or []),
+            ",".join(effective_scopes or []),
+            ",".join(parsed_knowledge_folders),
+            (time.perf_counter() - retrieval_started_at) * 1000,
+        )
     except Exception as e:
+        logger.exception(
+            "Knowledge search exception: query=%r elapsed_ms=%.1f",
+            query,
+            (time.perf_counter() - started_at) * 1000,
+        )
         return f"Error searching knowledge base: {e}"
 
     if not results:
+        logger.info(
+            "Knowledge search no results: query=%r effective_doc_ids=%s elapsed_ms=%.1f",
+            query,
+            len(effective_doc_ids or []),
+            (time.perf_counter() - started_at) * 1000,
+        )
         return _build_no_result_guidance(query, effective_doc_ids)
 
     formatted_output = "## 检索结果\n\n"
@@ -850,6 +981,12 @@ def knowledge_search_tool(
     formatted_output += "如果需要更多上下文，调用 `knowledge_locate`；不要去读原始 PDF 或 `.structured.json`。\n"
     formatted_output += "只有在你已经尝试了合理的换 query / 换书层 / `knowledge_locate` 展开后仍然没有足够证据时，才使用 `【无法回答】` 开头拒答。"
 
+    logger.info(
+        "Knowledge search complete: query=%r returned_results=%s elapsed_ms=%.1f",
+        query,
+        min(len(results), KNOWLEDGE_SEARCH_TOP_K),
+        (time.perf_counter() - started_at) * 1000,
+    )
     return formatted_output
 
 

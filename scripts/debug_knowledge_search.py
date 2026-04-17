@@ -33,8 +33,9 @@ if str(BACKEND_DIR) not in sys.path:
 
 from src.community.knowledge_base.catalog import BookCatalogEntry, list_book_catalog
 from src.community.knowledge_base.common import normalize_search_text
+from src.community.knowledge_base.retriever import get_embedding_model
 from src.community.knowledge_base.tools import knowledge_search_tool
-from src.config.knowledge_base_config import load_knowledge_base_config_from_dict
+from src.config.knowledge_base_config import get_knowledge_base_config, load_knowledge_base_config_from_dict
 
 
 def _parse_args() -> argparse.Namespace:
@@ -82,6 +83,11 @@ def _parse_args() -> argparse.Namespace:
         "--list-doc-ids",
         action="store_true",
         help="Only list visible catalog doc_ids / filenames / titles, then exit.",
+    )
+    parser.add_argument(
+        "--check-embedding",
+        action="store_true",
+        help="Print resolved embedding config and run a 1-text embedding smoke test.",
     )
     return parser.parse_args()
 
@@ -212,6 +218,35 @@ def main() -> int:
     _load_env_files()
     _load_knowledge_base_config(args.config, args.docs_path)
     payload = _load_payload(args)
+    config = get_knowledge_base_config()
+
+    _print_header("RUNTIME CONFIG")
+    print(
+        json.dumps(
+            {
+                "docs_path": str(args.docs_path or config.docs_path),
+                "embedding_model": config.embedding.model if config.embedding else None,
+                "embedding_api_base": config.embedding.api_base if config.embedding else None,
+                "embedding_api_key_present": bool(config.embedding.api_key) if config.embedding else False,
+                "embedding_api_key_prefix": (config.embedding.api_key[:8] + "...") if config.embedding and config.embedding.api_key else None,
+                "qdrant_mode": config.qdrant.mode,
+                "qdrant_local_path": config.qdrant.local_path,
+                "qdrant_collection_name": config.qdrant.collection_name,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+    if args.check_embedding:
+        _print_header("EMBEDDING SMOKE TEST")
+        try:
+            embedding_model = get_embedding_model()
+            vector = embedding_model.embed_documents(["debug_knowledge_search"])
+            print(f"embedding_ok dims={len(vector[0]) if vector else 0}")
+        except Exception as exc:
+            print(f"embedding_failed: {type(exc).__name__}: {exc}")
+            return 1
 
     parsed_doc_ids = _parse_bracket_doc_ids(payload["doc_ids"])
     parsed_knowledge_folders = _parse_loose_list(payload["knowledge_folders"])

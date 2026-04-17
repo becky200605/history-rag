@@ -64,6 +64,16 @@ def _split_loose_delimited_values(
         return None
 
     raw_items = [value] if isinstance(value, str) else list(value)
+    if isinstance(value, str):
+        stripped_value = value.strip()
+        if stripped_value.startswith("[") and stripped_value.endswith("]"):
+            try:
+                decoded = json.loads(stripped_value)
+            except Exception:
+                decoded = None
+            if isinstance(decoded, list):
+                raw_items = decoded
+
     parsed: list[str] = []
     seen: set[str] = set()
 
@@ -81,6 +91,19 @@ def _split_loose_delimited_values(
 def _parse_doc_ids(doc_ids: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str] | None:
     if not doc_ids:
         return None
+    if isinstance(doc_ids, str):
+        stripped = doc_ids.strip()
+        matches = re.findall(r"\[([^\[\]]+)\]", stripped)
+        remainder = re.sub(r"\[[^\[\]]+\]", "", stripped).strip()
+        if not matches or remainder:
+            raise ValueError(
+                "Invalid `doc_ids` format. When passing a string, use bracket blocks like "
+                "`[doc_id_1][doc_id_2][doc_id_3]`."
+            )
+        parsed = [item.strip() for item in matches if item.strip()]
+        if not parsed:
+            raise ValueError("Invalid `doc_ids` format: no non-empty doc_id found.")
+        return parsed
     return _split_loose_delimited_values(doc_ids)
 
 
@@ -251,6 +274,21 @@ def _intersect_doc_ids(
     allowed = set(selected_doc_ids)
     intersection = [doc_id for doc_id in requested_doc_ids if doc_id in allowed]
     return intersection or []
+
+
+def _format_doc_id_blocks(doc_ids: list[str]) -> str:
+    return "".join(f"[{doc_id}]" for doc_id in doc_ids)
+
+
+def _find_missing_doc_ids(
+    requested_doc_ids: list[str] | None,
+    *,
+    visible_entries: list[BookCatalogEntry],
+) -> list[str]:
+    if not requested_doc_ids:
+        return []
+    visible_doc_ids = {entry.doc_id for entry in visible_entries}
+    return [doc_id for doc_id in requested_doc_ids if doc_id not in visible_doc_ids]
 
 
 def _normalize_retry_query(query: str) -> str:
@@ -768,14 +806,14 @@ def book_search_tool(
             lines.append(f"- {_format_candidate_brief(candidate)}")
         if len(items) > 5:
             lines.append(f"- 其余 {len(items) - 5} 本已省略")
-        lines.append(f"doc_ids: {', '.join(candidate.doc_id for candidate in items)}")
+        lines.append(f"doc_ids: {_format_doc_id_blocks([candidate.doc_id for candidate in items])}")
         lines.append("")
 
-    user_doc_ids = ", ".join(candidate.doc_id for candidate in grouped["user"])
-    thread_doc_ids = ", ".join(candidate.doc_id for candidate in grouped["thread"])
-    core_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[CORE_TYPE])
-    specialized_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[SPECIALIZED_TYPE])
-    reference_doc_ids = ", ".join(candidate.doc_id for candidate in grouped[REFERENCE_TYPE])
+    user_doc_ids = _format_doc_id_blocks([candidate.doc_id for candidate in grouped["user"]]) if grouped["user"] else ""
+    thread_doc_ids = _format_doc_id_blocks([candidate.doc_id for candidate in grouped["thread"]]) if grouped["thread"] else ""
+    core_doc_ids = _format_doc_id_blocks([candidate.doc_id for candidate in grouped[CORE_TYPE]]) if grouped[CORE_TYPE] else ""
+    specialized_doc_ids = _format_doc_id_blocks([candidate.doc_id for candidate in grouped[SPECIALIZED_TYPE]]) if grouped[SPECIALIZED_TYPE] else ""
+    reference_doc_ids = _format_doc_id_blocks([candidate.doc_id for candidate in grouped[REFERENCE_TYPE]]) if grouped[REFERENCE_TYPE] else ""
 
     lines.append("---")
     lines.append("检索规则:")
@@ -855,8 +893,8 @@ def knowledge_search_tool(
             sentence-like, source-anchored phrasing over keyword pile-ups or
             meta narration.
         doc_ids: Optional candidate book IDs from `book_search`. Supports a
-            string or array input. When passing a string, English commas,
-            Chinese commas, semicolons, `、`, and newlines are all accepted.
+            string or array input. When passing a string, use strict bracket
+            blocks like `[doc_id_1][doc_id_2][doc_id_3]`.
             Prefer this for narrowing to known relevant books. If present,
             `knowledge_search` should search these books directly.
         scopes: Optional comma-separated hard filters: `user`, `thread`, `global`.
@@ -870,9 +908,16 @@ def knowledge_search_tool(
     try:
         thread_id = runtime.context.get("thread_id")
         user_id = runtime.context.get("user_id")
-        parsed_doc_ids = _parse_doc_ids(doc_ids)
+        try:
+            parsed_doc_ids = _parse_doc_ids(doc_ids)
+        except ValueError as exc:
+            logger.info(
+                "Knowledge search rejected: query=%r reason=invalid_doc_ids_format elapsed_ms=%.1f",
+                query,
+                (time.perf_counter() - started_at) * 1000,
+            )
+            return f"Error: {exc}"
         selected_doc_ids = _runtime_selected_doc_ids(runtime)
-        effective_doc_ids = _intersect_doc_ids(parsed_doc_ids, selected_doc_ids)
         logger.info(
             "Knowledge search start: query=%r thread_id=%s has_user=%s requested_doc_ids=%s selected_doc_ids=%s effective_doc_ids=%s scopes_arg=%r knowledge_folders=%s",
             query,
@@ -880,20 +925,10 @@ def knowledge_search_tool(
             bool(user_id),
             len(parsed_doc_ids or []),
             len(selected_doc_ids or []),
-            len(effective_doc_ids or []),
+            len(_intersect_doc_ids(parsed_doc_ids, selected_doc_ids) or []),
             scopes,
             _split_loose_delimited_values(knowledge_folders) or [],
         )
-        if parsed_doc_ids and selected_doc_ids and not effective_doc_ids:
-            logger.info(
-                "Knowledge search rejected: query=%r reason=doc_ids_outside_selected_range elapsed_ms=%.1f",
-                query,
-                (time.perf_counter() - started_at) * 1000,
-            )
-            return (
-                "当前 `knowledge_search` 传入的 `doc_ids` 不在本轮已选资料范围内。"
-                "请改用已选资料对应的 `doc_ids`，或重新发起不带资料限制的对话。"
-            )
         parsed_scopes = _parse_scopes(scopes)
         selected_scopes = _runtime_selected_scopes(runtime)
         visible_entries = _visible_catalog_entries(
@@ -902,6 +937,20 @@ def knowledge_search_tool(
             selected_doc_ids=selected_doc_ids,
             selected_scopes=selected_scopes,
         )
+        missing_doc_ids = _find_missing_doc_ids(parsed_doc_ids, visible_entries=visible_entries)
+        if missing_doc_ids:
+            logger.info(
+                "Knowledge search rejected: query=%r reason=unknown_doc_ids missing_doc_ids=%s elapsed_ms=%.1f",
+                query,
+                len(missing_doc_ids),
+                (time.perf_counter() - started_at) * 1000,
+            )
+            return (
+                "Error: 以下 `doc_ids` 在当前可见资料范围内不存在："
+                f"{_format_doc_id_blocks(missing_doc_ids)}。"
+                "请使用 `book_search` 返回的原样 `doc_ids`，并保持 `[doc_id_1][doc_id_2]` 这种格式。"
+            )
+        effective_doc_ids = _intersect_doc_ids(parsed_doc_ids, selected_doc_ids)
         raw_knowledge_folders = _split_loose_delimited_values(knowledge_folders) or []
         parsed_knowledge_folders = _parse_knowledge_folders(knowledge_folders)
         if not effective_doc_ids and not parsed_knowledge_folders:

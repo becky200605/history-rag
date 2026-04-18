@@ -12,7 +12,9 @@ import {
   listUserKnowledgeSpaces,
   listUserKnowledgeRecords,
   moveUserKnowledgeRecord,
+  reparseUserKnowledgeRecord,
   renameUserKnowledgeFolder,
+  retryUserKnowledgeRecordIndexing,
   type CreateUserDerivedKnowledgeInput,
   type UserKnowledgeRecordContentResponse,
   type UserKnowledgeListResponse,
@@ -163,6 +165,28 @@ export function useDeleteUserKnowledgeRecord() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (recordId: string) => deleteUserKnowledgeRecord(recordId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+    },
+  });
+}
+
+export function useRetryUserKnowledgeRecordIndexing() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (recordId: string) => retryUserKnowledgeRecordIndexing(recordId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+    },
+  });
+}
+
+export function useReparseUserKnowledgeRecord() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (recordId: string) => reparseUserKnowledgeRecord(recordId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });

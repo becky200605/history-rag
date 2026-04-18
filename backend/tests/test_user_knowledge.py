@@ -102,8 +102,8 @@ import src.community.knowledge_base.retriever as retriever_module
 import src.community.knowledge_base.user_spaces as user_spaces_module
 import src.community.knowledge_base.user_store as user_store_module
 import src.config.paths as paths_module
-from src.config.paths import Paths
 from src.community.knowledge_base.catalog import BookCatalogEntry
+from src.config.paths import Paths
 
 
 def _long_text(seed: str) -> str:
@@ -526,7 +526,7 @@ def test_retriever_converts_folder_paths_to_doc_ids(monkeypatch) -> None:
     monkeypatch.setattr(
         retriever_module,
         "list_book_catalog",
-        lambda thread_id=None, user_id=None: [
+        lambda thread_id=None, user_id=None, **kwargs: [
             BookCatalogEntry(
                 doc_id="uk_qing",
                 title="清代财政",
@@ -837,7 +837,7 @@ def test_user_knowledge_router_upload_and_import(tmp_path, monkeypatch) -> None:
             qdrant=SimpleNamespace(collection_name="knowledge_base"),
         ),
     )
-    monkeypatch.setattr(user_knowledge_router, "upsert_user_knowledge_records", lambda user_id, record_ids: 1)
+    monkeypatch.setattr(user_knowledge_router, "_process_user_record_ocr", lambda user_id, record_id: None)
     monkeypatch.setattr(user_knowledge_router, "mark_user_records_indexed", lambda user_id: None)
     monkeypatch.setattr(user_knowledge_router, "get_qdrant_client", lambda: SimpleNamespace(get_collection=lambda name: SimpleNamespace(points_count=1)))
 
@@ -851,6 +851,7 @@ def test_user_knowledge_router_upload_and_import(tmp_path, monkeypatch) -> None:
     )
     assert upload_response.status_code == 200
     assert upload_response.json()["records"][0]["filename"] == "notes.md"
+    assert upload_response.json()["records"][0]["parse_status"] == "queued_ocr"
 
     import_response = client.post(
         "/api/users/user_1/knowledge/import-from-global",
@@ -863,6 +864,69 @@ def test_user_knowledge_router_upload_and_import(tmp_path, monkeypatch) -> None:
     assert list_response.status_code == 200
     payload = list_response.json()
     assert payload["count"] == 2
+
+
+def test_user_knowledge_router_reindex_and_reparse_queue_background_jobs(tmp_path, monkeypatch) -> None:
+    paths = Paths(tmp_path)
+    monkeypatch.setattr(paths_module, "_paths", paths)
+    paths.ensure_user_knowledge_dirs("user_1")
+
+    source_path = paths.user_knowledge_docs_dir("user_1") / "notes.md"
+    source_path.write_text("# Notes\ncontent", encoding="utf-8")
+    structured_path = paths.user_knowledge_ingestion_dir("user_1") / "notes.md.structured.json"
+    structured_path.write_text("{}", encoding="utf-8")
+
+    record = user_store_module.build_user_upload_record(
+        user_id="user_1",
+        source_filename="notes.md",
+        size=12,
+        content_type="text/markdown",
+    )
+    record["parse_status"] = "indexed"
+    record["structured_filename"] = structured_path.name
+    record["structured_path"] = str(structured_path)
+    record["index_target_filename"] = structured_path.name
+    record["index_target_path"] = str(structured_path)
+    user_store_module.save_user_record("user_1", record)
+
+    embedding_calls: list[tuple[str, str]] = []
+    ocr_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        user_knowledge_router,
+        "_process_user_record_embedding",
+        lambda user_id, record_id: embedding_calls.append((user_id, record_id)),
+    )
+    monkeypatch.setattr(
+        user_knowledge_router,
+        "_process_user_record_ocr",
+        lambda user_id, record_id: ocr_calls.append((user_id, record_id)),
+    )
+
+    app = FastAPI()
+    app.include_router(user_knowledge_router.router)
+    client = TestClient(app)
+
+    reindex_response = client.post(f"/api/users/user_1/knowledge/{record['id']}/reindex")
+    assert reindex_response.status_code == 200
+    assert embedding_calls == [("user_1", str(record["id"]))]
+
+    queued_record = user_store_module.load_user_record("user_1", str(record["id"]))
+    assert queued_record is not None
+    assert queued_record["parse_status"] == "queued_embedding"
+
+    reparse_response = client.post(f"/api/users/user_1/knowledge/{record['id']}/reparse")
+    assert reparse_response.status_code == 409
+
+    queued_record["parse_status"] = "indexed"
+    user_store_module.save_user_record("user_1", queued_record)
+
+    reparse_response = client.post(f"/api/users/user_1/knowledge/{record['id']}/reparse")
+    assert reparse_response.status_code == 200
+    assert ocr_calls == [("user_1", str(record["id"]))]
+
+    reparsed_record = user_store_module.load_user_record("user_1", str(record["id"]))
+    assert reparsed_record is not None
+    assert reparsed_record["parse_status"] == "queued_ocr"
 
 
 def test_user_knowledge_router_returns_derived_editor_content(tmp_path, monkeypatch) -> None:

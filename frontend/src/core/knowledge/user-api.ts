@@ -283,6 +283,34 @@ export async function deleteUserKnowledgeRecord(recordId: string): Promise<{
   return (await response.json()) as { success: boolean; message: string };
 }
 
+export async function retryUserKnowledgeRecordIndexing(recordId: string): Promise<{
+  success: boolean;
+  message: string;
+}> {
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/reindex`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Failed to retry personal knowledge indexing" }));
+    throw new Error(error.message ?? error.detail ?? "Failed to retry personal knowledge indexing");
+  }
+  return (await response.json()) as { success: boolean; message: string };
+}
+
+export async function reparseUserKnowledgeRecord(recordId: string): Promise<{
+  success: boolean;
+  message: string;
+}> {
+  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/reparse`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Failed to reparse personal knowledge file" }));
+    throw new Error(error.message ?? error.detail ?? "Failed to reparse personal knowledge file");
+  }
+  return (await response.json()) as { success: boolean; message: string };
+}
+
 
 export async function moveUserKnowledgeRecord(
   recordId: string,

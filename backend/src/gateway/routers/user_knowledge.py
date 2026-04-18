@@ -2,7 +2,7 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
@@ -491,6 +491,88 @@ def _cleanup_existing_upload(user_id: str, source_filename: str) -> None:
         remove_user_record(user_id, str(existing["id"]))
 
 
+def _mark_user_record_index_failed(user_id: str, record_id: str, error: str) -> None:
+    record = load_user_record(user_id, record_id)
+    if not record:
+        return
+    record["parse_status"] = "index_failed"
+    record["error"] = error
+    save_user_record(user_id, record)
+
+
+def _process_user_record_embedding(user_id: str, record_id: str) -> None:
+    record = load_user_record(user_id, record_id)
+    if not record or not record.get("indexable") or not record.get("index_target_path"):
+        return
+
+    record["parse_status"] = "indexing"
+    record["error"] = None
+    save_user_record(user_id, record)
+
+    try:
+        indexed_chunks = upsert_user_knowledge_records(user_id, [record_id])
+        if indexed_chunks <= 0:
+            raise ValueError("No chunks were indexed into Qdrant")
+        mark_user_records_indexed(user_id, [record_id])
+    except Exception as exc:
+        _mark_user_record_index_failed(user_id, record_id, f"reindex failed: {exc}")
+
+
+def _process_user_record_ocr(user_id: str, record_id: str) -> None:
+    record = load_user_record(user_id, record_id)
+    if not record or not record.get("indexable"):
+        return
+
+    source_filename = str(record.get("source_filename") or "")
+    if not source_filename:
+        return
+
+    file_path = get_user_docs_dir(user_id) / source_filename
+    if not file_path.exists():
+        record = mark_user_record_failed(record, "source file missing")
+        save_user_record(user_id, record)
+        return
+
+    record["parse_status"] = "parsing"
+    record["error"] = None
+    save_user_record(user_id, record)
+
+    try:
+        file_ext = file_path.suffix.lower()
+        if file_ext in PDF_EXTENSIONS or file_ext in OFFICE_EXTENSIONS or file_ext in {".md", ".txt"}:
+            hints = record.get("hints") or {}
+            record["parse_method"] = "ocr_pdf_mineru_grpc"
+            save_user_record(user_id, record)
+            structured_payload = build_structured_document_from_mineru_grpc(
+                file_path,
+                title=str(record.get("display_title") or Path(source_filename).stem),
+                parser_name=str(record["parse_method"]),
+                hints=hints,
+                language_hint=hints.get("language_hint"),
+            )
+            structured_filename = persist_user_structured_document(
+                user_id,
+                source_filename,
+                structured_payload,
+            )
+            record = mark_user_record_parsed(
+                user_id,
+                record,
+                structured_filename=structured_filename,
+                preview_filename=source_filename if file_ext in {".md", ".txt"} else None,
+            )
+            record["parse_status"] = "queued_embedding"
+        else:
+            record["parse_status"] = "uploaded"
+
+        save_user_record(user_id, record)
+        if record.get("index_target_path"):
+            _process_user_record_embedding(user_id, record_id)
+    except Exception as exc:
+        record = mark_user_record_failed(record, f"parse failed: {exc}")
+        save_user_record(user_id, record)
+
+
 def _structured_page_payload(document: Any, *, page_no: int | None, pdf_page_no: int | None) -> dict[str, Any] | None:
     for page in document.payload.get("pages") or []:
         current_page_no = int(page.get("page_no") or 0)
@@ -725,6 +807,7 @@ def delete_personal_knowledge_space(
 
 @router.post("/upload", response_model=dict)
 async def upload_user_knowledge_files(
+    background_tasks: BackgroundTasks,
     user_id: str,
     files: list[UploadFile] = File(...),
     language_hint: str | None = Form(default=None),
@@ -738,7 +821,6 @@ async def upload_user_knowledge_files(
 
     docs_dir = get_user_docs_dir(user_id)
     uploaded: list[dict[str, Any]] = []
-    indexed_record_ids: list[str] = []
     resolved_space_id = _resolve_personal_knowledge_space_id(user_id, knowledge_space_id)
     knowledge_space_map = get_user_knowledge_space_map(user_id)
     normalized_folder_path = normalize_folder_path(folder_path)
@@ -775,44 +857,13 @@ async def upload_user_knowledge_files(
             folder_path=normalized_folder_path,
         )
 
-        file_ext = file_path.suffix.lower()
-        if file_ext in PDF_EXTENSIONS or file_ext in OFFICE_EXTENSIONS or file_ext in {".md", ".txt"}:
-            record["parse_method"] = "ocr_pdf_mineru_grpc"
-            try:
-                structured_payload = build_structured_document_from_mineru_grpc(
-                    file_path,
-                    title=str(record["display_title"]),
-                    parser_name=str(record["parse_method"]),
-                    hints=hints,
-                    language_hint=hints.get("language_hint"),
-                )
-            except Exception as exc:
-                structured_payload = None
-                record = mark_user_record_failed(record, f"MinerU gRPC failed: {exc}")
-            if structured_payload:
-                structured_filename = persist_user_structured_document(
-                    user_id,
-                    safe_filename,
-                    structured_payload,
-                )
-                record = mark_user_record_parsed(
-                    user_id,
-                    record,
-                    structured_filename=structured_filename,
-                    preview_filename=safe_filename if file_ext in {".md", ".txt"} else None,
-                )
-                indexed_record_ids.append(str(record["id"]))
+        if record.get("indexable"):
+            record["parse_status"] = "queued_ocr"
 
         save_user_record(user_id, record)
         uploaded.append(_serialize_record(record, knowledge_space_map=knowledge_space_map))
-
-    if indexed_record_ids:
-        indexed_chunks = upsert_user_knowledge_records(user_id, indexed_record_ids)
-        if indexed_chunks <= 0:
-            error = "reindex failed: No chunks were indexed into Qdrant"
-            _mark_user_records_index_failed(user_id, indexed_record_ids, error)
-            raise HTTPException(status_code=500, detail=error)
-        mark_user_records_indexed(user_id, indexed_record_ids)
+        if record.get("indexable"):
+            background_tasks.add_task(_process_user_record_ocr, user_id, str(record["id"]))
 
     return {
         "success": True,
@@ -822,7 +873,10 @@ async def upload_user_knowledge_files(
             records=list_user_records(user_id),
             knowledge_space_map=knowledge_space_map,
         ),
-        "message": f"Successfully uploaded {len(uploaded)} personal knowledge file(s)",
+        "message": (
+            f"Successfully uploaded {len(uploaded)} personal knowledge file(s); "
+            "files are queued for OCR and embedding in the background"
+        ),
     }
 
 
@@ -894,6 +948,86 @@ def delete_user_knowledge_record(user_id: str, record_id: str) -> dict:
     return {
         "success": True,
         "message": f"Deleted personal knowledge record {record_id}",
+    }
+
+
+@router.post("/{record_id}/reindex", response_model=dict)
+def retry_user_knowledge_record_indexing(
+    background_tasks: BackgroundTasks,
+    user_id: str,
+    record_id: str,
+) -> dict:
+    record = load_user_record(user_id, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Personal knowledge record not found")
+    if not record.get("indexable"):
+        raise HTTPException(status_code=400, detail="This file type does not support indexing")
+
+    current_status = str(record.get("parse_status") or "")
+    if current_status in {"queued", "queued_ocr", "parsing", "queued_embedding", "indexing"}:
+        raise HTTPException(status_code=409, detail="This file is already being processed")
+
+    source_filename = str(record.get("source_filename") or "")
+    if not source_filename:
+        raise HTTPException(status_code=400, detail="Missing source filename")
+    file_path = get_user_docs_dir(user_id) / source_filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Source file missing: {source_filename}")
+
+    should_enqueue_embedding = bool(record.get("index_target_path")) and current_status in {
+        "parsed",
+        "index_failed",
+        "indexed",
+    }
+
+    record["error"] = None
+    record["parse_status"] = "queued_embedding" if should_enqueue_embedding else "queued_ocr"
+    save_user_record(user_id, record)
+
+    if should_enqueue_embedding:
+        background_tasks.add_task(_process_user_record_embedding, user_id, record_id)
+        return {
+            "success": True,
+            "message": f"已重新加入个人文档入库队列：{source_filename}",
+        }
+
+    background_tasks.add_task(_process_user_record_ocr, user_id, record_id)
+    return {
+        "success": True,
+        "message": f"已重新加入个人文档解析队列：{source_filename}",
+    }
+
+
+@router.post("/{record_id}/reparse", response_model=dict)
+def reparse_user_knowledge_record(
+    background_tasks: BackgroundTasks,
+    user_id: str,
+    record_id: str,
+) -> dict:
+    record = load_user_record(user_id, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Personal knowledge record not found")
+    if not record.get("indexable"):
+        raise HTTPException(status_code=400, detail="This file type does not support indexing")
+
+    current_status = str(record.get("parse_status") or "")
+    if current_status in {"queued", "queued_ocr", "parsing", "queued_embedding", "indexing"}:
+        raise HTTPException(status_code=409, detail="This file is already being processed")
+
+    source_filename = str(record.get("source_filename") or "")
+    if not source_filename:
+        raise HTTPException(status_code=400, detail="Missing source filename")
+    file_path = get_user_docs_dir(user_id) / source_filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Source file missing: {source_filename}")
+
+    record["error"] = None
+    record["parse_status"] = "queued_ocr"
+    save_user_record(user_id, record)
+    background_tasks.add_task(_process_user_record_ocr, user_id, record_id)
+    return {
+        "success": True,
+        "message": f"已重新加入个人文档解析队列：{source_filename}",
     }
 
 

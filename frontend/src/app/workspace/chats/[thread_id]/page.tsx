@@ -571,7 +571,7 @@ function ChatPageContent({
                 )}
               </div>
             </header>
-            <main className="flex min-h-0 max-w-full grow flex-col">
+            <main className="relative flex min-h-0 max-w-full grow flex-col">
               <div className="flex size-full justify-center">
                   <MessageList
                     className={cn("size-full", !isNewThread && "pt-14")}
@@ -645,7 +645,7 @@ function ChatPageContent({
         </div>
         {artifactPanelOpen && (
           <div
-            className="bg-background h-full shrink-0 border-l p-4"
+            className="bg-background relative z-40 h-full shrink-0 border-l p-4"
             style={{
               width: artifactCompareOpen
                 ? `min(${KNOWLEDGE_ARTIFACT_PANEL_EXPANDED_WIDTH}px, calc(100vw - 24px))`

@@ -79,11 +79,11 @@ export type MetadataFormState = {
 };
 
 export const KNOWLEDGE_TYPES = new Set(["core", "specialized", "reference", "unknown"]);
-const ACTIVE_PARSE_STATUSES = new Set(["queued", "parsing", "indexing"]);
+const ACTIVE_PARSE_STATUSES = new Set(["queued", "queued_ocr", "parsing", "queued_embedding", "indexing"]);
 const FAILED_PARSE_STATUSES = new Set(["failed", "index_failed"]);
 const READER_READY_STATUSES = new Set(["indexed", "parsed"]);
-const RETRYABLE_GLOBAL_STATUSES = new Set(["failed", "index_failed", "indexed"]);
-const REPARSEABLE_GLOBAL_STATUSES = new Set(["failed", "index_failed", "indexed", "parsed", "uploaded", "pending_parse"]);
+const RETRYABLE_PARSE_STATUSES = new Set(["failed", "index_failed", "indexed", "parsed"]);
+const REPARSEABLE_PARSE_STATUSES = new Set(["failed", "index_failed", "indexed", "parsed", "uploaded", "pending_parse"]);
 const EDIT_DISABLED_STATUSES = new Set(["queued", "queued_ocr", "parsing"]);
 
 export const knowledgeTypeOptions: Array<{ value: KnowledgeType; label: string }> = [
@@ -315,7 +315,10 @@ export function knowledgeTypeLabel(value?: string | null) {
 export function statusLabel(status?: string) {
   switch (status) {
     case "queued":
+    case "queued_ocr":
       return "排队中";
+    case "queued_embedding":
+      return "待入库";
     case "parsing":
       return "解析中";
     case "indexing":
@@ -344,6 +347,8 @@ export function statusVariant(
     case "indexed":
       return "default";
     case "queued":
+    case "queued_ocr":
+    case "queued_embedding":
     case "parsing":
     case "indexing":
     case "parsed":
@@ -458,6 +463,10 @@ export function fileStatusHint(file: {
   switch (status) {
     case "queued":
       return "等待开始处理";
+    case "queued_ocr":
+      return "已上传，等待解析";
+    case "queued_embedding":
+      return "解析完成，等待写入知识库";
     case "parsing":
       return "正在提取文本";
     case "indexing":
@@ -773,17 +782,17 @@ export function canOpenManagedFile(file: ManagedKnowledgeFile, readerHref: strin
 
 export function canRetryManagedFile(file: ManagedKnowledgeFile) {
   return (
-    file.source === "global" &&
+    (file.source === "global" || file.source === "personal") &&
     file.indexable &&
-    RETRYABLE_GLOBAL_STATUSES.has(file.parseStatus ?? "")
+    RETRYABLE_PARSE_STATUSES.has(file.parseStatus ?? "")
   );
 }
 
 export function canReparseManagedFile(file: ManagedKnowledgeFile) {
   return (
-    file.source === "global" &&
+    (file.source === "global" || file.source === "personal") &&
     file.indexable &&
-    REPARSEABLE_GLOBAL_STATUSES.has(file.parseStatus ?? "")
+    REPARSEABLE_PARSE_STATUSES.has(file.parseStatus ?? "")
   );
 }
 

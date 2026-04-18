@@ -986,7 +986,9 @@ export function KnowledgePdfReader({
       const baseWidth = textWidth;
       const baseHeight = textHeight;
       const blockMetrics = translationBlockMetrics[contextParagraph.key];
-      const blockWidth = Math.max(baseWidth, blockMetrics?.width ?? baseWidth);
+      const blockWidth = isVerticalLayout
+        ? Math.max(baseWidth, blockMetrics?.width ?? baseWidth)
+        : baseWidth;
       const blockHeight = Math.max(
         baseHeight,
         blockMetrics?.height ?? baseHeight,
@@ -1351,7 +1353,7 @@ export function KnowledgePdfReader({
             {mode === "translation" && (
               <div
                 ref={viewportRef}
-                className="min-h-0 min-w-0 overflow-auto border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l"
+                className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l"
               >
                 <div className="min-h-full p-6">
                   <div className="flex items-start justify-center">

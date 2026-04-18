@@ -195,7 +195,7 @@ export function KnowledgeTranslationWorkspace({
       )}
 
       {pageData && (
-        <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[1.15fr_1fr_1fr]">
+        <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-3">
           <ColumnCard
             title="PDF 原文"
             icon={<FileSearchIcon className="size-4" />}

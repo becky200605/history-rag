@@ -112,6 +112,7 @@ const TRANSLATION_LINE_HEIGHT = 1.48;
 const VERTICAL_TRANSLATION_LINE_HEIGHT = 1.18;
 const TRANSLATION_BLOCK_PADDING_X = 8;
 const TRANSLATION_BLOCK_PADDING_Y = 6;
+const TRANSLATION_BLOCK_OUTER_PADDING = 8;
 const PAGE_OVERFLOW_TOLERANCE = 8;
 
 function paragraphKey(
@@ -1078,8 +1079,14 @@ export function KnowledgePdfReader({
         continue;
       }
       nextMetrics[key] = {
-        width: Math.ceil(element.scrollWidth),
-        height: Math.ceil(element.scrollHeight),
+        width: Math.max(
+          0,
+          Math.ceil(element.scrollWidth) - TRANSLATION_BLOCK_OUTER_PADDING,
+        ),
+        height: Math.max(
+          0,
+          Math.ceil(element.scrollHeight) - TRANSLATION_BLOCK_OUTER_PADDING,
+        ),
       };
     }
 

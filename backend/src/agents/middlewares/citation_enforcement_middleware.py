@@ -3,6 +3,8 @@
 import logging
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import override
 
 from langchain.agents import AgentState
@@ -126,33 +128,136 @@ def _citation_label(citation: str) -> str:
     return citation
 
 
-def _grounding_citation_map(messages: list) -> dict[str, str]:
+def _extract_citation_inner_label(citation: str) -> str:
+    match = re.match(r"\[citation:([^\]]+)\](?:\([^)]+\))?", citation, re.IGNORECASE)
+    return match.group(1).strip() if match else citation.strip()
+
+
+def _normalize_citation_text(text: str) -> str:
+    translated = text.translate(str.maketrans({"（": "(", "）": ")", "：": ":", "　": " "}))
+    return re.sub(r"\s+", "", translated).strip().lower()
+
+
+def _extract_location_parts(label: str) -> tuple[str, int | None, int | None, int | None]:
+    normalized = label.translate(str.maketrans({"（": "(", "）": ")", "：": ":"}))
+    title = normalized
+    page_no = None
+    pdf_page_no = None
+    paragraph_no = None
+
+    location_match = re.search(r"(原书第\s*\d+\s*页|PDF第\s*\d+\s*页)", normalized, re.IGNORECASE)
+    if location_match:
+        title = normalized[: location_match.start()].strip()
+
+    page_match = re.search(r"原书第\s*(\d+)\s*页", normalized, re.IGNORECASE)
+    if page_match:
+        page_no = int(page_match.group(1))
+
+    pdf_page_match = re.search(r"PDF第\s*(\d+)\s*页", normalized, re.IGNORECASE)
+    if pdf_page_match:
+        pdf_page_no = int(pdf_page_match.group(1))
+
+    paragraph_match = re.search(r"第\s*(\d+)\s*段", normalized, re.IGNORECASE)
+    if paragraph_match:
+        paragraph_no = int(paragraph_match.group(1))
+
+    return title, page_no, pdf_page_no, paragraph_no
+
+
+@dataclass(frozen=True)
+class _CitationCandidate:
+    label: str
+    full_citation: str
+    normalized_label: str
+    normalized_title: str
+    page_no: int | None
+    pdf_page_no: int | None
+    paragraph_no: int | None
+
+
+def _build_citation_candidates(messages: list) -> list[_CitationCandidate]:
     start = _latest_human_index(messages)
-    citation_map: dict[str, str] = {}
+    candidates: list[_CitationCandidate] = []
+    seen: set[str] = set()
     for message in messages[start:]:
         if not isinstance(message, ToolMessage) or getattr(message, "name", None) not in GROUNDING_TOOL_NAMES:
             continue
         content = _stringify_content(message.content)
         for citation in LINKED_CITATION_PATTERN.findall(content):
-            citation_map.setdefault(_citation_label(citation), citation)
-    return citation_map
+            label = _extract_citation_inner_label(citation)
+            normalized_label = _normalize_citation_text(label)
+            if normalized_label in seen:
+                continue
+            seen.add(normalized_label)
+            title, page_no, pdf_page_no, paragraph_no = _extract_location_parts(label)
+            candidates.append(
+                _CitationCandidate(
+                    label=label,
+                    full_citation=citation,
+                    normalized_label=normalized_label,
+                    normalized_title=_normalize_citation_text(title),
+                    page_no=page_no,
+                    pdf_page_no=pdf_page_no,
+                    paragraph_no=paragraph_no,
+                )
+            )
+    return candidates
 
 
 def _available_citation_lines(messages: list) -> list[str]:
-    citation_map = _grounding_citation_map(messages)
-    return [f"citation: {citation}" for citation in citation_map.values()]
+    return [f"citation: {candidate.full_citation}" for candidate in _build_citation_candidates(messages)]
+
+
+def _resolve_citation_from_candidates(citation: str, messages: list) -> str | None:
+    label = _extract_citation_inner_label(citation)
+    normalized_label = _normalize_citation_text(label)
+    candidates = _build_citation_candidates(messages)
+    if not candidates:
+        return None
+
+    for candidate in candidates:
+        if candidate.normalized_label == normalized_label:
+            return candidate.full_citation
+
+    title, page_no, pdf_page_no, paragraph_no = _extract_location_parts(label)
+    normalized_title = _normalize_citation_text(title)
+    scored: list[tuple[float, _CitationCandidate]] = []
+    for candidate in candidates:
+        score = 0.0
+        if normalized_title and candidate.normalized_title:
+            if normalized_title == candidate.normalized_title:
+                score += 100
+            elif normalized_title in candidate.normalized_title or candidate.normalized_title in normalized_title:
+                score += 80
+            else:
+                score += SequenceMatcher(None, normalized_title, candidate.normalized_title).ratio() * 40
+
+        if page_no is not None and candidate.page_no == page_no:
+            score += 20
+        if pdf_page_no is not None and candidate.pdf_page_no == pdf_page_no:
+            score += 15
+        if paragraph_no is not None and candidate.paragraph_no == paragraph_no:
+            score += 20
+        scored.append((score, candidate))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    if not scored or scored[0][0] < 70:
+        return None
+    if len(scored) > 1 and scored[0][0] - scored[1][0] < 5:
+        return None
+    return scored[0][1].full_citation
 
 
 def _normalize_answer_citations(answer_body: str, messages: list) -> str:
-    citation_map = _grounding_citation_map(messages)
-    if not citation_map:
+    candidates = _build_citation_candidates(messages)
+    if not candidates:
         return answer_body
 
     def _replace(match: re.Match[str]) -> str:
         citation = match.group(0)
         if "](" in citation:
             return citation
-        return citation_map.get(citation, citation)
+        return _resolve_citation_from_candidates(citation, messages) or citation
 
     return CITATION_PATTERN.sub(_replace, answer_body)
 

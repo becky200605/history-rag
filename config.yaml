@@ -14,14 +14,6 @@
 
 models:
 
-  - name: gpt-5.4-mini
-    display_name: gpt-5.4-mini
-    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
-    model: gpt-5.4-mini
-    api_key: sk-tjPmJVSJ1aN5SHplCNvOMhsRCQjulrkn
-    base_url: https://api.univibe.cc/openai/v1
-    supports_thinking: true
-
   # Example: Anthropic Claude model
   # - name: claude-3-5-sonnet
   #   display_name: Claude 3.5 Sonnet
@@ -58,6 +50,14 @@ models:
       extra_body:
         include_reasoning: true
     supports_vision: true
+
+  - name: gpt-5.4-mini
+    display_name: gpt-5.4-mini
+    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
+    model: gpt-5.4-mini
+    api_key: sk-tjPmJVSJ1aN5SHplCNvOMhsRCQjulrkn
+    base_url: https://api.univibe.cc/openai/v1
+    supports_thinking: true
 
   # Example: Kimi K2.5 model
   # - name: kimi-k2.5
@@ -355,7 +355,7 @@ knowledge_base:
 
   book_metadata:
     enabled: true
-    model_name: gpt-5.4-mini
+    model_name: openrouter-qwen3.5-27b
     front_page_limit: 10
     max_excerpt_chars: 1200
 

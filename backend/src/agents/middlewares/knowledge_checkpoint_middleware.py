@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 GROUNDING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
 CHECKPOINT_TOOL_NAME = "knowledge_checkpoint"
+COMPRESSIBLE_TOOL_NAMES = GROUNDING_TOOL_NAMES | {CHECKPOINT_TOOL_NAME}
 CHECKPOINT_ENFORCEMENT_THRESHOLD = 5
 NON_SUBSTANTIVE_MARKERS = (
     "本轮没有命中到可直接使用的内部知识片段",
@@ -73,9 +74,12 @@ class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
             if (
                 index < last_checkpoint_index
                 and isinstance(message, ToolMessage)
-                and getattr(message, "name", None) in GROUNDING_TOOL_NAMES
+                and getattr(message, "name", None) in COMPRESSIBLE_TOOL_NAMES
             ):
-                placeholder = f"【已调用{message.name}工具】该原始检索结果已由后续 knowledge_checkpoint 检查点压缩。"
+                if getattr(message, "name", None) == CHECKPOINT_TOOL_NAME:
+                    placeholder = "【已调用knowledge_checkpoint工具】该较早检查点已被更新的 knowledge_checkpoint 检查点接替并压缩。"
+                else:
+                    placeholder = f"【已调用{message.name}工具】该原始检索结果已由后续 knowledge_checkpoint 检查点压缩。"
                 if _stringify_content(message.content) != placeholder:
                     changed = True
                     patched.append(message.model_copy(update={"content": placeholder}))

@@ -7,7 +7,6 @@ from src.reflection import resolve_variable
 from src.tools.builtins import (
     ask_clarification_tool,
     knowledge_checkpoint_tool,
-    present_file_tool,
     task_tool,
     view_image_tool,
 )
@@ -15,7 +14,6 @@ from src.tools.builtins import (
 logger = logging.getLogger(__name__)
 
 BUILTIN_TOOLS = [
-    present_file_tool,
     ask_clarification_tool,
     knowledge_checkpoint_tool,
 ]

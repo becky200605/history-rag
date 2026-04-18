@@ -210,6 +210,7 @@ export const zhCN: Translations = {
     searchThreadMaterials: "正在检索当前对话资料",
     searchKnowledgeBase: "正在检索知识库",
     locateKnowledgePassage: "正在定位原文位置",
+    writeKnowledgeCheckpoint: "正在记录检索检查点",
     viewWebPage: "正在查看网页",
     listFolder: "正在查看目录",
     readFile: "正在读取文件",

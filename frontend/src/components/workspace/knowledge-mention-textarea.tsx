@@ -255,14 +255,7 @@ export function KnowledgeMentionTextarea({
       return null;
     }
 
-    const firstTitle = selectedMaterials[0]?.title?.trim();
-    if (!firstTitle) {
-      return null;
-    }
-
-    return selectedMaterials.length === 1
-      ? `已选中【${firstTitle}】本书`
-      : `已选中【${firstTitle}】等 ${selectedMaterials.length} 本书`;
+    return `已选中 ${selectedMaterials.length} 本书`;
   }, [selectedMaterials]);
 
   return (

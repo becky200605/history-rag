@@ -79,7 +79,6 @@ models:
 tool_groups:
   - name: web
   - name: file:read
-  - name: file:write
   - name: bash
 
 # ============================================================================
@@ -118,14 +117,6 @@ tools:
   - name: read_file
     group: file:read
     use: src.sandbox.tools:read_file_tool
-
-  - name: write_file
-    group: file:write
-    use: src.sandbox.tools:write_file_tool
-
-  - name: str_replace
-    group: file:write
-    use: src.sandbox.tools:str_replace_tool
 
   # Bash execution tool
   - name: bash

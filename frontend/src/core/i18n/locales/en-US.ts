@@ -213,6 +213,7 @@ export const enUS: Translations = {
     searchThreadMaterials: "Searching this conversation's materials",
     searchKnowledgeBase: "Searching the knowledge base",
     locateKnowledgePassage: "Locating the source passage",
+    writeKnowledgeCheckpoint: "Recording retrieval checkpoint",
     viewWebPage: "Opening web page",
     listFolder: "Inspecting folder",
     readFile: "Reading file",

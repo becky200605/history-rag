@@ -1,6 +1,7 @@
 import type { Message } from "@langchain/langgraph-sdk";
 import {
   BookOpenTextIcon,
+  BookmarkIcon,
   ChevronUp,
   FolderOpenIcon,
   GlobeIcon,
@@ -302,6 +303,19 @@ function ToolCall({
         icon={name === "book_search" ? BookOpenTextIcon : SearchIcon}
       ></ChainOfThoughtStep>
     );
+  } else if (name === "knowledge_checkpoint") {
+    const checkpointTitle = extractKnowledgeCheckpointTitle(args, result);
+    return (
+      <ChainOfThoughtStep
+        key={id}
+        label={label}
+        icon={BookmarkIcon}
+      >
+        {checkpointTitle && (
+          <ChainOfThoughtSearchResult>{checkpointTitle}</ChainOfThoughtSearchResult>
+        )}
+      </ChainOfThoughtStep>
+    );
   } else if (name === "ls") {
     const path: string | undefined = (args as { path: string })?.path;
     return (
@@ -400,6 +414,25 @@ function ToolCall({
       <ChainOfThoughtStep key={id} label={label} icon={WrenchIcon}></ChainOfThoughtStep>
     );
   }
+}
+
+function extractKnowledgeCheckpointTitle(
+  args: Record<string, unknown>,
+  result?: string | Record<string, unknown>,
+) {
+  const argTitle = typeof args.title === "string" ? args.title.trim() : "";
+  if (argTitle) {
+    return argTitle;
+  }
+
+  if (typeof result === "string") {
+    const matchedTitle = result.match(/^#\s*检索检查点：(.+)$/m)?.[1]?.trim();
+    if (matchedTitle) {
+      return matchedTitle;
+    }
+  }
+
+  return undefined;
 }
 
 interface GenericCoTStep<T extends string = string> {

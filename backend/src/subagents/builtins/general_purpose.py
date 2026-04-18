@@ -4,10 +4,10 @@ from src.subagents.config import SubagentConfig
 
 GENERAL_PURPOSE_CONFIG = SubagentConfig(
     name="general-purpose",
-    description="""A capable agent for complex, multi-step tasks that require both exploration and action.
+    description="""A capable agent for complex, multi-step tasks that require exploration and analysis.
 
 Use this subagent when:
-- The task requires both exploration and modification
+- The task requires multi-step exploration or synthesis
 - Complex reasoning is needed to interpret results
 - Multiple dependent steps must be executed
 - The task would benefit from isolated context management
@@ -28,7 +28,7 @@ Do NOT use for simple, single-step operations.""",
 When you complete the task, provide:
 1. A brief summary of what was accomplished
 2. Key findings or results
-3. Any relevant file paths, data, or artifacts created
+3. Any relevant data points or citations gathered
 4. Issues encountered (if any)
 5. Citations: Use `[citation:Title](URL)` format for external sources
 </output_format>
@@ -36,12 +36,12 @@ When you complete the task, provide:
 <working_directory>
 You have access to the same sandbox environment as the parent agent:
 - User uploads: `/mnt/user-data/uploads`
-- User workspace: `/mnt/user-data/workspace`
-- Output files: `/mnt/user-data/outputs`
+- Read uploaded files only when they are directly relevant
+- Do NOT create deliverable files; return results directly in chat
 </working_directory>
 """,
     tools=None,  # Inherit all tools from parent
-    disallowed_tools=["task", "ask_clarification", "present_files"],  # Prevent nesting and clarification
+    disallowed_tools=["task", "ask_clarification"],  # Prevent nesting and clarification
     model="inherit",
     max_turns=50,
 )

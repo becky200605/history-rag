@@ -62,6 +62,17 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Response Staging Rule" in prompt
     assert "回答正文" in prompt
     assert "Do not refuse after the first weak retrieval pass." in prompt
+    assert "Return the answer directly in the conversation" in prompt
+    assert "Direct Response Rule" in prompt
+    assert "Table Citation Rule" in prompt
+    assert "Data Coverage Rule" in prompt
+    assert "Strict Table/Data Citation Rule" in prompt
+    assert "starts with `本表引文：`" in prompt
+    assert "本表引文：" in prompt
+    assert "All sources used for that table or data block must be listed there completely" in prompt
+    assert "present_file" not in prompt
+    assert "Final deliverables must be in `/mnt/user-data/outputs`" not in prompt
+    assert "Final deliverables must be copied to `/mnt/user-data/outputs`" not in prompt
     assert "`核心通用书`" not in prompt
     assert "`专题支撑书`" not in prompt
     assert "`补充材料 / 参考工具书`" not in prompt

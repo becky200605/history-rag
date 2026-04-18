@@ -39,8 +39,8 @@ You have access to the sandbox environment:
 - Output files: `/mnt/user-data/outputs`
 </working_directory>
 """,
-    tools=["bash", "ls", "read_file", "write_file", "str_replace"],  # Sandbox tools only
-    disallowed_tools=["task", "ask_clarification", "present_files"],
+    tools=["bash", "ls", "read_file"],  # Sandbox tools only
+    disallowed_tools=["task", "ask_clarification"],
     model="inherit",
     max_turns=30,
 )

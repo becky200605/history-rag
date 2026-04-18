@@ -49,6 +49,9 @@ export function getToolCallLabel(
   if (name === "knowledge_locate") {
     return t.toolCalls.locateKnowledgePassage;
   }
+  if (name === "knowledge_checkpoint") {
+    return t.toolCalls.writeKnowledgeCheckpoint;
+  }
   if (name === "ask_clarification") {
     return t.toolCalls.needYourHelp;
   }

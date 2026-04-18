@@ -156,6 +156,7 @@ export interface Translations {
     searchThreadMaterials: string;
     searchKnowledgeBase: string;
     locateKnowledgePassage: string;
+    writeKnowledgeCheckpoint: string;
     viewWebPage: string;
     listFolder: string;
     readFile: string;

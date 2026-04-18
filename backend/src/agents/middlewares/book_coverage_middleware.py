@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import override
 
@@ -15,6 +16,7 @@ from src.community.knowledge_base.reading_state import get_active_reading_state,
 
 logger = logging.getLogger(__name__)
 
+KNOWLEDGE_ROUTING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
 REMINDER_SOURCE_TOOL_NAMES = {
     "book_search",
     "knowledge_search",
@@ -44,6 +46,21 @@ def _stringify_content(content: object) -> str:
                 parts.append(str(item))
         return "\n".join(parts)
     return str(content or "")
+
+
+def _normalize_doc_id_values(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    if not text:
+        return []
+    matches = re.findall(r"\[([^\[\]]+)\]", text)
+    remainder = re.sub(r"\[[^\[\]]+\]", "", text).strip()
+    if matches and not remainder:
+        return [item.strip() for item in matches if item.strip()]
+    return [item.strip() for item in re.split(r"[,，、;\n；]+", text) if item.strip()]
 
 
 class BookCoverageMiddleware(AgentMiddleware[AgentState]):
@@ -94,6 +111,39 @@ class BookCoverageMiddleware(AgentMiddleware[AgentState]):
             return False
         return bool(_stringify_content(final_message.content).strip())
 
+    def _response_moves_to_unread_books(self, response: ModelResponse, state: AgentState) -> bool:
+        unread = set(get_uncovered_doc_ids(state))
+        if not unread:
+            return True
+
+        ai_messages = [message for message in response.result if isinstance(message, AIMessage)]
+        if not ai_messages:
+            return True
+
+        final_message = ai_messages[-1]
+        tool_calls = getattr(final_message, "tool_calls", None) or []
+        if not tool_calls:
+            return False
+
+        knowledge_calls = [tool_call for tool_call in tool_calls if tool_call.get("name") in KNOWLEDGE_ROUTING_TOOL_NAMES]
+        if not knowledge_calls:
+            return True
+
+        for tool_call in knowledge_calls:
+            args = tool_call.get("args", {}) or {}
+            if tool_call.get("name") == "knowledge_locate":
+                doc_id = str(args.get("doc_id") or "").strip()
+                if doc_id and doc_id in unread:
+                    return True
+                continue
+
+            if tool_call.get("name") == "knowledge_search":
+                doc_ids = _normalize_doc_id_values(args.get("doc_ids"))
+                if any(doc_id in unread for doc_id in doc_ids):
+                    return True
+
+        return False
+
     def _build_retry_request(self, request: ModelRequest, appendix: str) -> ModelRequest:
         reminder = self._build_reminder(request.state)
         messages = list(request.messages)
@@ -108,9 +158,10 @@ class BookCoverageMiddleware(AgentMiddleware[AgentState]):
         response: ModelResponse,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        if not get_uncovered_doc_ids(request.state):
+        unread = get_uncovered_doc_ids(request.state)
+        if not unread:
             return response
-        if not self._response_is_direct_answer(response):
+        if not self._response_is_direct_answer(response) and self._response_moves_to_unread_books(response, request.state):
             return response
 
         retry_request = request
@@ -133,9 +184,10 @@ class BookCoverageMiddleware(AgentMiddleware[AgentState]):
         response: ModelResponse,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        if not get_uncovered_doc_ids(request.state):
+        unread = get_uncovered_doc_ids(request.state)
+        if not unread:
             return response
-        if not self._response_is_direct_answer(response):
+        if not self._response_is_direct_answer(response) and self._response_moves_to_unread_books(response, request.state):
             return response
 
         retry_request = request

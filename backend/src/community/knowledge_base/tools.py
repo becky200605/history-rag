@@ -68,6 +68,29 @@ FINANCE_RETRY_FACETS = ("财政收入结构", "财政支出结构", "财政政�
 logger = logging.getLogger(__name__)
 
 
+def _tool_runtime_state(runtime: ToolRuntime[ContextT, ThreadState]) -> dict[str, Any] | None:
+    state = getattr(runtime, "state", None)
+    return state if isinstance(state, dict) else None
+
+
+def _list_book_catalog_for_tools(
+    *,
+    thread_id: str | None,
+    user_id: str | None,
+    include_search_content: bool,
+    caller: str,
+) -> list[BookCatalogEntry]:
+    try:
+        return list_book_catalog(
+            thread_id=thread_id,
+            user_id=user_id,
+            include_search_content=include_search_content,
+            caller=caller,
+        )
+    except TypeError:
+        return list_book_catalog(thread_id=thread_id, user_id=user_id)
+
+
 def _select_reading_set_candidates(
     candidates: list[BookCatalogEntry],
     *,
@@ -104,27 +127,29 @@ def _update_runtime_reading_set(
     query: str,
     candidates: list[BookCatalogEntry],
 ) -> None:
-    if runtime.state is None:
+    state = _tool_runtime_state(runtime)
+    if state is None:
         return
 
     selected = _select_reading_set_candidates(candidates)
-    runtime.state[READING_SET_DOC_IDS_KEY] = [candidate.doc_id for candidate in selected]
-    runtime.state[READING_SET_TITLES_KEY] = {
+    state[READING_SET_DOC_IDS_KEY] = [candidate.doc_id for candidate in selected]
+    state[READING_SET_TITLES_KEY] = {
         candidate.doc_id: candidate.title for candidate in selected if candidate.doc_id and candidate.title
     }
-    runtime.state[COVERED_DOC_IDS_KEY] = []
-    runtime.state[READING_SET_QUERY_KEY] = query.strip()
-    runtime.state[READING_SET_HUMAN_INDEX_KEY] = latest_human_index(runtime.state.get("messages"))
+    state[COVERED_DOC_IDS_KEY] = []
+    state[READING_SET_QUERY_KEY] = query.strip()
+    state[READING_SET_HUMAN_INDEX_KEY] = latest_human_index(state.get("messages"))
 
 
 def _mark_runtime_covered_doc_ids(
     runtime: ToolRuntime[ContextT, ThreadState],
     doc_ids: list[str] | None,
 ) -> None:
-    if runtime.state is None or not doc_ids:
+    state = _tool_runtime_state(runtime)
+    if state is None or not doc_ids:
         return
 
-    reading_set = runtime.state.get(READING_SET_DOC_IDS_KEY)
+    reading_set = state.get(READING_SET_DOC_IDS_KEY)
     if not isinstance(reading_set, list) or not reading_set:
         return
 
@@ -133,7 +158,7 @@ def _mark_runtime_covered_doc_ids(
     if not normalized_doc_ids:
         return
 
-    existing = runtime.state.get(COVERED_DOC_IDS_KEY)
+    existing = state.get(COVERED_DOC_IDS_KEY)
     existing_ids = [str(item).strip() for item in existing] if isinstance(existing, list) else []
     seen = set(existing_ids)
     for doc_id in normalized_doc_ids:
@@ -141,7 +166,7 @@ def _mark_runtime_covered_doc_ids(
             continue
         existing_ids.append(doc_id)
         seen.add(doc_id)
-    runtime.state[COVERED_DOC_IDS_KEY] = existing_ids
+    state[COVERED_DOC_IDS_KEY] = existing_ids
 
 
 def _split_loose_delimited_values(
@@ -286,7 +311,7 @@ def _visible_catalog_entries(
     selected_scopes: list[str] | None,
 ) -> list[BookCatalogEntry]:
     return filter_book_catalog_entries(
-        list_book_catalog(
+        _list_book_catalog_for_tools(
             thread_id=thread_id,
             user_id=user_id,
             include_search_content=False,
@@ -523,7 +548,7 @@ def _infer_scopes_from_doc_ids(
 
     candidate_map = {
         candidate.doc_id: candidate.scope
-        for candidate in list_book_catalog(
+        for candidate in _list_book_catalog_for_tools(
             thread_id=thread_id,
             user_id=user_id,
             include_search_content=False,
@@ -790,45 +815,6 @@ def _format_candidate_brief(candidate: BookCatalogEntry) -> str:
     return " | ".join(parts)
 
 
-def _validate_single_layer_doc_ids(
-    doc_ids: list[str] | None,
-    *,
-    thread_id: str | None,
-    user_id: str | None,
-) -> str | None:
-    if not doc_ids or len(doc_ids) <= 1:
-        return None
-
-    candidate_map = {
-        candidate.doc_id: _candidate_layer_key(candidate)
-        for candidate in list_book_catalog(
-            thread_id=thread_id,
-            user_id=user_id,
-            include_search_content=False,
-            caller="tools._validate_single_layer_doc_ids",
-        )
-    }
-    matched_layers: dict[str, list[str]] = {}
-    for doc_id in doc_ids:
-        layer = candidate_map.get(doc_id)
-        if not layer:
-            continue
-        matched_layers.setdefault(layer, []).append(doc_id)
-
-    if len(matched_layers) <= 1:
-        return None
-
-    layer_parts = [
-        f"{_candidate_layer_label(layer)}: {', '.join(ids)}"
-        for layer, ids in matched_layers.items()
-    ]
-    return (
-        "Error: 当前 `doc_ids` 混入了不同层级的书目，不能在同一轮 `knowledge_search` 里批量检索。\n"
-        "请一次只传一个层级的 `doc_ids`，同层内可以多本一起检索；跨层时请分多轮执行。\n"
-        f"检测到的层级: {' | '.join(layer_parts)}"
-    )
-
-
 @tool("book_search", parse_docstring=True)
 def book_search_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
@@ -985,8 +971,8 @@ def book_search_tool(
 
     lines.append("---")
     lines.append("检索规则:")
-    lines.append("1. 一次只批量检索一个层级的书目；不要混传不同层级的 `doc_ids`。")
-    lines.append("2. 同层内可多本一起传给 `knowledge_search`。")
+    lines.append("1. 可将多本相关书一起传给 `knowledge_search`，允许混传不同层级的 `doc_ids`。")
+    lines.append("2. 如果你已经确定一批书需要对读，优先直接用这批 `doc_ids` 联合检索。")
     lines.append("3. 默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料。")
     if user_doc_ids:
         lines.append(f"user doc_ids: {user_doc_ids}")
@@ -1184,19 +1170,6 @@ def knowledge_search_tool(
         from src.community.knowledge_base.retriever import get_retriever
 
         retriever = get_retriever()
-        mixed_layer_error = _validate_single_layer_doc_ids(
-            effective_doc_ids,
-            thread_id=thread_id,
-            user_id=user_id,
-        )
-        if mixed_layer_error:
-            logger.info(
-                "Knowledge search rejected: query=%r reason=mixed_layer_doc_ids effective_doc_ids=%s elapsed_ms=%.1f",
-                query,
-                len(effective_doc_ids or []),
-                (time.perf_counter() - started_at) * 1000,
-            )
-            return mixed_layer_error
         inferred_scopes = _infer_scopes_from_doc_ids(
             effective_doc_ids,
             thread_id=thread_id,

@@ -433,12 +433,12 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "### 专题支撑书" in output
     assert "### 补充材料 / 参考工具书" in output
     assert "- User Book | doc_id=user-1 | 相关度=5.00" in output
-    assert "user doc_ids: user-1" in output
-    assert "core doc_ids: core-1" in output
-    assert "specialized doc_ids: spec-1" in output
-    assert "reference doc_ids: ref-1" in output
-    assert "一次只批量检索一个层级的书目" in output
-    assert "同层内可多本一起传给 `knowledge_search`" in output
+    assert "user doc_ids: [user-1]" in output
+    assert "core doc_ids: [core-1]" in output
+    assert "specialized doc_ids: [spec-1]" in output
+    assert "reference doc_ids: [ref-1]" in output
+    assert "允许混传不同层级的 `doc_ids`" in output
+    assert "优先直接用这批 `doc_ids` 联合检索" in output
     assert "默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料" in output
 
 
@@ -1028,9 +1028,25 @@ def test_tool_schema_marks_knowledge_folders_as_required() -> None:
     assert tools_module.knowledge_search_tool.args_schema.model_fields["knowledge_folders"].is_required()
 
 
-def test_knowledge_search_tool_rejects_mixed_layer_doc_ids(monkeypatch) -> None:
+def test_knowledge_search_tool_allows_mixed_layer_doc_ids(monkeypatch) -> None:
+    class _DummyRetriever:
+        def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None, folder_paths=None):
+            return [
+                {
+                    "content": "混层检索命中结果。",
+                    "score": 0.91,
+                    "filename": "ref.md",
+                    "metadata": {
+                        "title": "Reference Book",
+                        "doc_id": "reference-doc",
+                        "scope": "global",
+                        "page_no": 3,
+                    },
+                }
+            ]
+
     retriever_stub = ModuleType("src.community.knowledge_base.retriever")
-    retriever_stub.get_retriever = lambda: SimpleNamespace(search=lambda *args, **kwargs: [])
+    retriever_stub.get_retriever = lambda: _DummyRetriever()
     monkeypatch.setitem(sys.modules, "src.community.knowledge_base.retriever", retriever_stub)
     monkeypatch.setattr(
         tools_module,
@@ -1070,14 +1086,13 @@ def test_knowledge_search_tool_rejects_mixed_layer_doc_ids(monkeypatch) -> None:
     output = tools_module.knowledge_search_tool.func(
         SimpleNamespace(context={"thread_id": "thread-1", "user_id": "user-1"}),
         "任意问题",
-        doc_ids="user-doc,reference-doc",
+        doc_ids="[user-doc][reference-doc]",
         knowledge_folders=["用户资料/人物", "参考资料/工具书"],
     )
 
-    assert "Error: 当前 `doc_ids` 混入了不同层级的书目" in output
-    assert "不能在同一轮 `knowledge_search` 里批量检索" in output
-    assert "用户书籍: user-doc" in output
-    assert "补充材料 / 参考工具书: reference-doc" in output
+    assert "## 检索结果" in output
+    assert "Reference Book" in output
+    assert "citation:" in output
 
 
 def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) -> None:

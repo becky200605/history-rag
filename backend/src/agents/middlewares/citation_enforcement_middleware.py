@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 GROUNDING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
+CITATION_SOURCE_TOOL_NAMES = GROUNDING_TOOL_NAMES | {"knowledge_checkpoint"}
 LINKED_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\([^)]+\)", re.IGNORECASE)
 CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\](?:\([^)]+\))?", re.IGNORECASE)
 REFUSAL_PREFIX_PATTERN = re.compile(r"^\s*【无法回答】", re.IGNORECASE)
@@ -180,7 +181,7 @@ def _build_citation_candidates(messages: list) -> list[_CitationCandidate]:
     candidates: list[_CitationCandidate] = []
     seen: set[str] = set()
     for message in messages[start:]:
-        if not isinstance(message, ToolMessage) or getattr(message, "name", None) not in GROUNDING_TOOL_NAMES:
+        if not isinstance(message, ToolMessage) or getattr(message, "name", None) not in CITATION_SOURCE_TOOL_NAMES:
             continue
         content = _stringify_content(message.content)
         for citation in LINKED_CITATION_PATTERN.findall(content):

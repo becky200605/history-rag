@@ -56,6 +56,31 @@ def _build_request_with_variant_citation(model=None) -> ModelRequest:
     )
 
 
+def _build_request_with_checkpoint_citation(model=None) -> ModelRequest:
+    return ModelRequest(
+        model=model or _SuggestionModel(),
+        messages=[
+            HumanMessage(content="请根据知识库回答这个问题"),
+            ToolMessage(
+                content="【已调用knowledge_search工具】该原始检索结果已由后续 knowledge_checkpoint 检查点压缩。",
+                tool_call_id="tool-call-0",
+                name="knowledge_search",
+            ),
+            ToolMessage(
+                content=(
+                    "# 检索检查点：光绪朝东华录\n"
+                    "## 关键引文\n"
+                    "- [citation:光绪朝东华录 原书第2567页第1段]"
+                    "(/api/knowledge/docs/dhl.pdf?page_no=2567&paragraph_no=1)"
+                ),
+                tool_call_id="tool-call-1",
+                name="knowledge_checkpoint",
+            ),
+        ],
+        system_message=SystemMessage(content="You are a helpful assistant."),
+    )
+
+
 def _bad_response() -> ModelResponse:
     return ModelResponse(result=[AIMessage(content="这是一个没有 citation 的回答。")])
 
@@ -185,6 +210,30 @@ class TestCitationEnforcementMiddleware:
         assert (
             "[citation:光绪朝上谕档第一七册（光绪一七年） 原书第263页第6段]"
             "(/api/knowledge/docs/book.pdf?page_no=263&paragraph_no=6)"
+        ) in content
+
+    def test_upgrades_bare_citation_from_checkpoint_candidates(self):
+        middleware = CitationEnforcementMiddleware()
+        request = _build_request_with_checkpoint_citation()
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                result=[
+                    AIMessage(
+                        content=(
+                            "可据东华录得出结论。"
+                            "[citation:光绪朝东华录 原书第 2567 页第 1 段]"
+                        )
+                    )
+                ]
+            )
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert (
+            "[citation:光绪朝东华录 原书第2567页第1段]"
+            "(/api/knowledge/docs/dhl.pdf?page_no=2567&paragraph_no=1)"
         ) in content
 
     def test_returns_final_refusal_after_all_retries_fail_and_skips_reference_stage(self):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -26,6 +27,7 @@ else:  # pragma: no cover - runtime fallback for import-light utility modules
     ThreadState = Any  # type: ignore[assignment]
 from src.community.knowledge_base.catalog import (
     CORE_TYPE,
+    BOOK_LAYER_ORDER,
     REFERENCE_TYPE,
     SPECIALIZED_TYPE,
     BookCatalogEntry,
@@ -38,11 +40,20 @@ from src.community.knowledge_base.catalog import (
 from src.community.knowledge_base.book_metadata import normalize_folder_path
 from src.community.knowledge_base.citations import resolve_result_citation_context
 from src.community.knowledge_base.locator import LocatedDocument, extract_document_context, locate_document
+from src.community.knowledge_base.reading_state import (
+    COVERED_DOC_IDS_KEY,
+    READING_SET_DOC_IDS_KEY,
+    READING_SET_HUMAN_INDEX_KEY,
+    READING_SET_QUERY_KEY,
+    READING_SET_TITLES_KEY,
+    latest_human_index,
+)
 
 BOOK_SEARCH_TOP_K = 20
 KNOWLEDGE_SEARCH_TOP_K = 6
 KNOWLEDGE_RESULT_MAX_CHARS = 900
 KNOWLEDGE_RESULT_MAX_LINES = 24
+BOOK_READING_SET_LIMIT = 6
 ALLOWED_SEARCH_SCOPES = {"user", "thread", "global"}
 SEARCH_SCOPE_ORDER = ("user", "thread", "global")
 HISTORICAL_PERIOD_ALIASES = {
@@ -55,6 +66,82 @@ HISTORICAL_PERIOD_ALIASES = {
 HISTORICAL_TOPIC_RETRY_HINTS = ("情况", "概况", "变化", "变迁", "问题", "状况")
 FINANCE_RETRY_FACETS = ("财政收入结构", "财政支出结构", "财政政策")
 logger = logging.getLogger(__name__)
+
+
+def _select_reading_set_candidates(
+    candidates: list[BookCatalogEntry],
+    *,
+    limit: int = BOOK_READING_SET_LIMIT,
+) -> list[BookCatalogEntry]:
+    if len(candidates) <= limit:
+        return list(candidates)
+
+    selected: list[BookCatalogEntry] = []
+    selected_ids: set[str] = set()
+
+    for candidate in candidates[:limit]:
+        if candidate.doc_id in selected_ids:
+            continue
+        selected.append(candidate)
+        selected_ids.add(candidate.doc_id)
+
+    for layer in BOOK_LAYER_ORDER:
+        layer_candidate = next(
+            (candidate for candidate in candidates if _candidate_layer_key(candidate) == layer),
+            None,
+        )
+        if layer_candidate is None or layer_candidate.doc_id in selected_ids:
+            continue
+        selected.append(layer_candidate)
+        selected_ids.add(layer_candidate.doc_id)
+
+    return selected[:limit]
+
+
+def _update_runtime_reading_set(
+    runtime: ToolRuntime[ContextT, ThreadState],
+    *,
+    query: str,
+    candidates: list[BookCatalogEntry],
+) -> None:
+    if runtime.state is None:
+        return
+
+    selected = _select_reading_set_candidates(candidates)
+    runtime.state[READING_SET_DOC_IDS_KEY] = [candidate.doc_id for candidate in selected]
+    runtime.state[READING_SET_TITLES_KEY] = {
+        candidate.doc_id: candidate.title for candidate in selected if candidate.doc_id and candidate.title
+    }
+    runtime.state[COVERED_DOC_IDS_KEY] = []
+    runtime.state[READING_SET_QUERY_KEY] = query.strip()
+    runtime.state[READING_SET_HUMAN_INDEX_KEY] = latest_human_index(runtime.state.get("messages"))
+
+
+def _mark_runtime_covered_doc_ids(
+    runtime: ToolRuntime[ContextT, ThreadState],
+    doc_ids: list[str] | None,
+) -> None:
+    if runtime.state is None or not doc_ids:
+        return
+
+    reading_set = runtime.state.get(READING_SET_DOC_IDS_KEY)
+    if not isinstance(reading_set, list) or not reading_set:
+        return
+
+    reading_set_ids = {str(item).strip() for item in reading_set if str(item).strip()}
+    normalized_doc_ids = [doc_id.strip() for doc_id in doc_ids if doc_id and doc_id.strip() in reading_set_ids]
+    if not normalized_doc_ids:
+        return
+
+    existing = runtime.state.get(COVERED_DOC_IDS_KEY)
+    existing_ids = [str(item).strip() for item in existing] if isinstance(existing, list) else []
+    seen = set(existing_ids)
+    for doc_id in normalized_doc_ids:
+        if doc_id in seen:
+            continue
+        existing_ids.append(doc_id)
+        seen.add(doc_id)
+    runtime.state[COVERED_DOC_IDS_KEY] = existing_ids
 
 
 def _split_loose_delimited_values(
@@ -849,6 +936,7 @@ def book_search_tool(
         (time.perf_counter() - search_started_at) * 1000,
     )
     if not candidates:
+        _update_runtime_reading_set(runtime, query=query, candidates=[])
         if selected_doc_ids:
             logger.info(
                 "Book search no candidates: query=%r selected_doc_ids=%s elapsed_ms=%.1f",
@@ -863,6 +951,8 @@ def book_search_tool(
             (time.perf_counter() - started_at) * 1000,
         )
         return "No likely books found for this query."
+
+    _update_runtime_reading_set(runtime, query=query, candidates=candidates)
 
     grouped = _group_book_candidates(candidates)
     lines = []
@@ -1156,6 +1246,17 @@ def knowledge_search_tool(
         )
         return _build_no_result_guidance(query, effective_doc_ids)
 
+    covered_doc_ids = []
+    seen_covered_doc_ids: set[str] = set()
+    for result in results:
+        metadata = result.get("metadata", {})
+        doc_id = str(metadata.get("origin_doc_id") or metadata.get("doc_id") or "").strip()
+        if not doc_id or doc_id in seen_covered_doc_ids:
+            continue
+        seen_covered_doc_ids.add(doc_id)
+        covered_doc_ids.append(doc_id)
+    _mark_runtime_covered_doc_ids(runtime, covered_doc_ids)
+
     formatted_output = "## 检索结果\n\n"
 
     for i, result in enumerate(results[:KNOWLEDGE_SEARCH_TOP_K], 1):
@@ -1350,6 +1451,8 @@ def knowledge_locate_tool(
         if not previews:
             return "No navigation preview available for the requested document."
 
+        _mark_runtime_covered_doc_ids(runtime, [str(document.doc_id)])
+
         lines = ["## 导航预览结果", ""]
         lines.append(f"标题: {document.title}")
         lines.append(f"doc_id: {document.doc_id}")
@@ -1396,6 +1499,8 @@ def knowledge_locate_tool(
 
     if not excerpts:
         return "No matching page/paragraph/line context found in the structured document."
+
+    _mark_runtime_covered_doc_ids(runtime, [str(document.doc_id)])
 
     lines = ["## 原文定位结果", ""]
     lines.append(f"标题: {document.title}")

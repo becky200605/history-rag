@@ -5,6 +5,7 @@ from langchain.agents.middleware import SummarizationMiddleware, TodoListMiddlew
 from langchain_core.runnables import RunnableConfig
 
 from src.agents.lead_agent.prompt import apply_prompt_template
+from src.agents.middlewares.book_coverage_middleware import BookCoverageMiddleware
 from src.agents.middlewares.citation_enforcement_middleware import CitationEnforcementMiddleware
 from src.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from src.agents.middlewares.dangling_tool_call_middleware import DanglingToolCallMiddleware
@@ -203,6 +204,7 @@ Being proactive with task management demonstrates thoroughness and ensures all r
 # UploadsMiddleware should be after ThreadDataMiddleware to access thread_id
 # DanglingToolCallMiddleware patches missing ToolMessages before model sees the history
 # KnowledgeCheckpointMiddleware compresses old knowledge_search / knowledge_locate payloads
+# BookCoverageMiddleware tracks the active reading set and redirects the model to unread books
 # SummarizationMiddleware should be early to reduce context before other processing
 # TodoListMiddleware should be before ClarificationMiddleware to allow todo management
 # TitleMiddleware generates title after first exchange
@@ -225,6 +227,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
         SandboxMiddleware(),
         DanglingToolCallMiddleware(),
         KnowledgeCheckpointMiddleware(),
+        BookCoverageMiddleware(),
         CitationEnforcementMiddleware(),
     ]
 

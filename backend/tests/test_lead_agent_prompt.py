@@ -69,6 +69,8 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Direct Response Rule" in prompt
     assert "Table Citation Rule" in prompt
     assert "Data Coverage Rule" in prompt
+    assert "Citation Offset Rule" in prompt
+    assert "zero tolerated offset" in prompt
     assert "Strict Table/Data Citation Rule" in prompt
     assert "starts with `本表引文：`" in prompt
     assert "本表引文：" in prompt

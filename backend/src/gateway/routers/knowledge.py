@@ -1864,7 +1864,11 @@ def get_knowledge_document_page_image(
     if "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    file_path = get_global_docs_dir() / filename
+    document_record = locate_document(thread_id=None, filename=filename)
+    if not document_record:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    file_path = get_global_docs_dir() / document_record.filename
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
     if file_path.suffix.lower() != ".pdf":

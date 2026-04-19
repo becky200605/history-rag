@@ -27,7 +27,13 @@ class TitleConfig(BaseModel):
         description="Model name to use for title generation (None = use default model)",
     )
     prompt_template: str = Field(
-        default=("Generate a concise title (max {max_words} words) for this conversation.\nUser: {user_msg}\nAssistant: {assistant_msg}\n\nReturn ONLY the title, no quotes, no explanation."),
+        default=(
+            "Generate a concise title (max {max_words} words) for this conversation.\n"
+            "User: {user_msg}\n"
+            "Assistant: {assistant_msg}\n\n"
+            "Return ONLY the title, with no quotes, no explanation, and no thinking process.\n"
+            "If you output anything except the title, it will be discarded."
+        ),
         description="Prompt template for title generation",
     )
 

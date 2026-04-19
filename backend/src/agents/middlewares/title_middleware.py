@@ -1,5 +1,6 @@
 """Middleware for automatic thread title generation."""
 
+import re
 from typing import NotRequired, override
 
 from langchain.agents import AgentState
@@ -20,6 +21,61 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
     """Automatically generate a title for the thread after the first user message."""
 
     state_schema = TitleMiddlewareState
+
+    _FINAL_TITLE_PATTERNS = (
+        re.compile(r"^\s*(?:final\s+answer|title)\s*[:：]\s*(.+?)\s*$", re.IGNORECASE),
+        re.compile(r"^\s*(?:最终标题|标题)\s*[:：]\s*(.+?)\s*$", re.IGNORECASE),
+    )
+    _REASONING_LINE_PATTERNS = (
+        re.compile(r"^\s*thinking\s+process\b", re.IGNORECASE),
+        re.compile(r"^\s*analy[sz]e\b", re.IGNORECASE),
+        re.compile(r"^\s*(?:input|task|constraints?)\s*[:：]", re.IGNORECASE),
+        re.compile(r"^\s*(?:drafting|selection)\b", re.IGNORECASE),
+        re.compile(r"^\s*(?:let'?s|i will|i need to)\b", re.IGNORECASE),
+    )
+
+    def _split_lines(self, text: str) -> list[str]:
+        return [line.strip().strip('"').strip("'") for line in text.splitlines() if line.strip()]
+
+    def _looks_like_reasoning_line(self, line: str) -> bool:
+        if len(line) > 80:
+            return True
+        if line.startswith(("-", "*")):
+            return True
+        return any(pattern.match(line) for pattern in self._REASONING_LINE_PATTERNS)
+
+    def _looks_like_title(self, line: str, *, max_chars: int, max_words: int) -> bool:
+        if not line:
+            return False
+        if len(line) > max_chars:
+            return False
+        if len(line.split()) > max_words:
+            return False
+        if self._looks_like_reasoning_line(line):
+            return False
+        return True
+
+    def _extract_title_from_response(self, text: str, *, max_chars: int, max_words: int) -> str:
+        raw = text.strip().strip('"').strip("'")
+        if not raw:
+            return ""
+
+        for pattern in self._FINAL_TITLE_PATTERNS:
+            for line in self._split_lines(raw):
+                match = pattern.match(line)
+                if match:
+                    candidate = match.group(1).strip().strip('"').strip("'")
+                    if self._looks_like_title(candidate, max_chars=max_chars, max_words=max_words):
+                        return candidate[:max_chars]
+
+        lines = self._split_lines(raw)
+        plausible = [
+            line for line in lines if self._looks_like_title(line, max_chars=max_chars, max_words=max_words)
+        ]
+        if plausible:
+            return min(plausible, key=len)[:max_chars]
+
+        return raw[:max_chars]
 
     def _should_generate_title(self, state: TitleMiddlewareState) -> bool:
         """Check if we should generate a title for this thread."""
@@ -57,7 +113,7 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         assistant_msg = str(assistant_msg_content) if assistant_msg_content else ""
 
         # Use a lightweight model to generate title
-        model = create_chat_model(thinking_enabled=False)
+        model = create_chat_model(name=config.model_name, thinking_enabled=False)
 
         prompt = config.prompt_template.format(
             max_words=config.max_words,
@@ -69,7 +125,11 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
             response = model.invoke(prompt)
             # Ensure response content is string
             title_content = str(response.content) if response.content else ""
-            title = title_content.strip().strip('"').strip("'")
+            title = self._extract_title_from_response(
+                title_content,
+                max_chars=config.max_chars,
+                max_words=config.max_words,
+            )
             # Limit to max characters
             return title[: config.max_chars] if len(title) > config.max_chars else title
         except Exception as e:

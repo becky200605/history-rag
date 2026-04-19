@@ -26,7 +26,8 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Book Group Label Rule" in prompt
     assert "Layered Book Routing Rule" in prompt
     assert "Batch-Within-Layer Rule" in prompt
-    assert "Book Coverage Rule" in prompt
+    assert "Book List Coverage Rule" in prompt
+    assert "Todo Book Tracking Rule" in prompt
     assert "Cross-Book Synthesis Rule" in prompt
     assert "Evidence Sufficiency Rule" in prompt
     assert "Decomposition Workflow Rule" in prompt
@@ -47,6 +48,8 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Checkpoint Cadence Rule" in prompt
     assert "High-Volume Context Rule" in prompt
     assert "Checkpoint Direction Rule" in prompt
+    assert "Checkpoint Reading-Set Rule" in prompt
+    assert "Checkpoint Next-Book Rule" in prompt
     assert "stop adding more raw retrieval and checkpoint first" in prompt
     assert "next investigation" in prompt
     assert "exact citation lines worth reusing" in prompt

@@ -1,6 +1,7 @@
 """Tests for automatic thread title generation."""
 
 import pytest
+from types import SimpleNamespace
 
 from src.agents.middlewares.title_middleware import TitleMiddleware
 from src.config.title_config import TitleConfig, get_title_config, set_title_config
@@ -68,6 +69,57 @@ class TestTitleMiddleware:
         middleware = TitleMiddleware()
         assert middleware is not None
         assert middleware.state_schema is not None
+
+    def test_extracts_clean_title_from_reasoning_output(self):
+        middleware = TitleMiddleware()
+
+        text = """
+Thinking Process:
+Analyze the Request:
+Task: Generate a concise title.
+Selection: 晚清六部紊乱
+
+晚清六部紊乱
+"""
+
+        title = middleware._extract_title_from_response(text, max_chars=60, max_words=6)
+
+        assert title == "晚清六部紊乱"
+
+    def test_generate_title_uses_configured_model_name_and_strips_reasoning(self, monkeypatch):
+        middleware = TitleMiddleware()
+        original_config = get_title_config()
+        set_title_config(TitleConfig(model_name="title-model"))
+
+        captured: dict[str, object] = {}
+
+        class _FakeModel:
+            def invoke(self, prompt):
+                captured["prompt"] = prompt
+                return SimpleNamespace(content="Thinking Process:\nTitle: 晚清六部变局")
+
+        def _fake_create_chat_model(*, name=None, thinking_enabled=False, **kwargs):
+            captured["name"] = name
+            captured["thinking_enabled"] = thinking_enabled
+            return _FakeModel()
+
+        monkeypatch.setattr("src.agents.middlewares.title_middleware.create_chat_model", _fake_create_chat_model)
+
+        state = {
+            "messages": [
+                SimpleNamespace(type="human", content="用户问题"),
+                SimpleNamespace(type="ai", content="助手回答"),
+            ]
+        }
+
+        try:
+            title = middleware._generate_title(state)
+        finally:
+            set_title_config(original_config)
+
+        assert captured["name"] == "title-model"
+        assert captured["thinking_enabled"] is False
+        assert title == "晚清六部变局"
 
     # TODO: Add integration tests with mock Runtime
     # def test_should_generate_title(self):

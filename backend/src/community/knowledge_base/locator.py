@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from difflib import SequenceMatcher
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,7 +33,49 @@ class LocatedDocument:
     payload: dict[str, Any]
 
 
-def _matches_identifier(
+def _normalize_filename_for_match(value: str | None) -> str:
+    if not value:
+        return ""
+    text = str(value).strip()
+    text = text.translate(str.maketrans({"　": " ", "\u00a0": " "}))
+    return re.sub(r"\s+", "", text).lower()
+
+
+def _filename_match_score(requested_filename: str | None, candidate_filename: str) -> float:
+    requested = _normalize_filename_for_match(requested_filename)
+    candidate = _normalize_filename_for_match(candidate_filename)
+    if not requested or not candidate:
+        return 0.0
+
+    if requested == candidate:
+        return 10_000.0
+
+    requested_path = Path(requested)
+    candidate_path = Path(candidate)
+    requested_stem = requested_path.stem or requested
+    candidate_stem = candidate_path.stem or candidate
+    requested_suffix = requested_path.suffix
+    candidate_suffix = candidate_path.suffix
+
+    if requested_stem == candidate_stem:
+        return 9_000.0 + (100.0 if requested_suffix == candidate_suffix else 0.0)
+
+    score = 0.0
+    if requested_suffix and candidate_suffix and requested_suffix == candidate_suffix:
+        score += 15.0
+
+    full_ratio = SequenceMatcher(None, requested, candidate).ratio()
+    stem_ratio = SequenceMatcher(None, requested_stem, candidate_stem).ratio()
+    score += max(full_ratio * 100.0, stem_ratio * 120.0)
+
+    if requested_stem and candidate_stem:
+        if requested_stem in candidate_stem or candidate_stem in requested_stem:
+            score += 20.0
+
+    return score
+
+
+def _is_exact_identifier_match(
     *,
     requested_doc_id: str | None,
     requested_filename: str | None,
@@ -48,6 +92,7 @@ def _matches_identifier(
 def _locate_global_document(doc_id: str | None, filename: str | None) -> LocatedDocument | None:
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
     ingestion_dir = docs_root / ".ingestion"
+    best_match: tuple[float, LocatedDocument] | None = None
 
     if ingestion_dir.exists():
         for record_path in sorted(ingestion_dir.glob("*.json")):
@@ -62,20 +107,12 @@ def _locate_global_document(doc_id: str | None, filename: str | None) -> Located
             if not source_filename:
                 continue
             candidate_doc_id = derive_global_doc_id(docs_root, docs_root / source_filename)
-            if not _matches_identifier(
-                requested_doc_id=doc_id,
-                requested_filename=filename,
-                candidate_doc_id=candidate_doc_id,
-                candidate_filename=source_filename,
-            ):
-                continue
-
             structured_path = record.get("structured_path")
             payload = load_structured_document(Path(str(structured_path))) if structured_path else None
             if not payload:
-                return None
+                continue
 
-            return LocatedDocument(
+            document = LocatedDocument(
                 doc_id=candidate_doc_id,
                 title=str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
                 filename=source_filename,
@@ -84,30 +121,36 @@ def _locate_global_document(doc_id: str | None, filename: str | None) -> Located
                 original_url=record.get("source_artifact_url"),
                 payload=payload,
             )
-    return None
+
+            if _is_exact_identifier_match(
+                requested_doc_id=doc_id,
+                requested_filename=filename,
+                candidate_doc_id=candidate_doc_id,
+                candidate_filename=source_filename,
+            ):
+                return document
+
+            if filename:
+                score = _filename_match_score(filename, source_filename)
+                if score >= 70.0 and (best_match is None or score > best_match[0]):
+                    best_match = (score, document)
+    return best_match[1] if best_match else None
 
 
 def _locate_thread_document(thread_id: str, doc_id: str | None, filename: str | None) -> LocatedDocument | None:
     uploads_dir = get_paths().sandbox_uploads_dir(thread_id)
+    best_match: tuple[float, LocatedDocument] | None = None
     for record in list_ingestion_records(thread_id):
         source_filename = str(record.get("source_filename") or record.get("index_target_filename") or "")
         if not source_filename:
             continue
         candidate_doc_id = derive_thread_doc_id(Path(source_filename))
-        if not _matches_identifier(
-            requested_doc_id=doc_id,
-            requested_filename=filename,
-            candidate_doc_id=candidate_doc_id,
-            candidate_filename=source_filename,
-        ):
-            continue
-
         structured_path = record.get("structured_path")
         payload = load_structured_document(Path(str(structured_path))) if structured_path else None
         if not payload:
-            return None
+            continue
 
-        return LocatedDocument(
+        document = LocatedDocument(
             doc_id=candidate_doc_id,
             title=str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
             filename=source_filename,
@@ -116,31 +159,37 @@ def _locate_thread_document(thread_id: str, doc_id: str | None, filename: str | 
             original_url=record.get("source_artifact_url"),
             payload=payload,
         )
-    return None
+
+        if _is_exact_identifier_match(
+            requested_doc_id=doc_id,
+            requested_filename=filename,
+            candidate_doc_id=candidate_doc_id,
+            candidate_filename=source_filename,
+        ):
+            return document
+
+        if filename:
+            score = _filename_match_score(filename, source_filename)
+            if score >= 70.0 and (best_match is None or score > best_match[0]):
+                best_match = (score, document)
+    return best_match[1] if best_match else None
 
 
 def _locate_user_document(user_id: str, doc_id: str | None, filename: str | None) -> LocatedDocument | None:
     docs_dir = get_paths().user_knowledge_docs_dir(user_id)
+    best_match: tuple[float, LocatedDocument] | None = None
     for record in list_user_records(user_id):
         source_filename = str(record.get("source_filename") or record.get("index_target_filename") or "")
         record_id = str(record.get("id") or "")
         if not source_filename or not record_id:
             continue
         candidate_doc_id = derive_user_doc_id(record_id)
-        if not _matches_identifier(
-            requested_doc_id=doc_id,
-            requested_filename=filename,
-            candidate_doc_id=candidate_doc_id,
-            candidate_filename=source_filename,
-        ):
-            continue
-
         structured_path = record.get("structured_path")
         payload = load_structured_document(Path(str(structured_path))) if structured_path else None
         if not payload:
-            return None
+            continue
 
-        return LocatedDocument(
+        document = LocatedDocument(
             doc_id=candidate_doc_id,
             title=str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
             filename=source_filename,
@@ -149,7 +198,20 @@ def _locate_user_document(user_id: str, doc_id: str | None, filename: str | None
             original_url=build_user_doc_public_url(source_filename),
             payload=payload,
         )
-    return None
+
+        if _is_exact_identifier_match(
+            requested_doc_id=doc_id,
+            requested_filename=filename,
+            candidate_doc_id=candidate_doc_id,
+            candidate_filename=source_filename,
+        ):
+            return document
+
+        if filename:
+            score = _filename_match_score(filename, source_filename)
+            if score >= 70.0 and (best_match is None or score > best_match[0]):
+                best_match = (score, document)
+    return best_match[1] if best_match else None
 
 
 def locate_document(

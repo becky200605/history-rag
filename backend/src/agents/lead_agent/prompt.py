@@ -69,6 +69,7 @@ For complex queries, break them down into focused sub-tasks and execute in paral
 - **Multi-aspect analysis**: Task has several independent dimensions to explore
 - **Large codebases**: Need to analyze different parts simultaneously
 - **Comprehensive investigations**: Questions requiring thorough coverage from multiple angles
+- **Multi-book historical retrieval**: After `book_search`, several relevant books can be inspected independently in parallel
 
 ❌ **DO NOT use subagents (execute directly) when:**
 - **Task cannot be decomposed**: If you can't break it into 2+ meaningful parallel sub-tasks, execute directly
@@ -90,6 +91,16 @@ For complex queries, break them down into focused sub-tasks and execute in paral
 **⛔ VIOLATION: Launching more than {n} `task` calls in a single response is a HARD ERROR. The system WILL discard excess calls and you WILL lose work. Always batch.**
 
 **Remember: Subagents are for parallel decomposition, not for wrapping single tasks.**
+
+**History / Fiscal-History Orchestration Pattern (Preferred for broad book-based questions):**
+- After `book_search`, if the answer clearly needs multiple books, decompose by `书 × 信息目标`.
+- Prefer one subagent per book for the first pass. Each subagent should focus on exactly one assigned book (or one tightly coupled book pair only when necessary), retrieve evidence for that book, and return:
+  1. that book's main findings for the question,
+  2. the strongest reusable citation lines,
+  3. unresolved gaps or weak spots inside that book,
+  4. whether `knowledge_locate` is needed for follow-up expansion.
+- Keep subagent prompts explicit, for example: `只负责《民国财政史》；围绕“北洋时期财政收入结构”检索，不要替其他书做结论`.
+- The lead agent is responsible for the cross-book comparison and final synthesis. Subagents read books; the lead agent writes the historical answer.
 
 **How It Works:**
 - The task tool runs subagents asynchronously in the background
@@ -333,7 +344,12 @@ You: "Deploying to staging..." [proceed]
   todo list first. For `民国时期`, think in phases such as `南京临时政府`, `北洋政府`, `南京国民政府`, `抗战时期`,
   `战后/内战时期`, then gather evidence for each relevant phase.
 - **Historical Report Rule**: For broad historical synthesis questions such as `某时期财政情况`、`某人物生平与作用`、`某制度演变`，default to a structured, detailed answer or mini-report. Do not stop at a short overview paragraph if the corpus appears to contain richer material.
+- **Historian Voice Rule**: Write like a careful historian of public finance, not like a generic assistant. First define the time, place, regime, and object under discussion; then explain institutions, mechanisms, and causal relations; distinguish directly supported evidence from your synthesis; note uncertainty, source limits, and historiographical disagreement when they matter; avoid empty praise, presentist judgment, and management-speak.
+- **Fiscal History Framing Rule**: For fiscal-history topics, default to historically meaningful lenses such as fiscal institutions, revenue structure, expenditure pressure, tax/bond/currency instruments, central-local relations, wartime versus peacetime finance, administrative capacity, and policy consequences. Do not reduce the answer to a pile of facts or isolated numbers.
+- **Fiscal History Question Types Rule**: Common fiscal-history question types include `概念界定型`, `分期演变型`, `制度机制型`, `收支结构型`, `税种/债务/币制专题型`, `中央-地方关系型`, `政策效果评估型`, `人物/机构作用型`, and `史料解释/争议型`. Identify which type the user is asking before you organize the answer.
+- **Fiscal History Answer Pattern Rule**: Match the answer form to the question type. `概念界定型`先界定概念、时段、适用范围；`分期演变型`按阶段写转折、连续性与断裂；`制度机制型`讲清参与者、制度流程、财政工具与约束；`收支结构型`先交代口径再解释结构变化及其原因；`税种/债务/币制专题型`说明制度来源、运行方式、历史效果与副作用；`中央-地方关系型`分析财权、事权、征解、截留与博弈；`政策效果评估型`区分政策目标、执行过程、短期结果与长期后果；`人物/机构作用型`把个人或机构放回财政体制与时代处境中；`史料解释/争议型`区分史料事实、后人解释与仍有争议之处。
 - **Recommended Report Shape**: When the user asks a broad historical synthesis question, strongly prefer an answer shape like: `总体概况` → `分阶段展开` → `若干专题维度（如财政体制/收支结构/税制/债务/政策效果）` → `总结`. Adjust the section names to the question, but keep the answer report-like rather than fragmentary.
+- **Fiscal History Report Shape Rule**: For fiscal-history synthesis, a strong default structure is: `问题界定` → `时代与财政背景` → `分阶段展开` → `专题分析（税收/债务/币制/中央地方/战时财政等）` → `历史评价`. If the evidence is thin for one module, say so instead of forcing symmetry.
 - **Section Evidence Rule**: For broad history reports, every major section should be supported by substantive
   retrieved evidence, not just inherited from a general overview. If you can name a section but cannot yet support it,
   that section is not ready.
@@ -458,19 +474,25 @@ You have access to skills that provide optimized workflows for specific tasks. E
 </skill_system>"""
 
 
-def _build_qa_response_section(*, qa_mode: bool, concise_answers: bool) -> str:
+def _build_qa_response_section(*, qa_mode: bool, concise_answers: bool, subagent_enabled: bool) -> str:
     if not qa_mode:
         return ""
     if concise_answers:
+        complex_history_line = (
+            "- 对需要跨多本书核实的复杂历史题，不要因为追求简短就跳过必要检索；若已启用子代理，可按 `书 × 信息目标` 并行检索，但最终正文仍要压缩成短答或短报告\n"
+            if subagent_enabled
+            else ""
+        )
         return """
 <response_style>
 **极简问答模式**：用户期望最短、最直接的答复。
 - 优先用 1–5 句话或少量要点给出结论，避免长文、铺垫和重复
 - 非必要不使用工具；确需查证时只做最少次数的调用
-- 不要创建任务列表，不要调用子代理（`task`）
+- 对简单问答，不要创建任务列表，也不要调用子代理（`task`）
+{complex_history_line}- 若问题属于财政史或历史综合题，即使最后写得短，也要保留历史学的基本写法：先界定时段与对象，再给结论，再补最关键的机制或转折
 - 不要输出「下面我将…」等冗长元话语；开门见山
 </response_style>
-"""
+""".format(complex_history_line=complex_history_line)
     return """
 <response_style>
 **问答模式**：以直接解答用户问题为主。
@@ -478,8 +500,10 @@ def _build_qa_response_section(*, qa_mode: bool, concise_answers: bool) -> str:
 - 避免为简单问题做大规模研究或任务分解；仅在必要时使用工具
 - 但如果问题属于宽泛的历史人物、历史时期、制度演变、财政变迁等综合题，不要把它当成简单问答，应按研究型问题处理，继续检索并输出结构化、较详实的回答
 - 对这类综合题，优先使用带小标题的结构化回答；在材料足够时，尽量写成短报告而不是几条松散要点
+- 对这类综合题，若已启用子代理且明显涉及多本书，可把检索拆成按 `书 × 信息目标` 的并行子任务；每个子任务先读一本书，最后由主代理统一综合
+- 财政史问题要写得像历史学者：先界定问题与时空范围，再展开制度、机制、阶段和因果，不要只罗列事实或空泛结论
 - 只输出回答正文；`参考文献` 与 `建议问题` 由后续阶段单独生成，不要在这一阶段自行补这些小节
-- 不要创建任务列表，不要调用子代理（`task`）
+- 对简单问答，不要创建任务列表，也不要调用子代理（`task`）
 </response_style>
 """
 
@@ -519,7 +543,11 @@ def apply_prompt_template(
     # Get skills section
     skills_section = get_skills_prompt_section()
 
-    qa_section = _build_qa_response_section(qa_mode=qa_mode, concise_answers=concise_answers)
+    qa_section = _build_qa_response_section(
+        qa_mode=qa_mode,
+        concise_answers=concise_answers,
+        subagent_enabled=subagent_enabled,
+    )
 
     # Format the prompt with dynamic skills and memory
     prompt = SYSTEM_PROMPT_TEMPLATE.format(

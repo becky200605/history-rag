@@ -81,3 +81,25 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "`核心通用书`" not in prompt
     assert "`专题支撑书`" not in prompt
     assert "`补充材料 / 参考工具书`" not in prompt
+
+
+def test_prompt_supports_parallel_book_subtasks_and_fiscal_historian_style(monkeypatch) -> None:
+    monkeypatch.setattr(prompt_module, "_get_memory_context", lambda: "")
+    monkeypatch.setattr(prompt_module, "get_skills_prompt_section", lambda: "")
+
+    prompt = prompt_module.apply_prompt_template(
+        subagent_enabled=True,
+        qa_mode=True,
+    )
+
+    assert "History / Fiscal-History Orchestration Pattern" in prompt
+    assert "decompose by `书 × 信息目标`" in prompt
+    assert "Prefer one subagent per book for the first pass" in prompt
+    assert "The lead agent is responsible for the cross-book comparison and final synthesis" in prompt
+    assert "若已启用子代理且明显涉及多本书，可把检索拆成按 `书 × 信息目标` 的并行子任务" in prompt
+    assert "Historian Voice Rule" in prompt
+    assert "Fiscal History Framing Rule" in prompt
+    assert "Fiscal History Question Types Rule" in prompt
+    assert "Fiscal History Answer Pattern Rule" in prompt
+    assert "Fiscal History Report Shape Rule" in prompt
+    assert "财政史问题要写得像历史学者" in prompt

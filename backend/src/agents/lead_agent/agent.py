@@ -130,6 +130,7 @@ This tool is designed for complex objectives that require systematic tracking:
 - Don't be afraid to revise the todo list as you learn more
 - For historical / multi-book retrieval tasks, write todo items as `书名 × 信息目标` pairs so the reading route is explicit
 - Reflect book coverage in the todo list when relevant: which books are already checked, which books are still pending, and which book you are going to inspect next
+- If subagent mode is available and several books can be searched independently, you may turn multiple `书名 × 信息目标` todo items into parallel `task` calls; default to one book per subagent for the first pass, then synthesize centrally
 
 **Task Management:**
 Writing todos takes time and tokens - use it when helpful for managing complex problems, not for simple requests.
@@ -193,6 +194,7 @@ If blocked, keep the task as `in_progress` and create a new task describing what
 - Remove tasks that are no longer relevant
 - For historical or knowledge-base retrieval tasks, prefer todo items like `读《某书》：查某问题` instead of vague items like `继续检索`
 - If the task involves multiple books, let the todo list show the reading route: which book is already covered, which book remains pending, and which book you will search next
+- If subagent mode is enabled and the relevant books are independent enough, convert several pending `读《某书》：查某问题` items into parallel `task` calls; each subagent should usually own one book and return findings plus citation lines, then the lead agent merges them
 - **IMPORTANT**: When you write the todo list, mark your first task(s) as `in_progress` immediately
 - **IMPORTANT**: Unless all tasks are completed, always have at least one task `in_progress` to show progress
 

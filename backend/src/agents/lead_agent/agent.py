@@ -110,8 +110,9 @@ def _create_todo_list_middleware(
         parallel_hint = f"""
 - Treat the todo list as an execution board, not a sequential outline
 - When there are multiple independent tasks, prefer a parallel batch over single-threaded exploration
-- For historical / multi-book retrieval tasks, if several `书名 × 信息目标` items are independent, mark the current batch (up to {max_concurrent_subagents}) as `in_progress` together and launch matching parallel `task` calls in the SAME response
-- Each launched `task` should usually correspond to one active todo item; keep the `task.description` closely aligned with the todo text
+- `write_todos` is the dispatch point: when you mark a batch (up to {max_concurrent_subagents}) as `in_progress`, the system will launch and wait for the matching subagent work for you
+- Do NOT mirror the same batch with manual `task` calls in the same response after calling `write_todos`
+- Keep each active todo scoped like one execution lane, usually one `书名 × 信息目标` item per subagent-sized unit of work
 - After a batch returns, mark the finished todo items `completed` immediately, then move the next batch to `in_progress`
 """
 
@@ -146,9 +147,11 @@ This tool is designed for complex objectives that require systematic tracking:
 - Remove tasks that become irrelevant
 - Add new tasks discovered during implementation
 - Don't be afraid to revise the todo list as you learn more
+- After `book_search`, if multiple books are materially relevant, create/update the todo list BEFORE deep retrieval so the reading plan becomes explicit
+- Only skip that todo step when one dominant book is clearly sufficient for a narrow question
 - For historical / multi-book retrieval tasks, write todo items as `书名 × 信息目标` pairs so the reading route is explicit
 - Reflect book coverage in the todo list when relevant: which books are already checked, which books are still pending, and which book you are going to inspect next
-- If subagent mode is available and several books can be searched independently, you may turn multiple `书名 × 信息目标` todo items into parallel `task` calls; default to one book per subagent for the first pass, then synthesize centrally
+- If subagent mode is available and several books can be searched independently, mark multiple `书名 × 信息目标` todo items `in_progress` in one `write_todos` call; that call is what dispatches and waits for the parallel subagent batch
 {parallel_hint}
 
 **Task Management:**
@@ -168,6 +171,7 @@ Use this tool in these scenarios:
 3. **User explicitly requests todo list**: When the user directly asks you to track tasks
 4. **Multiple tasks**: When users provide a list of things to be done
 5. **Dynamic planning**: When the plan may need updates based on intermediate results
+6. **Multi-book retrieval after `book_search`**: When `book_search` shows several materially relevant books, create the todo list before further retrieval
 
 ## When NOT to Use
 
@@ -183,7 +187,7 @@ Skip this tool when:
 2. **Completing a task**: Mark it as `completed` IMMEDIATELY after finishing
 3. **Updating the list**: Add new tasks, remove irrelevant ones, or update descriptions as needed
 4. **Multiple updates**: You can make several updates at once (e.g., complete one task and start the next)
-5. **Parallel batches**: When tasks are independent, mark multiple items as `in_progress` together so the todo list matches the real execution batch
+5. **Parallel batches**: When tasks are independent, mark multiple items as `in_progress` together in one `write_todos` call so the todo list matches the real execution batch
 
 ## Task States
 
@@ -213,8 +217,9 @@ If blocked, keep the task as `in_progress` and create a new task describing what
 - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
 - Remove tasks that are no longer relevant
 - For historical or knowledge-base retrieval tasks, prefer todo items like `读《某书》：查某问题` instead of vague items like `继续检索`
+- After `book_search`, if multiple books remain in scope, do not continue deep retrieval until you have written the todo list for that reading set
 - If the task involves multiple books, let the todo list show the reading route: which book is already covered, which book remains pending, and which book you will search next
-- If subagent mode is enabled and the relevant books are independent enough, convert several pending `读《某书》：查某问题` items into parallel `task` calls; each subagent should usually own one book and return findings plus citation lines, then the lead agent merges them
+- If subagent mode is enabled and the relevant books are independent enough, move several pending `读《某书》：查某问题` items to `in_progress` together in one `write_todos` call; the system will run that parallel batch and return findings before you continue
 - **IMPORTANT**: When you write the todo list, mark your first task(s) or first parallel batch as `in_progress` immediately
 - **IMPORTANT**: Unless all tasks are completed, always have at least one task `in_progress` to show progress
 {parallel_hint}

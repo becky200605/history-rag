@@ -27,6 +27,8 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Layered Book Routing Rule" in prompt
     assert "Batch-Within-Layer Rule" in prompt
     assert "Book List Coverage Rule" in prompt
+    assert "Todo Gate After Book Search Rule" in prompt
+    assert "Single-Book Exception Rule" in prompt
     assert "Todo Book Tracking Rule" in prompt
     assert "Cross-Book Synthesis Rule" in prompt
     assert "Evidence Sufficiency Rule" in prompt
@@ -97,6 +99,11 @@ def test_prompt_supports_parallel_book_subtasks_and_fiscal_historian_style(monke
     assert "Prefer one subagent per book for the first pass" in prompt
     assert "The lead agent is responsible for the cross-book comparison and final synthesis" in prompt
     assert "若已启用子代理且明显涉及多本书，可把检索拆成按 `书 × 信息目标` 的并行子任务" in prompt
+    assert "Todo Dispatch Rule" in prompt
+    assert "Todo Gate After Book Search Rule" in prompt
+    assert "If there are multiple materially relevant books, the todo list is mandatory." in prompt
+    assert "let that call dispatch/wait for the subagent batch" in prompt
+    assert "Do not immediately duplicate the same batch with manual `task` calls" in prompt
     assert "Historian Voice Rule" in prompt
     assert "Fiscal History Framing Rule" in prompt
     assert "Fiscal History Question Types Rule" in prompt

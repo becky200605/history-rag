@@ -23,6 +23,9 @@ export function TodoList({
   hidden?: boolean;
   onToggle?: () => void;
 }) {
+  const completedCount = todos.filter((t) => t.status === "completed").length;
+  const runningCount = todos.filter((t) => t.status === "in_progress").length;
+  const failedCount = todos.filter((t) => t.status === "failed").length;
   return (
     <div
       className={cn(
@@ -45,8 +48,15 @@ export function TodoList({
           <div className="tracking-tight">To-dos</div>
         </div>
         <div className="flex items-center gap-3">
+          {(runningCount > 0 || failedCount > 0) && (
+            <div className="text-[10px] font-semibold tracking-widest text-muted-foreground/70 uppercase">
+              {runningCount > 0 ? `${runningCount} RUN` : ""}
+              {runningCount > 0 && failedCount > 0 ? " · " : ""}
+              {failedCount > 0 ? `${failedCount} FAIL` : ""}
+            </div>
+          )}
           <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-widest">
-            {todos.filter(t => t.status === "completed").length}/{todos.length}
+            {completedCount}/{todos.length}
           </div>
           <ChevronUpIcon
             className={cn(
@@ -72,20 +82,43 @@ export function TodoList({
                 <QueueItemIndicator
                   className={cn(
                     "mt-1.5",
-                    todo.status === "in_progress" ? "bg-primary shadow-[0_0_8px_rgba(126,51,46,0.4)] border-primary" : ""
+                    todo.status === "in_progress" ? "bg-primary shadow-[0_0_8px_rgba(126,51,46,0.4)] border-primary" : "",
+                    todo.status === "failed" ? "border-red-500 bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.35)]" : ""
                   )}
                   completed={todo.status === "completed"}
                 />
-                <QueueItemContent
-                  className={cn(
-                    "font-serif text-[14px] leading-relaxed",
-                    todo.status === "in_progress" ? "font-medium text-foreground" : "text-muted-foreground/90",
-                    todo.status === "completed" ? "text-muted-foreground/50 italic" : ""
+                <div className="min-w-0 flex-1">
+                  <QueueItemContent
+                    className={cn(
+                      "font-serif text-[14px] leading-relaxed",
+                      todo.status === "in_progress" ? "font-medium text-foreground" : "text-muted-foreground/90",
+                      todo.status === "completed" ? "text-muted-foreground/50 italic" : "",
+                      todo.status === "failed" ? "text-red-600 dark:text-red-400" : "",
+                    )}
+                    completed={todo.status === "completed"}
+                  >
+                    {todo.content}
+                  </QueueItemContent>
+                  {(todo.task_id || todo.result_summary || todo.error) && (
+                    <div className="mt-1.5 space-y-1">
+                      {todo.task_id && (
+                        <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60">
+                          {todo.subagent_type ?? "subagent"} · {todo.task_id}
+                        </div>
+                      )}
+                      {todo.result_summary && (
+                        <div className="line-clamp-3 text-[12px] leading-relaxed text-muted-foreground/80">
+                          {todo.result_summary}
+                        </div>
+                      )}
+                      {todo.error && (
+                        <div className="line-clamp-3 text-[12px] leading-relaxed text-red-600 dark:text-red-400">
+                          {todo.error}
+                        </div>
+                      )}
+                    </div>
                   )}
-                  completed={todo.status === "completed"}
-                >
-                  {todo.content}
-                </QueueItemContent>
+                </div>
               </div>
             </QueueItem>
           ))}

@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 
 from src.agents import make_lead_agent
+from src.utils.error_logging import configure_persistent_error_logging
 
 load_dotenv()
 
@@ -31,6 +32,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+configure_persistent_error_logging()
 
 
 async def main():

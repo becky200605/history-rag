@@ -3,7 +3,8 @@ import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from src.config.app_config import get_app_config
 from src.gateway.config import get_gateway_config
@@ -18,6 +19,7 @@ from src.gateway.routers import (
     uploads,
     user_knowledge,
 )
+from src.utils.error_logging import configure_persistent_error_logging, write_unhandled_error
 
 # Configure logging
 logging.basicConfig(
@@ -32,6 +34,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
+    configure_persistent_error_logging()
 
     # Load config and check necessary environment variables at startup
     try:
@@ -122,6 +125,28 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
     )
 
     # CORS is handled by nginx - no need for FastAPI middleware
+
+    @app.middleware("http")
+    async def persist_unhandled_request_errors(request: Request, call_next):
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            write_unhandled_error(
+                location="gateway.request",
+                error=str(exc),
+                context={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query": str(request.url.query),
+                    "client": request.client.host if request.client else None,
+                },
+            )
+            raise
+
+    @app.exception_handler(Exception)
+    async def handle_unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled gateway exception on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
 
     # Include routers
     # Models API is mounted at /api/models

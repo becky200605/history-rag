@@ -1,7 +1,6 @@
 import logging
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import TodoListMiddleware
 from langchain_core.runnables import RunnableConfig
 
 from src.agents.lead_agent.prompt import apply_prompt_template
@@ -12,6 +11,7 @@ from src.agents.middlewares.knowledge_checkpoint_middleware import KnowledgeChec
 from src.agents.middlewares.knowledge_directory_middleware import KnowledgeDirectoryMiddleware
 from src.agents.middlewares.memory_middleware import MemoryMiddleware
 from src.agents.middlewares.output_aware_summarization_middleware import OutputAwareSummarizationMiddleware
+from src.agents.middlewares.parallel_todo_list_middleware import TodoListMiddleware
 from src.agents.middlewares.subagent_limit_middleware import SubagentLimitMiddleware
 from src.agents.middlewares.thread_data_middleware import ThreadDataMiddleware
 from src.agents.middlewares.title_middleware import TitleMiddleware
@@ -22,6 +22,7 @@ from src.config.app_config import get_app_config
 from src.config.summarization_config import get_summarization_config
 from src.models import create_chat_model
 from src.sandbox.middleware import SandboxMiddleware
+from src.utils.error_logging import configure_persistent_error_logging
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +86,18 @@ def _create_summarization_middleware() -> OutputAwareSummarizationMiddleware | N
     return OutputAwareSummarizationMiddleware(**kwargs)
 
 
-def _create_todo_list_middleware(is_plan_mode: bool) -> TodoListMiddleware | None:
+def _create_todo_list_middleware(
+    is_plan_mode: bool,
+    *,
+    subagent_enabled: bool = False,
+    max_concurrent_subagents: int = 3,
+) -> TodoListMiddleware | None:
     """Create and configure the TodoList middleware.
 
     Args:
         is_plan_mode: Whether to enable plan mode with TodoList middleware.
+        subagent_enabled: Whether subagent/task execution is available for parallel work.
+        max_concurrent_subagents: Maximum number of parallel subagent tasks allowed.
 
     Returns:
         TodoListMiddleware instance if plan mode is enabled, None otherwise.
@@ -97,14 +105,24 @@ def _create_todo_list_middleware(is_plan_mode: bool) -> TodoListMiddleware | Non
     if not is_plan_mode:
         return None
 
+    parallel_hint = ""
+    if subagent_enabled:
+        parallel_hint = f"""
+- Treat the todo list as an execution board, not a sequential outline
+- When there are multiple independent tasks, prefer a parallel batch over single-threaded exploration
+- For historical / multi-book retrieval tasks, if several `书名 × 信息目标` items are independent, mark the current batch (up to {max_concurrent_subagents}) as `in_progress` together and launch matching parallel `task` calls in the SAME response
+- Each launched `task` should usually correspond to one active todo item; keep the `task.description` closely aligned with the todo text
+- After a batch returns, mark the finished todo items `completed` immediately, then move the next batch to `in_progress`
+"""
+
     # Custom prompts matching DeerFlow's style
-    system_prompt = """
+    system_prompt = f"""
 <todo_list_system>
 You have access to the `write_todos` tool to help you manage and track complex multi-step objectives.
 
 **CRITICAL RULES:**
 - Mark todos as completed IMMEDIATELY after finishing each step - do NOT batch completions
-- Keep EXACTLY ONE task as `in_progress` at any time (unless tasks can run in parallel)
+- Keep one or more tasks as `in_progress` according to the real execution plan; do NOT force exactly one active task when parallel work is appropriate
 - Update the todo list in REAL-TIME as you work - this gives users visibility into your progress
 - DO NOT use this tool for simple tasks (< 3 steps) - just complete them directly
 
@@ -131,13 +149,14 @@ This tool is designed for complex objectives that require systematic tracking:
 - For historical / multi-book retrieval tasks, write todo items as `书名 × 信息目标` pairs so the reading route is explicit
 - Reflect book coverage in the todo list when relevant: which books are already checked, which books are still pending, and which book you are going to inspect next
 - If subagent mode is available and several books can be searched independently, you may turn multiple `书名 × 信息目标` todo items into parallel `task` calls; default to one book per subagent for the first pass, then synthesize centrally
+{parallel_hint}
 
 **Task Management:**
 Writing todos takes time and tokens - use it when helpful for managing complex problems, not for simple requests.
 </todo_list_system>
 """
 
-    tool_description = """Use this tool to create and manage a structured task list for complex work sessions.
+    tool_description = f"""Use this tool to create and manage a structured task list for complex work sessions.
 
 **IMPORTANT: Only use this tool for complex tasks (3+ steps). For simple requests, just do the work directly.**
 
@@ -164,11 +183,12 @@ Skip this tool when:
 2. **Completing a task**: Mark it as `completed` IMMEDIATELY after finishing
 3. **Updating the list**: Add new tasks, remove irrelevant ones, or update descriptions as needed
 4. **Multiple updates**: You can make several updates at once (e.g., complete one task and start the next)
+5. **Parallel batches**: When tasks are independent, mark multiple items as `in_progress` together so the todo list matches the real execution batch
 
 ## Task States
 
 - `pending`: Task not yet started
-- `in_progress`: Currently working on (can have multiple if tasks run in parallel)
+- `in_progress`: Currently working on; use multiple active items when parallel execution is the real plan
 - `completed`: Task finished successfully
 
 ## Task Completion Requirements
@@ -195,15 +215,21 @@ If blocked, keep the task as `in_progress` and create a new task describing what
 - For historical or knowledge-base retrieval tasks, prefer todo items like `读《某书》：查某问题` instead of vague items like `继续检索`
 - If the task involves multiple books, let the todo list show the reading route: which book is already covered, which book remains pending, and which book you will search next
 - If subagent mode is enabled and the relevant books are independent enough, convert several pending `读《某书》：查某问题` items into parallel `task` calls; each subagent should usually own one book and return findings plus citation lines, then the lead agent merges them
-- **IMPORTANT**: When you write the todo list, mark your first task(s) as `in_progress` immediately
+- **IMPORTANT**: When you write the todo list, mark your first task(s) or first parallel batch as `in_progress` immediately
 - **IMPORTANT**: Unless all tasks are completed, always have at least one task `in_progress` to show progress
+{parallel_hint}
 
 Being proactive with task management demonstrates thoroughness and ensures all requirements are completed successfully.
 
 **Remember**: If you only need a few tool calls to complete a task and it's clear what to do, it's better to just do the task directly and NOT use this tool at all.
 """
 
-    return TodoListMiddleware(system_prompt=system_prompt, tool_description=tool_description)
+    return TodoListMiddleware(
+        system_prompt=system_prompt,
+        tool_description=tool_description,
+        subagent_enabled=subagent_enabled,
+        max_concurrent_subagents=max_concurrent_subagents,
+    )
 
 
 # ThreadDataMiddleware must be before SandboxMiddleware to ensure thread_id is available
@@ -241,8 +267,15 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
         middlewares.append(summarization_middleware)
 
     # Add TodoList middleware if plan mode is enabled
-    is_plan_mode = config.get("configurable", {}).get("is_plan_mode", False)
-    todo_list_middleware = _create_todo_list_middleware(is_plan_mode)
+    configurable = config.get("configurable", {})
+    is_plan_mode = configurable.get("is_plan_mode", False)
+    subagent_enabled = configurable.get("subagent_enabled", False)
+    max_concurrent_subagents = configurable.get("max_concurrent_subagents", 3)
+    todo_list_middleware = _create_todo_list_middleware(
+        is_plan_mode,
+        subagent_enabled=subagent_enabled,
+        max_concurrent_subagents=max_concurrent_subagents,
+    )
     if todo_list_middleware is not None:
         middlewares.append(todo_list_middleware)
 
@@ -260,9 +293,9 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
         middlewares.append(ViewImageMiddleware())
 
     # Add SubagentLimitMiddleware to truncate excess parallel task calls
-    subagent_enabled = config.get("configurable", {}).get("subagent_enabled", False)
+    subagent_enabled = configurable.get("subagent_enabled", False)
     if subagent_enabled:
-        max_concurrent_subagents = config.get("configurable", {}).get("max_concurrent_subagents", 3)
+        max_concurrent_subagents = configurable.get("max_concurrent_subagents", 3)
         middlewares.append(SubagentLimitMiddleware(max_concurrent=max_concurrent_subagents))
 
     # ClarificationMiddleware should always be last
@@ -271,6 +304,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
 
 
 def make_lead_agent(config: RunnableConfig):
+    configure_persistent_error_logging()
     # Lazy import to avoid circular dependency
     from src.tools import get_available_tools
 

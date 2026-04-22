@@ -126,7 +126,7 @@ def test_build_middlewares_uses_resolved_model_name_for_vision(monkeypatch):
 
     monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
     monkeypatch.setattr(lead_agent_module, "_create_summarization_middleware", lambda: None)
-    monkeypatch.setattr(lead_agent_module, "_create_todo_list_middleware", lambda is_plan_mode: None)
+    monkeypatch.setattr(lead_agent_module, "_create_todo_list_middleware", lambda is_plan_mode, **kwargs: None)
 
     middlewares = lead_agent_module._build_middlewares(
         {"configurable": {"model_name": "stale-model", "is_plan_mode": False, "subagent_enabled": False}},
@@ -141,7 +141,7 @@ def test_build_middlewares_does_not_include_book_coverage_middleware(monkeypatch
 
     monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
     monkeypatch.setattr(lead_agent_module, "_create_summarization_middleware", lambda: None)
-    monkeypatch.setattr(lead_agent_module, "_create_todo_list_middleware", lambda is_plan_mode: None)
+    monkeypatch.setattr(lead_agent_module, "_create_todo_list_middleware", lambda is_plan_mode, **kwargs: None)
 
     middlewares = lead_agent_module._build_middlewares(
         {"configurable": {"model_name": "default-model", "is_plan_mode": False, "subagent_enabled": False}},
@@ -149,3 +149,28 @@ def test_build_middlewares_does_not_include_book_coverage_middleware(monkeypatch
     )
 
     assert not any(type(m).__name__ == "BookCoverageMiddleware" for m in middlewares)
+
+
+def test_create_todo_list_middleware_uses_parallel_batch_language_when_subagents_enabled(monkeypatch):
+    captured: dict[str, str] = {}
+
+    class DummyTodoListMiddleware:
+        def __init__(self, system_prompt: str, tool_description: str, **kwargs):
+            captured["system_prompt"] = system_prompt
+            captured["tool_description"] = tool_description
+
+    monkeypatch.setattr(lead_agent_module, "TodoListMiddleware", DummyTodoListMiddleware)
+
+    middleware = lead_agent_module._create_todo_list_middleware(
+        True,
+        subagent_enabled=True,
+        max_concurrent_subagents=3,
+    )
+
+    assert middleware is not None
+    assert "execution board" in captured["system_prompt"]
+    assert "parallel batch" in captured["system_prompt"]
+    assert "up to 3" in captured["system_prompt"]
+    assert "launch matching parallel `task` calls" in captured["system_prompt"]
+    assert "Parallel batches" in captured["tool_description"]
+    assert "mark multiple items as `in_progress` together" in captured["tool_description"]

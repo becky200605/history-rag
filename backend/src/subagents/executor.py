@@ -18,6 +18,7 @@ from langchain_core.runnables import RunnableConfig
 from src.agents.thread_state import SandboxState, ThreadDataState, ThreadState
 from src.models import create_chat_model
 from src.subagents.config import SubagentConfig
+from src.utils.error_logging import append_error_doc
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +317,16 @@ class SubagentExecutor:
 
         except Exception as e:
             logger.exception(f"[trace={self.trace_id}] Subagent {self.config.name} execution failed")
+            append_error_doc(
+                location="subagent_executor.execute",
+                summary=f"Subagent {self.config.name} execution failed",
+                error=str(e),
+                context={
+                    "trace_id": self.trace_id,
+                    "subagent_name": self.config.name,
+                    "task_id": result.task_id,
+                },
+            )
             result.status = SubagentStatus.FAILED
             result.error = str(e)
             result.completed_at = datetime.now()
@@ -370,6 +381,16 @@ class SubagentExecutor:
                         _background_tasks[task_id].ai_messages = exec_result.ai_messages
                 except FuturesTimeoutError:
                     logger.error(f"[trace={self.trace_id}] Subagent {self.config.name} execution timed out after {self.config.timeout_seconds}s")
+                    append_error_doc(
+                        location="subagent_executor.execute_async",
+                        summary=f"Subagent {self.config.name} execution timed out",
+                        error=f"Execution timed out after {self.config.timeout_seconds} seconds",
+                        context={
+                            "trace_id": self.trace_id,
+                            "subagent_name": self.config.name,
+                            "task_id": task_id,
+                        },
+                    )
                     with _background_tasks_lock:
                         _background_tasks[task_id].status = SubagentStatus.TIMED_OUT
                         _background_tasks[task_id].error = f"Execution timed out after {self.config.timeout_seconds} seconds"
@@ -378,6 +399,16 @@ class SubagentExecutor:
                     execution_future.cancel()
             except Exception as e:
                 logger.exception(f"[trace={self.trace_id}] Subagent {self.config.name} async execution failed")
+                append_error_doc(
+                    location="subagent_executor.execute_async",
+                    summary=f"Subagent {self.config.name} async execution failed",
+                    error=str(e),
+                    context={
+                        "trace_id": self.trace_id,
+                        "subagent_name": self.config.name,
+                        "task_id": task_id,
+                    },
+                )
                 with _background_tasks_lock:
                     _background_tasks[task_id].status = SubagentStatus.FAILED
                     _background_tasks[task_id].error = str(e)

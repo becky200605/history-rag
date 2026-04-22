@@ -53,7 +53,7 @@ models:
 
   - name: deepseek-v3.2
     display_name: DeepSeek V3.2
-    use: src.models.patched_deepseek:PatchedChatDeepSeek
+    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
     model: deepseek/deepseek-v3.2
     base_url: https://openrouter.ai/api/v1
     api_key: $OPENAI_API_KEY

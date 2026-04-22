@@ -51,6 +51,20 @@ models:
         include_reasoning: true
     supports_vision: true
 
+  - name: deepseek-v3.2
+    display_name: DeepSeek V3.2
+    use: src.models.patched_deepseek:PatchedChatDeepSeek
+    model: deepseek/deepseek-v3.2
+    base_url: https://openrouter.ai/api/v1
+    api_key: $OPENAI_API_KEY
+    max_tokens: 8192
+    request_timeout: 18000
+    supports_thinking: true
+    when_thinking_enabled:
+      extra_body:
+        include_reasoning: true
+    supports_vision: false
+
   - name: gpt-5.4-mini
     display_name: gpt-5.4-mini
     use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning

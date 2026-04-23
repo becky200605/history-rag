@@ -18,6 +18,14 @@ class ViewedImageData(TypedDict):
     mime_type: str
 
 
+class TodoOrchestrationState(TypedDict):
+    mode: str
+    phase: str
+    last_write_todos_tool_call_id: str
+    dispatched_todo_ids: list[str]
+    dispatched_task_ids: list[str]
+
+
 def merge_artifacts(existing: list[str] | None, new: list[str] | None) -> list[str]:
     """Reducer for artifacts list - merges and deduplicates artifacts."""
     if existing is None:
@@ -51,6 +59,7 @@ class ThreadState(AgentState):
     title: NotRequired[str | None]
     artifacts: Annotated[list[str], merge_artifacts]
     todos: NotRequired[list | None]
+    todo_orchestration: NotRequired[TodoOrchestrationState | None]
     uploaded_files: NotRequired[list[dict] | None]
     viewed_images: Annotated[dict[str, ViewedImageData], merge_viewed_images]  # image_path -> {base64, mime_type}
     knowledge_reading_set_doc_ids: NotRequired[list[str] | None]

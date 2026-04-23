@@ -8,7 +8,6 @@ import uuid
 from dataclasses import replace
 from typing import Annotated, Any, Literal
 
-from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.todo import WRITE_TODOS_SYSTEM_PROMPT, WRITE_TODOS_TOOL_DESCRIPTION
 from langchain.tools import InjectedToolCallId, ToolRuntime
@@ -42,7 +41,15 @@ class Todo(TypedDict):
     error: NotRequired[str]
 
 
-class PlanningState(AgentState):
+class ParallelDispatchState(TypedDict):
+    """State recorded when a parallel todo batch is dispatched."""
+
+    dispatched: bool
+    todo_ids: list[str]
+    task_ids: list[str]
+
+
+class PlanningState(ThreadState):
     """Agent state carrying todo-board data."""
 
     todos: NotRequired[list[Todo] | None]
@@ -172,13 +179,18 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         runtime: Any,
         todos: list[Todo],
         tool_call_id: str,
-    ) -> tuple[list[Todo], list[str]]:
+    ) -> tuple[list[Todo], list[str], ParallelDispatchState]:
+        dispatch_state: ParallelDispatchState = {
+            "dispatched": False,
+            "todo_ids": [],
+            "task_ids": [],
+        }
         if not self.subagent_enabled:
-            return todos, []
+            return todos, [], dispatch_state
 
         active_todos = [todo for todo in todos if todo["status"] == "in_progress" and not todo.get("task_id")]
         if not active_todos:
-            return todos, []
+            return todos, [], dispatch_state
 
         writer = get_stream_writer()
         trace_id = None
@@ -249,6 +261,9 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
             todo["task_id"] = task_id
             todo["subagent_type"] = cast(Any, subagent_type)
             todo["task_prompt"] = task_prompt
+            dispatch_state["dispatched"] = True
+            dispatch_state["todo_ids"].append(cast(str, todo["id"]))
+            dispatch_state["task_ids"].append(task_id)
             writer({"type": "task_started", "task_id": task_id, "description": _clip_text(todo["content"], limit=60)})
             launched[task_id] = {
                 "todo": todo,
@@ -350,7 +365,24 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
             if launched:
                 time.sleep(1)
 
-        return todos, summary_lines
+        return todos, summary_lines, dispatch_state
+
+    def _build_todo_orchestration_state(
+        self,
+        *,
+        tool_call_id: str,
+        dispatch_state: ParallelDispatchState,
+    ) -> dict[str, Any] | None:
+        if not dispatch_state["dispatched"]:
+            return None
+
+        return {
+            "mode": "parallel_batch",
+            "phase": "awaiting_orchestrator",
+            "last_write_todos_tool_call_id": tool_call_id,
+            "dispatched_todo_ids": dispatch_state["todo_ids"],
+            "dispatched_task_ids": dispatch_state["task_ids"],
+        }
 
     def _build_tool_message(self, todos: list[Todo], summary_lines: list[str]) -> str:
         lines = ["Updated todo board."]
@@ -376,7 +408,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
     def _handle_write_todos(self, *, runtime: Any, todos: list[Todo], tool_call_id: str) -> Command:
         existing_todos = cast(list[Todo] | None, runtime.state.get("todos") if runtime is not None else None)
         normalized = self._normalize_todos(todos, existing_todos)
-        normalized, summary_lines = self._dispatch_parallel_todos(
+        normalized, summary_lines, dispatch_state = self._dispatch_parallel_todos(
             runtime=runtime,
             todos=normalized,
             tool_call_id=tool_call_id,
@@ -384,6 +416,10 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         return Command(
             update={
                 "todos": normalized,
+                "todo_orchestration": self._build_todo_orchestration_state(
+                    tool_call_id=tool_call_id,
+                    dispatch_state=dispatch_state,
+                ),
                 "messages": [ToolMessage(self._build_tool_message(normalized, summary_lines), tool_call_id=tool_call_id)],
             }
         )
@@ -412,12 +448,15 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         new_system_message = SystemMessage(content=cast("list[str | dict[str, str]]", new_system_content))
         return await handler(request.override(system_message=new_system_message))
 
-    def _single_write_todos_only(self, state: PlanningState) -> dict[str, Any] | None:
+    def _last_ai_message(self, state: PlanningState) -> AIMessage | None:
         messages = state.get("messages", [])
         if not messages:
             return None
 
-        last_ai_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage)), None)
+        return next((msg for msg in reversed(messages) if isinstance(msg, AIMessage)), None)
+
+    def _single_write_todos_only(self, state: PlanningState) -> dict[str, Any] | None:
+        last_ai_msg = self._last_ai_message(state)
         if not last_ai_msg or not last_ai_msg.tool_calls:
             return None
 
@@ -438,10 +477,76 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         ]
         return {"messages": error_messages}
 
+    def _write_todos_is_phase_boundary(self, state: PlanningState) -> dict[str, Any] | None:
+        last_ai_msg = self._last_ai_message(state)
+        if not last_ai_msg or not last_ai_msg.tool_calls:
+            return None
+
+        write_todos_calls = [tc for tc in last_ai_msg.tool_calls if tc["name"] == "write_todos"]
+        if not write_todos_calls:
+            return None
+
+        non_write_todos_calls = [tc for tc in last_ai_msg.tool_calls if tc["name"] != "write_todos"]
+        if not non_write_todos_calls:
+            return None
+
+        error_messages = [
+            ToolMessage(
+                content=(
+                    "Error: `write_todos` is a phase boundary for parallel orchestration. "
+                    "Do not pair it with other tool calls in the same response. "
+                    "Submit only `write_todos`, wait for the todo board update, then continue."
+                ),
+                tool_call_id=tc["id"],
+                status="error",
+            )
+            for tc in non_write_todos_calls
+        ]
+        return {"messages": error_messages}
+
+    def _enforce_parallel_orchestrator_gate(self, state: PlanningState) -> dict[str, Any] | None:
+        todo_orchestration = state.get("todo_orchestration")
+        if not todo_orchestration:
+            return None
+
+        last_ai_msg = self._last_ai_message(state)
+        if last_ai_msg is None:
+            return None
+
+        tool_calls = last_ai_msg.tool_calls or []
+        if not tool_calls:
+            return {"todo_orchestration": None}
+
+        disallowed_calls = [tc for tc in tool_calls if tc["name"] != "write_todos"]
+        if not disallowed_calls:
+            return {"todo_orchestration": None}
+
+        error_messages = [
+            ToolMessage(
+                content=(
+                    "Error: a parallel todo batch has just returned. "
+                    "The lead agent must now either call `write_todos` again to advance the board "
+                    "or respond directly with synthesis. Do not jump to other tools from the lead agent here."
+                ),
+                tool_call_id=tc["id"],
+                status="error",
+            )
+            for tc in disallowed_calls
+        ]
+        return {"messages": error_messages}
+
     @override
     def after_model(self, state: PlanningState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-        return self._single_write_todos_only(state)
+        return (
+            self._single_write_todos_only(state)
+            or self._write_todos_is_phase_boundary(state)
+            or self._enforce_parallel_orchestrator_gate(state)
+        )
 
     @override
     async def aafter_model(self, state: PlanningState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-        return self._single_write_todos_only(state)
+        return (
+            self._single_write_todos_only(state)
+            or self._write_todos_is_phase_boundary(state)
+            or self._enforce_parallel_orchestrator_gate(state)
+        )

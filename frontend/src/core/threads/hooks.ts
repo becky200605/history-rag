@@ -51,15 +51,55 @@ export function useThreadStream({
       if (
         typeof event === "object" &&
         event !== null &&
-        "type" in event &&
-        event.type === "task_running"
+        "type" in event
       ) {
-        const e = event as {
-          type: "task_running";
-          task_id: string;
-          message: AIMessage;
-        };
-        updateSubtask({ id: e.task_id, latestMessage: e.message });
+        const e = event as
+          | {
+              type: "task_started";
+              task_id: string;
+              description?: string;
+            }
+          | {
+              type: "task_running";
+              task_id: string;
+              message: AIMessage;
+            }
+          | {
+              type: "task_completed";
+              task_id: string;
+              result?: string;
+            }
+          | {
+              type: "task_failed" | "task_timed_out";
+              task_id: string;
+              error?: string;
+            };
+
+        if (e.type === "task_started") {
+          updateSubtask({
+            id: e.task_id,
+            status: "in_progress",
+            description: e.description ?? e.task_id,
+          });
+        } else if (e.type === "task_running") {
+          updateSubtask({
+            id: e.task_id,
+            status: "in_progress",
+            latestMessage: e.message,
+          });
+        } else if (e.type === "task_completed") {
+          updateSubtask({
+            id: e.task_id,
+            status: "completed",
+            result: e.result,
+          });
+        } else if (e.type === "task_failed" || e.type === "task_timed_out") {
+          updateSubtask({
+            id: e.task_id,
+            status: "failed",
+            error: e.error,
+          });
+        }
       }
     },
     onFinish(state) {

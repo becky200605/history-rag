@@ -236,15 +236,35 @@ def extract_document_context(
     *,
     payload: dict[str, Any],
     page_no: int | None = None,
+    page_no_end: int | None = None,
     pdf_page_no: int | None = None,
+    pdf_page_no_end: int | None = None,
     paragraph_no: int | None = None,
     line_start: int | None = None,
     line_end: int | None = None,
     window: int = 1,
 ) -> list[dict[str, Any]]:
     """Extract matching paragraphs plus optional nearby context."""
-    if page_no is None and pdf_page_no is None and paragraph_no is None and line_start is None and line_end is None:
-        raise ValueError("At least one of page_no, pdf_page_no, paragraph_no, line_start, or line_end is required")
+    if (
+        page_no is None
+        and page_no_end is None
+        and pdf_page_no is None
+        and pdf_page_no_end is None
+        and paragraph_no is None
+        and line_start is None
+        and line_end is None
+    ):
+        raise ValueError(
+            "At least one of page_no, page_no_end, pdf_page_no, pdf_page_no_end, paragraph_no, line_start, or line_end is required"
+        )
+    if page_no_end is not None and page_no is None:
+        raise ValueError("page_no_end requires page_no")
+    if pdf_page_no_end is not None and pdf_page_no is None:
+        raise ValueError("pdf_page_no_end requires pdf_page_no")
+    if page_no is not None and page_no_end is not None and page_no_end < page_no:
+        raise ValueError("page_no_end must be greater than or equal to page_no")
+    if pdf_page_no is not None and pdf_page_no_end is not None and pdf_page_no_end < pdf_page_no:
+        raise ValueError("pdf_page_no_end must be greater than or equal to pdf_page_no")
 
     pages = payload.get("pages") or []
     selected: dict[tuple[int, int], dict[str, Any]] = {}
@@ -263,7 +283,8 @@ def extract_document_context(
         }
 
         if page_no is not None and paragraph_no is None and line_start is None and line_end is None:
-            if current_page_no == page_no:
+            page_no_upper = page_no_end if page_no_end is not None else page_no
+            if page_no <= current_page_no <= page_no_upper:
                 for para in paragraphs:
                     selected[(current_pdf_page_no, int(para.get("paragraph_no") or 0))] = {
                         **page_context,
@@ -272,7 +293,8 @@ def extract_document_context(
                 continue
 
         if pdf_page_no is not None and paragraph_no is None and line_start is None and line_end is None:
-            if current_pdf_page_no == pdf_page_no:
+            pdf_page_upper = pdf_page_no_end if pdf_page_no_end is not None else pdf_page_no
+            if pdf_page_no <= current_pdf_page_no <= pdf_page_upper:
                 for para in paragraphs:
                     selected[(current_pdf_page_no, int(para.get("paragraph_no") or 0))] = {
                         **page_context,
@@ -286,10 +308,14 @@ def extract_document_context(
             para_line_end = para.get("line_end")
 
             matches = True
-            if page_no is not None and current_page_no != page_no:
-                matches = False
-            if pdf_page_no is not None and current_pdf_page_no != pdf_page_no:
-                matches = False
+            if page_no is not None:
+                page_no_upper = page_no_end if page_no_end is not None else page_no
+                if not (page_no <= current_page_no <= page_no_upper):
+                    matches = False
+            if pdf_page_no is not None:
+                pdf_page_upper = pdf_page_no_end if pdf_page_no_end is not None else pdf_page_no
+                if not (pdf_page_no <= current_pdf_page_no <= pdf_page_upper):
+                    matches = False
             if paragraph_no is not None and current_paragraph_no != paragraph_no:
                 matches = False
             if (line_start is not None or line_end is not None) and para_line_start is not None and para_line_end is not None:

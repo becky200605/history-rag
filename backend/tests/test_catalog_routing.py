@@ -1276,3 +1276,71 @@ def test_knowledge_locate_tool_emits_citations_and_page_level_followup_guidance(
     assert "citation: [citation:财政史 原书第12页第4段]" in output
     assert "如果当前这次 `knowledge_locate` 只定位到页级" in output
     assert "再追加一次 `knowledge_locate(doc_id=..., page_no=... 或 pdf_page_no=..., paragraph_no=...)`" in output
+
+
+def test_knowledge_locate_tool_supports_multi_page_ranges(monkeypatch) -> None:
+    monkeypatch.setattr(tools_module, "_visible_catalog_entries", lambda **kwargs: [])
+    monkeypatch.setattr(
+        tools_module,
+        "_resolve_requested_doc_ids",
+        lambda doc_ids, visible_entries: (doc_ids, [], {}),
+    )
+    monkeypatch.setattr(
+        tools_module,
+        "locate_document",
+        lambda thread_id, user_id=None, doc_id=None, filename=None: SimpleNamespace(
+            doc_id=doc_id or "global-doc",
+            title="财政史",
+            filename="finance.pdf",
+            scope="global",
+            source_url="/api/knowledge/docs/finance.pdf",
+            original_url=None,
+            payload={"pages": []},
+        ),
+    )
+    captured: dict[str, int | None] = {}
+
+    def fake_extract_document_context(**kwargs):
+        captured["pdf_page_no"] = kwargs.get("pdf_page_no")
+        captured["pdf_page_no_end"] = kwargs.get("pdf_page_no_end")
+        return [
+            {
+                "page_no": 12,
+                "pdf_page_no": 12,
+                "paragraph_no": 1,
+                "text": "第 12 页片段。",
+            },
+            {
+                "page_no": 13,
+                "pdf_page_no": 13,
+                "paragraph_no": 2,
+                "text": "第 13 页片段。",
+            },
+        ]
+
+    monkeypatch.setattr(tools_module, "extract_document_context", fake_extract_document_context)
+    monkeypatch.setattr(
+        tools_module,
+        "resolve_result_citation_context",
+        lambda result, thread_id=None, user_id=None: {
+            "source_url": "/api/knowledge/docs/finance.pdf",
+            "citation_url": "/api/knowledge/docs/finance.pdf?page_no=12",
+            "citation_title": "财政史",
+            "citation_page_no": result["metadata"]["page_no"],
+            "citation_pdf_page_no": result["metadata"]["pdf_page_no"],
+            "citation_paragraph_no": result["metadata"]["paragraph_no"],
+            "citation_page": None,
+        },
+    )
+
+    output = tools_module.knowledge_locate_tool.func(
+        SimpleNamespace(context={}),
+        doc_id="global-doc",
+        pdf_page_no=12,
+        pdf_page_no_end=13,
+    )
+
+    assert captured == {"pdf_page_no": 12, "pdf_page_no_end": 13}
+    assert "第 12 页片段。" in output
+    assert "第 13 页片段。" in output
+    assert "连续页范围展开" in output

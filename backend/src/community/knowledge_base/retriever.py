@@ -462,12 +462,17 @@ class KnowledgeBaseRetriever:
                     existing_queries.append(matched_query)
             if result.get("matched_query") and result["matched_query"] not in existing_queries:
                 existing_queries.append(result["matched_query"])
+            existing_keywords = existing.setdefault("matched_keywords", [])
+            for matched_keyword in result.get("matched_keywords") or []:
+                if matched_keyword not in existing_keywords:
+                    existing_keywords.append(matched_keyword)
             if result.get("weighted_score", result.get("score", 0)) > existing.get(
                 "weighted_score",
                 existing.get("score", 0),
             ):
                 existing.update(result)
                 existing["matched_queries"] = existing_queries
+                existing["matched_keywords"] = existing_keywords
 
         return list(deduped.values())
 

@@ -98,6 +98,7 @@ if "src.community.knowledge_base.translation_grpc" not in sys.modules:
     sys.modules["src.community.knowledge_base.translation_grpc"] = translation_grpc
 
 import src.community.knowledge_base.indexer as indexer_module
+import src.community.knowledge_base.lexical_search as lexical_search_module
 import src.community.knowledge_base.retriever as retriever_module
 import src.community.knowledge_base.user_spaces as user_spaces_module
 import src.community.knowledge_base.user_store as user_store_module
@@ -788,6 +789,102 @@ def test_lexical_candidate_documents_respect_doc_ids_for_user_and_thread(monkeyp
     )
 
     assert [doc["doc_id"] for doc in documents] == ["uk_hit", "thread_hit.md", "global-hit"]
+
+
+def test_lexical_search_documents_surfaces_exact_keywords_from_structured_payload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        lexical_search_module,
+        "_iter_candidate_documents",
+        lambda thread_id, user_id, doc_ids=None, scopes=None: iter(
+            [
+                {
+                    "doc_id": "global-hit",
+                    "title": "财政史",
+                    "filename": "finance.md",
+                    "scope": "global",
+                    "source": "/tmp/finance.structured.json",
+                    "payload": {
+                        "pages": [
+                            {
+                                "page_no": 8,
+                                "pdf_page_no": 10,
+                                "book_page_no": 8,
+                                "page_number_source": "book",
+                                "paragraphs": [
+                                    {
+                                        "paragraph_no": 2,
+                                        "paragraph_no_in_doc": 22,
+                                        "line_start": 100,
+                                        "line_end": 106,
+                                        "text": "本页明确写到统税清册由财政部门统一造报。",
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                }
+            ]
+        ),
+    )
+
+    results = lexical_search_module.lexical_search_documents(
+        "统税清册",
+        scopes=["global"],
+        top_k=3,
+    )
+
+    assert len(results) == 1
+    assert results[0]["match_type"] == "exact_keyword"
+    assert "统税清册" in results[0]["matched_keywords"]
+    assert results[0]["metadata"]["page_no"] == 8
+
+
+def test_retriever_preserves_matched_keywords_from_lexical_results(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            retrieval=SimpleNamespace(top_k=3, score_threshold=0.0),
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
+    monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
+    monkeypatch.setattr(retriever_module, "_looks_like_exact_lookup", lambda query: True)
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
+    monkeypatch.setattr(retriever, "_search_collection", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        retriever_module,
+        "lexical_search_documents",
+        lambda *args, **kwargs: [
+            {
+                "content": "本页明确写到统税清册由财政部门统一造报。",
+                "score": 0.88,
+                "matched_keywords": ["统税清册"],
+                "match_type": "exact_keyword",
+                "filename": "finance.md",
+                "source": "/tmp/finance.structured.json",
+                "page": None,
+                "source_type": "structured",
+                "collection_name": "lexical_fallback",
+                "metadata": {
+                    "scope": "global",
+                    "source_kind": "global_document",
+                    "doc_id": "global-hit",
+                    "title": "财政史",
+                    "page_no": 8,
+                    "pdf_page_no": 10,
+                    "paragraph_no": 2,
+                },
+            }
+        ],
+    )
+
+    results = retriever.search("统税清册", scopes=["global"])
+
+    assert len(results) == 1
+    assert results[0]["matched_keywords"] == ["统税清册"]
 
 
 def test_get_qdrant_client_uses_configured_server_timeout(monkeypatch) -> None:

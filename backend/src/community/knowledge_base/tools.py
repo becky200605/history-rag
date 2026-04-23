@@ -1246,6 +1246,7 @@ def knowledge_search_tool(
         line_start = metadata.get("line_start")
         line_end = metadata.get("line_end")
         matched_queries = [str(item) for item in result.get("matched_queries") or [] if str(item).strip()]
+        matched_keywords = [str(item) for item in result.get("matched_keywords") or [] if str(item).strip()]
         citation_context = resolve_result_citation_context(
             result,
             thread_id=runtime.context.get("thread_id"),
@@ -1267,6 +1268,8 @@ def knowledge_search_tool(
             formatted_output += f"doc_id: {doc_id}\n"
         if matched_queries:
             formatted_output += f"命中分面: {'、'.join(matched_queries)}\n"
+        if matched_keywords:
+            formatted_output += f"精确关键词命中: {'、'.join(matched_keywords)}\n"
         if citation_context.get("source_label") and citation_context.get("source_scope") in {"user", "thread"}:
             formatted_output += f"来源类型: {citation_context['source_label']}\n"
         if (
@@ -1318,7 +1321,9 @@ def knowledge_locate_tool(
     doc_id: str | None = None,
     filename: str | None = None,
     page_no: int | None = None,
+    page_no_end: int | None = None,
     pdf_page_no: int | None = None,
+    pdf_page_no_end: int | None = None,
     paragraph_no: int | None = None,
     line_start: int | None = None,
     line_end: int | None = None,
@@ -1336,7 +1341,9 @@ def knowledge_locate_tool(
         doc_id: Optional document ID returned by `book_search` or `knowledge_search`.
         filename: Optional source filename if doc_id is unavailable.
         page_no: Optional page number to inspect.
+        page_no_end: Optional inclusive ending page number when reading multiple original-book pages.
         pdf_page_no: Optional physical PDF page number to inspect.
+        pdf_page_no_end: Optional inclusive ending PDF page number when reading multiple PDF pages.
         paragraph_no: Optional paragraph number to inspect.
         line_start: Optional starting line number to inspect.
         line_end: Optional ending line number to inspect.
@@ -1407,7 +1414,9 @@ def knowledge_locate_tool(
 
     navigation_mode = (
         page_no is None
+        and page_no_end is None
         and pdf_page_no is None
+        and pdf_page_no_end is None
         and paragraph_no is None
         and line_start is None
         and line_end is None
@@ -1417,6 +1426,10 @@ def knowledge_locate_tool(
         and paragraph_no is None
         and line_start is None
         and line_end is None
+    )
+    multi_page_mode = (
+        (page_no is not None and page_no_end is not None and page_no_end != page_no)
+        or (pdf_page_no is not None and pdf_page_no_end is not None and pdf_page_no_end != pdf_page_no)
     )
 
     if navigation_mode:
@@ -1461,7 +1474,9 @@ def knowledge_locate_tool(
         excerpts = extract_document_context(
             payload=document.payload,
             page_no=page_no,
+            page_no_end=page_no_end,
             pdf_page_no=pdf_page_no,
+            pdf_page_no_end=pdf_page_no_end,
             paragraph_no=paragraph_no,
             line_start=line_start,
             line_end=line_end,
@@ -1508,7 +1523,12 @@ def knowledge_locate_tool(
         lines.append("")
 
     lines.append("---")
-    if page_level_only:
+    if multi_page_mode:
+        lines.append(
+            "这次 `knowledge_locate` 已按连续页范围展开，适合快速通读多页正文。"
+            "如果你接下来要写精确引文或要锁定一句原文，再缩回到具体 `page_no` / `pdf_page_no` + `paragraph_no` 做一次更细定位。"
+        )
+    elif page_level_only:
         lines.append(
             "如果当前这次 `knowledge_locate` 只定位到页级（只给了 `page_no` / `pdf_page_no`，还没给 `paragraph_no`），"
             "把这一步当作缩小范围，不要直接据此结束。先从上面的片段里挑出最相关的 `paragraph_no`，"

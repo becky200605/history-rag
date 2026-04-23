@@ -7,6 +7,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Any, Iterator
+import re
 
 from src.community.knowledge_base.common import (
     derive_global_doc_id,
@@ -23,7 +24,57 @@ from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
 LEXICAL_SCORE_THRESHOLD = 0.18
+MAX_EXACT_KEYWORDS = 8
+GENERIC_EXACT_KEYWORDS = {
+    "什么",
+    "如何",
+    "情况",
+    "概况",
+    "变化",
+    "变迁",
+    "问题",
+    "原因",
+    "影响",
+    "哪些",
+    "哪里",
+    "为什么",
+}
 logger = logging.getLogger(__name__)
+
+
+def _normalize_exact_text(text: str) -> str:
+    return re.sub(r"\s+", "", normalize_search_text(text))
+
+
+def _extract_exact_keywords(query: str) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(value: str) -> None:
+        normalized = _normalize_exact_text(value)
+        if (
+            not normalized
+            or normalized in seen
+            or normalized in GENERIC_EXACT_KEYWORDS
+            or len(candidates) >= MAX_EXACT_KEYWORDS
+        ):
+            return
+        if re.fullmatch(r"[a-z0-9]+", normalized) and len(normalized) < 4:
+            return
+        if re.search(r"[\u4e00-\u9fff]", normalized) and len(normalized) < 2:
+            return
+        seen.add(normalized)
+        candidates.append(normalized)
+
+    for matched in re.findall(r"[“\"'‘](.+?)[”\"'’]", query):
+        add_candidate(matched)
+
+    add_candidate(query)
+
+    for token in tokenize_search_text(query):
+        add_candidate(token)
+
+    return candidates
 
 def _iter_global_documents(doc_ids: set[str] | None = None) -> Iterator[dict[str, Any]]:
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
@@ -142,15 +193,29 @@ def _iter_candidate_documents(
 def _score_paragraph(
     query: str,
     paragraph_text: str,
-) -> float:
+    *,
+    exact_keywords: list[str] | None = None,
+) -> tuple[float, list[str]]:
     normalized_query = normalize_search_text(query)
     normalized_text = normalize_search_text(paragraph_text)
     if not normalized_text:
-        return 0.0
+        return 0.0, []
 
     score = 0.0
+    matched_keywords: list[str] = []
     if normalized_query and len(normalized_query) >= 8 and normalized_query in normalized_text:
         score += 0.6
+
+    normalized_exact_text = _normalize_exact_text(paragraph_text)
+    if exact_keywords and normalized_exact_text:
+        for keyword in exact_keywords:
+            if keyword in normalized_exact_text:
+                matched_keywords.append(keyword)
+
+    if matched_keywords:
+        coverage = len(matched_keywords) / max(len(exact_keywords or []), 1)
+        longest_keyword = max(len(keyword) for keyword in matched_keywords)
+        score += min(0.72, 0.42 + coverage * 0.18 + min(longest_keyword, 16) * 0.01)
 
     query_tokens = set(tokenize_search_text(query))
     paragraph_tokens = set(tokenize_search_text(paragraph_text))
@@ -160,7 +225,7 @@ def _score_paragraph(
             overlap_ratio = len(overlap) / max(len(query_tokens), 1)
             score += min(0.3, overlap_ratio * 0.3)
 
-    return min(score, 0.99)
+    return min(score, 0.99), matched_keywords
 
 
 def lexical_search_documents(
@@ -174,6 +239,7 @@ def lexical_search_documents(
 ) -> list[dict[str, Any]]:
     """Scan structured documents lexically for quote-like or table-title queries."""
     started_at = time.perf_counter()
+    exact_keywords = _extract_exact_keywords(query)
     results: list[dict[str, Any]] = []
     document_count = 0
     page_count = 0
@@ -195,7 +261,11 @@ def lexical_search_documents(
             for paragraph in page.get("paragraphs") or []:
                 paragraph_count += 1
                 content = str(paragraph.get("text") or "").strip()
-                score = _score_paragraph(query, content)
+                score, matched_keywords = _score_paragraph(
+                    query,
+                    content,
+                    exact_keywords=exact_keywords,
+                )
                 if score < LEXICAL_SCORE_THRESHOLD:
                     continue
                 metadata = {
@@ -226,6 +296,8 @@ def lexical_search_documents(
                         "content": content,
                         "metadata": metadata,
                         "score": score,
+                        "matched_keywords": matched_keywords,
+                        "match_type": "exact_keyword" if matched_keywords else "lexical",
                         "source": document["source"],
                         "filename": document["filename"],
                         "collection_name": "lexical_fallback",

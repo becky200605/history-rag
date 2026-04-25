@@ -338,6 +338,7 @@ function ChatPageContent({
     }),
     [persistedContext, settings.context],
   );
+  const [liveTodos, setLiveTodos] = useState<Todo[] | null>(null);
   const thread = useThreadStream({
     isNewThread,
     threadId,
@@ -371,6 +372,7 @@ function ChatPageContent({
       );
     },
     onFinish: (state) => {
+      setLiveTodos(state.todos ?? null);
       setFinalState(state);
       if (document.hidden || !document.hasFocus()) {
         let body = "Conversation finished";
@@ -388,6 +390,18 @@ function ChatPageContent({
         showNotification(state.title, {
           body,
         });
+      }
+    },
+    onCustomEvent: (event) => {
+      if (
+        typeof event === "object" &&
+        event !== null &&
+        "type" in event &&
+        event.type === "todo_board_updated" &&
+        "todos" in event &&
+        Array.isArray(event.todos)
+      ) {
+        setLiveTodos(event.todos as Todo[]);
       }
     },
   }) as unknown as UseStream<AgentThreadState>;
@@ -464,29 +478,33 @@ function ChatPageContent({
 
   const [todoListCollapsed, setTodoListCollapsed] = useState(true);
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
+  const displayedTodos = useMemo(
+    () => liveTodos ?? thread.values.todos ?? [],
+    [liveTodos, thread.values.todos],
+  );
 
   const selectedTodo = useMemo(() => {
     if (!selectedTodoId) {
       return null;
     }
     return (
-      thread.values.todos?.find(
+      displayedTodos.find(
         (todo) => (todo.id ?? todo.task_id ?? null) === selectedTodoId,
       ) ?? null
     );
-  }, [selectedTodoId, thread.values.todos]);
+  }, [displayedTodos, selectedTodoId]);
 
   useEffect(() => {
     if (!selectedTodoId) {
       return;
     }
-    const exists = thread.values.todos?.some(
+    const exists = displayedTodos.some(
       (todo) => (todo.id ?? todo.task_id ?? null) === selectedTodoId,
     );
     if (!exists) {
       setSelectedTodoId(null);
     }
-  }, [selectedTodoId, thread.values.todos]);
+  }, [displayedTodos, selectedTodoId]);
 
   const resolvedModelName = useMemo(() => {
     if (models.length === 0) {
@@ -546,13 +564,20 @@ function ChatPageContent({
     settings.context.model_name,
   ]);
 
-  const handleSubmit = useSubmitThread({
+  const submitThread = useSubmitThread({
     isNewThread,
     threadId,
     thread,
     threadContext,
     displayContext: resolvedContext,
   });
+  const handleSubmit = useCallback(
+    async (...args: Parameters<typeof submitThread>) => {
+      setLiveTodos(null);
+      await submitThread(...args);
+    },
+    [submitThread],
+  );
   const handleStop = useCallback(async () => {
     await thread.stop();
   }, [thread]);
@@ -628,13 +653,10 @@ function ChatPageContent({
                     <div className="absolute bottom-full right-0 left-0 mb-1 z-0">
                       <TodoList
                         className="bg-transparent"
-                        todos={thread.values.todos ?? []}
+                        todos={displayedTodos}
                         collapsed={todoListCollapsed}
                         selectedTodoId={selectedTodoId}
-                        hidden={
-                          !thread.values.todos ||
-                          thread.values.todos.length === 0
-                        }
+                        hidden={displayedTodos.length === 0}
                         onSelectTodo={handleSelectTodo}
                         onToggle={() =>
                           setTodoListCollapsed(!todoListCollapsed)

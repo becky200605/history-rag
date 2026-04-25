@@ -74,6 +74,10 @@ def _build_default_task_prompt(todo: Todo) -> str:
     )
 
 
+def _serialize_todos_for_event(todos: list[Todo]) -> list[dict[str, Any]]:
+    return [dict(todo) for todo in todos]
+
+
 class TodoListMiddleware(AgentMiddleware[PlanningState]):
     """Middleware that turns the todo list into a lightweight execution board."""
 
@@ -188,8 +192,10 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         if not self.subagent_enabled:
             return todos, [], dispatch_state
 
-        active_todos = [todo for todo in todos if todo["status"] == "in_progress" and not todo.get("task_id")]
-        if not active_todos:
+        queued_todos = [
+            todo for todo in todos if todo["status"] in {"in_progress", "pending"} and not todo.get("task_id")
+        ]
+        if not queued_todos:
             return todos, [], dispatch_state
 
         writer = get_stream_writer()
@@ -215,72 +221,76 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         tools = get_available_tools(model_name=parent_model, subagent_enabled=False)
 
         summary_lines: list[str] = []
-        dispatch_batch = active_todos[: self.max_concurrent_subagents]
-        deferred_batch = active_todos[self.max_concurrent_subagents :]
-        deferred_ids = {todo["id"] for todo in deferred_batch if todo.get("id")}
-        if deferred_batch:
+        if len(queued_todos) > self.max_concurrent_subagents:
             summary_lines.append(
-                f"仅并行派发了前 {self.max_concurrent_subagents} 个 todo；其余 {len(deferred_batch)} 个保留待下一批执行。"
+                f"检测到 {len(queued_todos)} 个待执行 todo；系统会按最多 {self.max_concurrent_subagents} 个并发子任务自动分批执行。"
             )
-            for todo in todos:
-                if todo.get("id") in deferred_ids:
-                    todo["status"] = "pending"
+        writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
 
+        queue: list[Todo] = list(queued_todos)
         launched: dict[str, dict[str, Any]] = {}
-        for index, todo in enumerate(dispatch_batch, start=1):
-            subagent_type = cast(str, todo.get("subagent_type") or "general-purpose")
-            config = self._build_subagent_config(subagent_type)
-            if config is None:
-                todo["status"] = "failed"
-                todo["error"] = f"Unknown subagent type: {subagent_type}"
-                append_error_doc(
-                    location="parallel_todo_list_middleware",
-                    summary="Todo could not be dispatched because subagent type was unknown",
-                    error=todo["error"],
-                    context={
-                        "todo_id": todo.get("id"),
-                        "content": todo["content"],
-                        "subagent_type": subagent_type,
-                    },
+
+        while queue or launched:
+            while queue and len(launched) < self.max_concurrent_subagents:
+                todo = queue.pop(0)
+                subagent_type = cast(str, todo.get("subagent_type") or "general-purpose")
+                config = self._build_subagent_config(subagent_type)
+                if config is None:
+                    todo["status"] = "failed"
+                    todo["error"] = f"Unknown subagent type: {subagent_type}"
+                    append_error_doc(
+                        location="parallel_todo_list_middleware",
+                        summary="Todo could not be dispatched because subagent type was unknown",
+                        error=todo["error"],
+                        context={
+                            "todo_id": todo.get("id"),
+                            "content": todo["content"],
+                            "subagent_type": subagent_type,
+                        },
+                    )
+                    writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
+                    summary_lines.append(f"[failed] {todo['content']}：未知子代理类型 {subagent_type}")
+                    continue
+
+                executor = SubagentExecutor(
+                    config=config,
+                    tools=tools,
+                    parent_model=parent_model,
+                    sandbox_state=sandbox_state,
+                    thread_data=thread_data,
+                    thread_id=thread_id,
+                    trace_id=trace_id,
                 )
-                summary_lines.append(f"[failed] {todo['content']}：未知子代理类型 {subagent_type}")
-                continue
 
-            executor = SubagentExecutor(
-                config=config,
-                tools=tools,
-                parent_model=parent_model,
-                sandbox_state=sandbox_state,
-                thread_data=thread_data,
-                thread_id=thread_id,
-                trace_id=trace_id,
-            )
+                task_id = f"{tool_call_id}:{todo['id']}"
+                task_prompt = cast(str, todo.get("task_prompt") or _build_default_task_prompt(todo))
+                todo["status"] = "in_progress"
+                todo["task_id"] = task_id
+                todo["subagent_type"] = cast(Any, subagent_type)
+                todo["task_prompt"] = task_prompt
+                dispatch_state["dispatched"] = True
+                dispatch_state["todo_ids"].append(cast(str, todo["id"]))
+                dispatch_state["task_ids"].append(task_id)
+                writer({"type": "task_started", "task_id": task_id, "description": _clip_text(todo["content"], limit=60)})
+                writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
+                launched[task_id] = {
+                    "todo": todo,
+                    "message_count": 0,
+                    "timeout_seconds": config.timeout_seconds,
+                }
+                executor.execute_async(task_prompt, task_id=task_id)
+                logger.info(
+                    "[trace=%s] Dispatched todo subtask %s (active=%s queued=%s): %s",
+                    trace_id,
+                    task_id,
+                    len(launched),
+                    len(queue),
+                    todo["content"],
+                )
 
-            task_id = f"{tool_call_id}:{todo['id']}"
-            task_prompt = cast(str, todo.get("task_prompt") or _build_default_task_prompt(todo))
-            todo["task_id"] = task_id
-            todo["subagent_type"] = cast(Any, subagent_type)
-            todo["task_prompt"] = task_prompt
-            dispatch_state["dispatched"] = True
-            dispatch_state["todo_ids"].append(cast(str, todo["id"]))
-            dispatch_state["task_ids"].append(task_id)
-            writer({"type": "task_started", "task_id": task_id, "description": _clip_text(todo["content"], limit=60)})
-            launched[task_id] = {
-                "todo": todo,
-                "message_count": 0,
-                "timeout_seconds": config.timeout_seconds,
-            }
-            executor.execute_async(task_prompt, task_id=task_id)
-            logger.info(
-                "[trace=%s] Dispatched todo subtask %s (%s/%s): %s",
-                trace_id,
-                task_id,
-                index,
-                len(dispatch_batch),
-                todo["content"],
-            )
+            if not launched:
+                break
 
-        while launched:
             completed_task_ids: list[str] = []
             for task_id, meta in list(launched.items()):
                 result = get_background_task_result(task_id)
@@ -300,6 +310,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                         },
                     )
                     writer({"type": "task_failed", "task_id": task_id, "error": todo["error"]})
+                    writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
                     summary_lines.append(f"[failed] {todo['content']}：{todo['error']}")
                     completed_task_ids.append(task_id)
                     continue
@@ -324,6 +335,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                         todo["result_summary"] = _clip_text(result.result, limit=320)
                     todo.pop("error", None)
                     writer({"type": "task_completed", "task_id": task_id, "result": result.result})
+                    writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
                     summary_lines.append(f"[completed] {todo['content']}：{todo.get('result_summary', '已完成')}")
                     completed_task_ids.append(task_id)
                 elif result.status == SubagentStatus.FAILED:
@@ -340,6 +352,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                         },
                     )
                     writer({"type": "task_failed", "task_id": task_id, "error": todo["error"]})
+                    writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
                     summary_lines.append(f"[failed] {todo['content']}：{todo['error']}")
                     completed_task_ids.append(task_id)
                 elif result.status == SubagentStatus.TIMED_OUT:
@@ -356,13 +369,14 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                         },
                     )
                     writer({"type": "task_timed_out", "task_id": task_id, "error": todo["error"]})
+                    writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
                     summary_lines.append(f"[failed] {todo['content']}：{todo['error']}")
                     completed_task_ids.append(task_id)
 
             for task_id in completed_task_ids:
                 launched.pop(task_id, None)
 
-            if launched:
+            if launched or queue:
                 time.sleep(1)
 
         return todos, summary_lines, dispatch_state
@@ -373,16 +387,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         tool_call_id: str,
         dispatch_state: ParallelDispatchState,
     ) -> dict[str, Any] | None:
-        if not dispatch_state["dispatched"]:
-            return None
-
-        return {
-            "mode": "parallel_batch",
-            "phase": "awaiting_orchestrator",
-            "last_write_todos_tool_call_id": tool_call_id,
-            "dispatched_todo_ids": dispatch_state["todo_ids"],
-            "dispatched_task_ids": dispatch_state["task_ids"],
-        }
+        return None
 
     def _build_tool_message(self, todos: list[Todo], summary_lines: list[str]) -> str:
         lines = ["Updated todo board."]
@@ -504,43 +509,11 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         ]
         return {"messages": error_messages}
 
-    def _enforce_parallel_orchestrator_gate(self, state: PlanningState) -> dict[str, Any] | None:
-        todo_orchestration = state.get("todo_orchestration")
-        if not todo_orchestration:
-            return None
-
-        last_ai_msg = self._last_ai_message(state)
-        if last_ai_msg is None:
-            return None
-
-        tool_calls = last_ai_msg.tool_calls or []
-        if not tool_calls:
-            return {"todo_orchestration": None}
-
-        disallowed_calls = [tc for tc in tool_calls if tc["name"] != "write_todos"]
-        if not disallowed_calls:
-            return {"todo_orchestration": None}
-
-        error_messages = [
-            ToolMessage(
-                content=(
-                    "Error: a parallel todo batch has just returned. "
-                    "The lead agent must now either call `write_todos` again to advance the board "
-                    "or respond directly with synthesis. Do not jump to other tools from the lead agent here."
-                ),
-                tool_call_id=tc["id"],
-                status="error",
-            )
-            for tc in disallowed_calls
-        ]
-        return {"messages": error_messages}
-
     @override
     def after_model(self, state: PlanningState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
         return (
             self._single_write_todos_only(state)
             or self._write_todos_is_phase_boundary(state)
-            or self._enforce_parallel_orchestrator_gate(state)
         )
 
     @override
@@ -548,5 +521,4 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         return (
             self._single_write_todos_only(state)
             or self._write_todos_is_phase_boundary(state)
-            or self._enforce_parallel_orchestrator_gate(state)
         )

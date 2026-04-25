@@ -42,10 +42,25 @@ export function useUpdateSubtask() {
   const { setTasks } = useSubtaskContext();
   const updateSubtask = useCallback(
     (task: Partial<Subtask> & { id: string }) => {
-      setTasks((prevTasks) => ({
-        ...prevTasks,
-        [task.id]: { ...prevTasks[task.id], ...task } as Subtask,
-      }));
+      setTasks((prevTasks) => {
+        const previousTask = prevTasks[task.id];
+        const nextTask = {
+          ...previousTask,
+          ...task,
+        } as Subtask;
+
+        if (task.messages && task.messages.length > 0) {
+          nextTask.messages = [
+            ...(previousTask?.messages ?? []),
+            ...task.messages,
+          ];
+        }
+
+        return {
+          ...prevTasks,
+          [task.id]: nextTask,
+        };
+      });
     },
     [setTasks],
   );

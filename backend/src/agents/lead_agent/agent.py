@@ -110,12 +110,11 @@ def _create_todo_list_middleware(
         parallel_hint = f"""
 - Treat the todo list as an execution board, not a sequential outline
 - When there are multiple independent tasks, prefer a parallel batch over single-threaded exploration
-- `write_todos` is the dispatch point: when you mark a batch (up to {max_concurrent_subagents}) as `in_progress`, the system will launch and wait for the matching subagent work for you
+- `write_todos` is the dispatch point: once you submit the todo board, the system will drain the queued todos for you in batches of up to {max_concurrent_subagents} concurrent subagents
 - `write_todos` is also a hard phase boundary: do not combine it with `bash`, `task`, `knowledge_search`, or any other tool call in the same response
 - Do NOT mirror the same batch with manual `task` calls in the same response after calling `write_todos`
-- Keep each active todo scoped like one execution lane, usually one `书名 × 信息目标` item per subagent-sized unit of work
-- After a parallel batch returns, the next step must be either another `write_todos` call to advance the board or a direct synthesis/final response; do not resume arbitrary lead-agent tool work in between
-- After a batch returns, mark the finished todo items `completed` immediately, then move the next batch to `in_progress`
+- Keep each todo scoped like one execution lane, usually one `书名 × 信息目标` item per subagent-sized unit of work
+- The tool will keep control until the queued todo batches finish; do not plan a second orchestration loop outside the tool call
 """
 
     # Custom prompts matching DeerFlow's style

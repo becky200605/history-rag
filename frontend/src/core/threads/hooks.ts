@@ -16,6 +16,7 @@ import { authClient } from "@/server/better-auth/client";
 import { getAPIClient } from "../api";
 import { useUpdateSubtask } from "../tasks/context";
 import { buildThreadDisplayMetadata } from "../threads/utils";
+import type { Todo } from "../todos";
 import { uploadFiles } from "../uploads";
 
 import type {
@@ -29,11 +30,13 @@ export function useThreadStream({
   isNewThread,
   onCreated,
   onFinish,
+  onCustomEvent,
 }: {
   isNewThread: boolean;
   threadId: string | null | undefined;
   onCreated?: (run: { run_id: string; thread_id: string }) => void;
   onFinish?: (state: AgentThreadState) => void;
+  onCustomEvent?: (event: unknown) => void;
 }) {
   const queryClient = useQueryClient();
   const updateSubtask = useUpdateSubtask();
@@ -73,6 +76,10 @@ export function useThreadStream({
               type: "task_failed" | "task_timed_out";
               task_id: string;
               error?: string;
+            }
+          | {
+              type: "todo_board_updated";
+              todos: Todo[];
             };
 
         if (e.type === "task_started") {
@@ -86,6 +93,7 @@ export function useThreadStream({
             id: e.task_id,
             status: "in_progress",
             latestMessage: e.message,
+            messages: [e.message],
           });
         } else if (e.type === "task_completed") {
           updateSubtask({
@@ -101,6 +109,7 @@ export function useThreadStream({
           });
         }
       }
+      onCustomEvent?.(event);
     },
     onFinish(state) {
       onFinish?.(state.values);

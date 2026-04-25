@@ -38,6 +38,22 @@ function latestProgressText(message: AIMessage | undefined, detail: string | nul
   return detail;
 }
 
+function renderStreamingEntry(
+  message: AIMessage,
+  detail: string | null,
+  t: ReturnType<typeof useI18n>["t"],
+) {
+  const text = extractTextFromMessage(message).trim();
+  const normalizedText = text.length > 0 ? text : null;
+  const toolAction = hasToolCalls(message)
+    ? explainLastToolCall(message, t)
+    : null;
+  return {
+    text: normalizedText ?? detail ?? toolAction ?? "等待更多输出…",
+    toolAction,
+  };
+}
+
 export function SubtaskDetailSheet({
   open,
   todo,
@@ -57,7 +73,11 @@ export function SubtaskDetailSheet({
     hasToolCalls(linkedSubtask.latestMessage)
       ? explainLastToolCall(linkedSubtask.latestMessage, t)
       : null;
-  const latestProgress = latestProgressText(linkedSubtask?.latestMessage, liveAction);
+  const latestProgress = latestProgressText(
+    linkedSubtask?.latestMessage,
+    liveAction ?? linkedSubtask?.description ?? todo?.content ?? null,
+  );
+  const streamingMessages = linkedSubtask?.messages ?? [];
 
   const statusIcon = useMemo(() => {
     if (detailStatus === "completed") {
@@ -112,6 +132,26 @@ export function SubtaskDetailSheet({
                 </Section>
               )}
 
+              {streamingMessages.length > 0 && (
+                <Section title="实时过程">
+                  <div className="space-y-3">
+                    {streamingMessages.map((message, index) => {
+                      const entry = renderStreamingEntry(message, liveAction, t);
+                      return (
+                        <DetailBlock key={`${todo.task_id ?? todo.id ?? "todo"}-${index}`}>
+                          {entry.toolAction && (
+                            <div className="mb-1 text-[11px] font-semibold tracking-widest text-muted-foreground/70 uppercase">
+                              {entry.toolAction}
+                            </div>
+                          )}
+                          {entry.text}
+                        </DetailBlock>
+                      );
+                    })}
+                  </div>
+                </Section>
+              )}
+
               {linkedSubtask?.result && (
                 <Section title="执行结果">
                   <DetailBlock>{linkedSubtask.result}</DetailBlock>
@@ -136,7 +176,11 @@ export function SubtaskDetailSheet({
                 </Section>
               )}
 
-              {!linkedSubtask && !todo.result_summary && !todo.error && !todo.task_prompt && (
+              {!linkedSubtask &&
+                !todo.result_summary &&
+                !todo.error &&
+                !todo.task_prompt &&
+                !todo.task_id && (
                 <div className="text-muted-foreground text-sm">
                   这个 todo 还没有关联到可展示的子任务详情。
                 </div>

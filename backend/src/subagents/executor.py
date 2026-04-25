@@ -1,6 +1,7 @@
 """Subagent execution engine."""
 
 import logging
+import re
 import threading
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -48,6 +49,7 @@ class SubagentResult:
         started_at: When execution started.
         completed_at: When execution completed.
         ai_messages: List of complete AI messages (as dicts) generated during execution.
+        structured_result: Parsed structured sections extracted from the final result.
     """
 
     task_id: str
@@ -58,11 +60,147 @@ class SubagentResult:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     ai_messages: list[dict[str, Any]] | None = None
+    structured_result: dict[str, Any] | None = None
 
     def __post_init__(self):
         """Initialize mutable defaults."""
         if self.ai_messages is None:
             self.ai_messages = []
+
+
+_SECTION_ALIASES: dict[str, str] = {
+    "摘要": "summary",
+    "总结": "summary",
+    "summary": "summary",
+    "关键发现": "findings",
+    "发现": "findings",
+    "findings": "findings",
+    "关键引文": "citations",
+    "引文": "citations",
+    "引用": "citations",
+    "citations": "citations",
+    "未解决缺口": "open_questions",
+    "缺口": "open_questions",
+    "待继续检索": "open_questions",
+    "open questions": "open_questions",
+    "gaps": "open_questions",
+}
+
+_REFUSAL_PREFIXES = (
+    "【证据不足】",
+    "【无法确认】",
+    "【无法回答】",
+    "【信息不足】",
+)
+
+
+def _normalize_heading(heading: str) -> str:
+    return re.sub(r"[\s:：\-]+", "", heading.strip().lower())
+
+
+def _dedupe_strings(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in items:
+        normalized = " ".join(item.split())
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(item.strip())
+    return deduped
+
+
+def _extract_bullets(block: str) -> list[str]:
+    bullets: list[str] = []
+    for raw_line in block.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.match(r"^[-*•]\s+", line):
+            bullets.append(re.sub(r"^[-*•]\s+", "", line).strip())
+            continue
+        if re.match(r"^\d+\.\s+", line):
+            bullets.append(re.sub(r"^\d+\.\s+", "", line).strip())
+    return _dedupe_strings([item for item in bullets if item and item != "无"])
+
+
+def _extract_citations(text: str) -> list[str]:
+    citations = re.findall(r"\[citation:[^\]]+\]\([^)]+\)", text)
+    return _dedupe_strings(citations)
+
+
+def _parse_refusal_summary(summary: str) -> tuple[bool, str | None]:
+    normalized = summary.strip()
+    for prefix in _REFUSAL_PREFIXES:
+        if normalized.startswith(prefix):
+            reason = normalized[len(prefix):].strip(" ：:;；，,")
+            return True, reason or None
+    return False, None
+
+
+def _parse_structured_subtask_result(text: str | None) -> dict[str, Any] | None:
+    if not text:
+        return None
+
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    sections: dict[str, list[str]] = {}
+    current_key: str | None = None
+
+    for line in stripped.splitlines():
+        heading_match = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", line)
+        if heading_match:
+            normalized_heading = _normalize_heading(heading_match.group(1))
+            current_key = _SECTION_ALIASES.get(normalized_heading)
+            if current_key is not None:
+                sections.setdefault(current_key, [])
+            else:
+                current_key = None
+            continue
+
+        if current_key is not None:
+            sections.setdefault(current_key, []).append(line)
+
+    summary_block = "\n".join(sections.get("summary", [])).strip()
+    findings_block = "\n".join(sections.get("findings", [])).strip()
+    citations_block = "\n".join(sections.get("citations", [])).strip()
+    gaps_block = "\n".join(sections.get("open_questions", [])).strip()
+
+    summary = summary_block
+    if not summary:
+        first_paragraph = stripped.split("\n\n", 1)[0].strip()
+        summary = first_paragraph if first_paragraph else ""
+
+    findings = _extract_bullets(findings_block)
+    citations = _extract_bullets(citations_block) or _extract_citations(citations_block) or _extract_citations(stripped)
+    open_questions = _extract_bullets(gaps_block)
+
+    parsed = {
+        "summary": summary,
+        "findings": findings,
+        "citations": citations,
+        "open_questions": open_questions,
+    }
+
+    is_refusal, refusal_reason = _parse_refusal_summary(summary)
+    if is_refusal:
+        parsed["is_refusal"] = True
+        if refusal_reason:
+            parsed["refusal_reason"] = refusal_reason
+
+    if not any(
+        [
+            parsed["summary"],
+            parsed["findings"],
+            parsed["citations"],
+            parsed["open_questions"],
+        ]
+    ):
+        return None
+
+    return parsed
 
 
 # Global storage for background task results
@@ -334,6 +472,8 @@ class SubagentExecutor:
                     logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no messages in final state")
                     result.result = "No response generated"
 
+            result.structured_result = _parse_structured_subtask_result(result.result)
+
             result.status = SubagentStatus.COMPLETED
             result.completed_at = datetime.now()
 
@@ -414,6 +554,7 @@ class SubagentExecutor:
                         _background_tasks[task_id].error = exec_result.error
                         _background_tasks[task_id].completed_at = datetime.now()
                         _background_tasks[task_id].ai_messages = exec_result.ai_messages
+                        _background_tasks[task_id].structured_result = exec_result.structured_result
                     log_subtask_event(
                         "subtask_async_finished",
                         trace_id=self.trace_id,
@@ -423,6 +564,7 @@ class SubagentExecutor:
                         result=exec_result.result,
                         error=exec_result.error,
                         ai_message_count=len(exec_result.ai_messages or []),
+                        structured_result=exec_result.structured_result,
                     )
                 except FuturesTimeoutError:
                     logger.error(f"[trace={self.trace_id}] Subagent {self.config.name} execution timed out after {self.config.timeout_seconds}s")

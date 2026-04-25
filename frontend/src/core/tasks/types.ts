@@ -9,5 +9,9 @@ export interface Subtask {
   messages?: AIMessage[];
   prompt?: string;
   result?: string;
+  summary?: string;
+  findings?: string[];
+  citations?: string[];
+  openQuestions?: string[];
   error?: string;
 }

@@ -71,6 +71,11 @@ export function SubtaskDetailSheet({
   const fallbackDescription =
     linkedSubtask?.description ?? todo?.task_description ?? todo?.content ?? null;
   const fallbackResult = linkedSubtask?.result ?? todo?.result;
+  const fallbackSummary = linkedSubtask?.summary ?? todo?.structured_summary;
+  const fallbackFindings = linkedSubtask?.findings ?? todo?.structured_findings ?? [];
+  const fallbackCitations = linkedSubtask?.citations ?? todo?.structured_citations ?? [];
+  const fallbackOpenQuestions =
+    linkedSubtask?.openQuestions ?? todo?.structured_gaps ?? [];
   const fallbackError = linkedSubtask?.error ?? todo?.error;
 
   const detailStatus = linkedSubtask?.status ?? todo?.status;
@@ -167,6 +172,30 @@ export function SubtaskDetailSheet({
                 </Section>
               )}
 
+              {fallbackSummary && (
+                <Section title="摘要">
+                  <DetailBlock>{fallbackSummary}</DetailBlock>
+                </Section>
+              )}
+
+              {fallbackFindings.length > 0 && (
+                <Section title="关键发现">
+                  <BulletDetail items={fallbackFindings} />
+                </Section>
+              )}
+
+              {fallbackCitations.length > 0 && (
+                <Section title="关键引文">
+                  <BulletDetail items={fallbackCitations} />
+                </Section>
+              )}
+
+              {fallbackOpenQuestions.length > 0 && (
+                <Section title="未解决缺口">
+                  <BulletDetail items={fallbackOpenQuestions} />
+                </Section>
+              )}
+
               {fallbackResult && (
                 <Section title="执行结果">
                   <DetailBlock>{fallbackResult}</DetailBlock>
@@ -202,6 +231,16 @@ export function SubtaskDetailSheet({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function BulletDetail({ items }: { items: string[] }) {
+  return (
+    <div className="space-y-2">
+      {items.map((item, index) => (
+        <DetailBlock key={`${index}:${item}`}>{`- ${item}`}</DetailBlock>
+      ))}
+    </div>
   );
 }
 

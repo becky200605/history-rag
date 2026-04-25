@@ -144,6 +144,10 @@ type TaskCompletedEvent = {
   type: "task_completed";
   task_id: string;
   result?: string;
+  summary?: string;
+  findings?: string[];
+  citations?: string[];
+  open_questions?: string[];
 };
 
 type TaskFailedEvent = {
@@ -295,7 +299,11 @@ function mergeTaskEventIntoTodos(
         ...todo,
         status: "completed" as const,
         result: event.result,
-        result_summary: event.result ?? todo.result_summary,
+        result_summary: event.summary ?? event.result ?? todo.result_summary,
+        structured_summary: event.summary ?? todo.structured_summary,
+        structured_findings: event.findings ?? todo.structured_findings,
+        structured_citations: event.citations ?? todo.structured_citations,
+        structured_gaps: event.open_questions ?? todo.structured_gaps,
       };
     }
 
@@ -611,6 +619,14 @@ function ChatPageContent({
               stream_messages: todo.stream_messages ?? currentTodo.stream_messages,
               latest_message: todo.latest_message ?? currentTodo.latest_message,
               result: todo.result ?? currentTodo.result,
+              structured_summary:
+                todo.structured_summary ?? currentTodo.structured_summary,
+              structured_findings:
+                todo.structured_findings ?? currentTodo.structured_findings,
+              structured_citations:
+                todo.structured_citations ?? currentTodo.structured_citations,
+              structured_gaps:
+                todo.structured_gaps ?? currentTodo.structured_gaps,
               task_description:
                 todo.task_description ?? currentTodo.task_description,
             };

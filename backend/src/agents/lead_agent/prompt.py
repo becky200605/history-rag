@@ -18,10 +18,16 @@ def _build_subagent_section(max_concurrent: int) -> str:
 
 You are running with subagent capabilities enabled inside a planning workflow. Your job is still to decompose, delegate, and synthesize, but the execution entrypoint is the todo board, not ad-hoc lead-agent `task` loops.
 
+**Lead-Agent Tool Budget**
+- In this mode, the lead agent should behave like an orchestrator.
+- Keep lead-agent tool usage minimal: use `book_search` to choose books, `write_todos` to dispatch execution lanes, and then synthesize after results return.
+- Do not expect the lead agent to do the deep retrieval work itself; `knowledge_search`, `knowledge_locate`, file reading, and other execution tools belong to subtasks.
+
 **CORE PRINCIPLE**
 - For planned parallel work, `write_todos` is the only supported orchestration trigger.
 - Mark the independent execution lanes `in_progress` together in one `write_todos` call.
 - Once submitted, that call will dispatch, stream progress, and drain queued work in batches of up to {n} concurrent subagents before control returns.
+- Do not put final synthesis / summary / final-answer writing into the todo board; those stay with the lead agent.
 - Do not immediately duplicate the same batch with manual `task` calls.
 - Do not plan a second outer orchestration loop to launch the next batch yourself.
 
@@ -78,7 +84,7 @@ You are DeerFlow 2.0, an open-source super agent.
 
 <clarification_system>
 **WORKFLOW PRIORITY: CLARIFY → PLAN → ACT**
-1. **FIRST**: Analyze the request in your thinking - identify what's unclear, missing, or ambiguous
+{clarification_fallback}1. **FIRST**: Analyze the request in your thinking - identify what's unclear, missing, or ambiguous
 2. **SECOND**: If clarification is needed, call `ask_clarification` tool IMMEDIATELY - do NOT start working
 3. **THIRD**: Only after all clarifications are resolved, proceed with planning and execution
 
@@ -423,6 +429,7 @@ def apply_prompt_template(
     *,
     qa_mode: bool = False,
     concise_answers: bool = False,
+    orchestrator_only: bool = False,
 ) -> str:
     # Get memory context
     memory_context = _get_memory_context()
@@ -432,22 +439,34 @@ def apply_prompt_template(
     subagent_section = _build_subagent_section(n) if subagent_enabled else ""
 
     # Add subagent reminder to critical_reminders if enabled
-    subagent_reminder = (
-        "- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. "
-        f"**HARD LIMIT: max {n} `task` calls per response.** "
-        f"If >{n} sub-tasks, split into sequential batches of ≤{n}. Synthesize after ALL batches complete.\n"
-        if subagent_enabled
-        else ""
-    )
+    if subagent_enabled and orchestrator_only:
+        subagent_reminder = (
+            "- **Orchestrator Mode**: You are a task orchestrator. Use `book_search` to choose books, then use "
+            "`write_todos` to dispatch parallel sub-tasks. Do not try to execute deep retrieval yourself.\n"
+        )
+    elif subagent_enabled:
+        subagent_reminder = (
+            "- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. "
+            f"**HARD LIMIT: max {n} `task` calls per response.** "
+            f"If >{n} sub-tasks, split into sequential batches of ≤{n}. Synthesize after ALL batches complete.\n"
+        )
+    else:
+        subagent_reminder = ""
 
     # Add subagent thinking guidance if enabled
-    subagent_thinking = (
-        "- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. "
-        f"If count > {n}, you MUST plan batches of ≤{n} and only launch the FIRST batch now. "
-        f"NEVER launch more than {n} `task` calls in one response.**\n"
-        if subagent_enabled
-        else ""
-    )
+    if subagent_enabled and orchestrator_only:
+        subagent_thinking = (
+            "- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel execution lanes? If YES, map them "
+            "to the todo board and let `write_todos` dispatch them.**\n"
+        )
+    elif subagent_enabled:
+        subagent_thinking = (
+            "- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. "
+            f"If count > {n}, you MUST plan batches of ≤{n} and only launch the FIRST batch now. "
+            f"NEVER launch more than {n} `task` calls in one response.**\n"
+        )
+    else:
+        subagent_thinking = ""
 
     # Get skills section
     skills_section = get_skills_prompt_section()
@@ -458,6 +477,13 @@ def apply_prompt_template(
         subagent_enabled=subagent_enabled,
     )
 
+    clarification_fallback = (
+        "**Tool Budget Note**: If `ask_clarification` is not available in the current tool budget, "
+        "ask the user one concise plain-language question in your normal response instead of attempting a missing tool call.\n"
+        if orchestrator_only
+        else ""
+    )
+
     # Format the prompt with dynamic skills and memory
     prompt = SYSTEM_PROMPT_TEMPLATE.format(
         skills_section=skills_section,
@@ -465,6 +491,7 @@ def apply_prompt_template(
         subagent_section=subagent_section,
         subagent_reminder=subagent_reminder,
         subagent_thinking=subagent_thinking,
+        clarification_fallback=clarification_fallback,
     )
 
     return qa_section + prompt + f"\n<current_date>{datetime.now().strftime('%Y-%m-%d, %A')}</current_date>"

@@ -114,6 +114,7 @@ def _create_todo_list_middleware(
 - `write_todos` is also a hard phase boundary: do not combine it with `bash`, `task`, `knowledge_search`, or any other tool call in the same response
 - Do NOT mirror the same batch with manual `task` calls in the same response after calling `write_todos`
 - Keep each todo scoped like one execution lane, usually one `书名 × 信息目标` item per subagent-sized unit of work
+- Do NOT put final synthesis / summary / answer-writing items into the todo board; those stay with the lead agent after the subtask batch returns
 - The tool will keep control until the queued todo batches finish; do not plan a second orchestration loop outside the tool call
 """
 
@@ -153,6 +154,7 @@ This tool is designed for complex objectives that require systematic tracking:
 - For historical / multi-book retrieval tasks, write todo items as `书名 × 信息目标` pairs so the reading route is explicit
 - Reflect book coverage in the todo list when relevant: which books are already checked, which books are still pending, and which book you are going to inspect next
 - If subagent mode is available and several books can be searched independently, mark multiple `书名 × 信息目标` todo items `in_progress` in one `write_todos` call; that call is what dispatches and waits for the parallel subagent batch
+- Do NOT add `总结` / `汇总` / `整合` / `写最终答案` 这类收尾任务到 todo board；子任务结果回到主任务后，由主任务自行综合
 {parallel_hint}
 
 **Task Management:**
@@ -189,6 +191,7 @@ Skip this tool when:
 3. **Updating the list**: Add new tasks, remove irrelevant ones, or update descriptions as needed
 4. **Multiple updates**: You can make several updates at once (e.g., complete one task and start the next)
 5. **Parallel batches**: When tasks are independent, mark multiple items as `in_progress` together in one `write_todos` call so the todo list matches the real execution batch
+6. **No synthesis todos**: Do not put final synthesis, summary, or answer-writing items into `write_todos`; those happen in the lead agent after the subtask batch returns
 
 ## Task States
 
@@ -218,6 +221,7 @@ If blocked, keep the task as `in_progress` and create a new task describing what
 - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
 - Remove tasks that are no longer relevant
 - For historical or knowledge-base retrieval tasks, prefer todo items like `读《某书》：查某问题` instead of vague items like `继续检索`
+- Do not include terminal synthesis items such as `汇总结论` / `整合证据` / `撰写最终答案` in the todo board; the board should only contain delegated execution lanes
 - After `book_search`, if multiple books remain in scope, do not continue deep retrieval until you have written the todo list for that reading set
 - If the task involves multiple books, let the todo list show the reading route: which book is already covered, which book remains pending, and which book you will search next
 - If subagent mode is enabled and the relevant books are independent enough, move several pending `读《某书》：查某问题` items to `in_progress` together in one `write_todos` call; the system will run that parallel batch and return findings before you continue
@@ -312,7 +316,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
 def make_lead_agent(config: RunnableConfig):
     configure_persistent_error_logging()
     # Lazy import to avoid circular dependency
-    from src.tools import get_available_tools
+    from src.tools import LEAD_ORCHESTRATOR_TOOL_NAMES, get_available_tools
 
     thinking_enabled = config.get("configurable", {}).get("thinking_enabled", True)
     requested_model_name = config.get("configurable", {}).get("model_name") or config.get("configurable", {}).get("model")
@@ -328,6 +332,7 @@ def make_lead_agent(config: RunnableConfig):
     qa_mode = config.get("configurable", {}).get("qa_mode", False)
     concise_answers = config.get("configurable", {}).get("concise_answers", False)
     allow_direct_task_tool = subagent_enabled and not is_plan_mode
+    use_minimal_lead_tools = subagent_enabled and is_plan_mode
 
     app_config = get_app_config()
     model_config = app_config.get_model_config(model_name) if model_name else None
@@ -346,6 +351,7 @@ def make_lead_agent(config: RunnableConfig):
         qa_mode,
         concise_answers,
     )
+    logger.info("use_minimal_lead_tools: %s", use_minimal_lead_tools)
 
     # Inject run metadata for LangSmith trace tagging
     if "metadata" not in config:
@@ -367,6 +373,7 @@ def make_lead_agent(config: RunnableConfig):
             model_name=model_name,
             subagent_enabled=subagent_enabled,
             include_task_tool=allow_direct_task_tool,
+            allowed_tool_names=LEAD_ORCHESTRATOR_TOOL_NAMES if use_minimal_lead_tools else None,
         ),
         middleware=_build_middlewares(config, model_name=model_name),
         system_prompt=apply_prompt_template(
@@ -374,6 +381,7 @@ def make_lead_agent(config: RunnableConfig):
             max_concurrent_subagents=max_concurrent_subagents,
             qa_mode=qa_mode,
             concise_answers=concise_answers,
+            orchestrator_only=use_minimal_lead_tools,
         ),
         state_schema=ThreadState,
     )

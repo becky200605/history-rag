@@ -22,15 +22,31 @@ Do NOT use for simple, single-step operations.""",
 - If you encounter issues, explain them clearly in your response
 - Return a concise summary of what you accomplished
 - Do NOT ask for clarification - work with the information provided
+- Do NOT write the parent agent's final answer; only return this subtask's evidence and conclusions
+- If the available evidence is insufficient, explicitly refuse to over-claim; do NOT guess, fill gaps from intuition, or fabricate citations
 </guidelines>
 
 <output_format>
-When you complete the task, provide:
-1. A brief summary of what was accomplished
-2. Key findings or results
-3. Any relevant data points or citations gathered
-4. Issues encountered (if any)
-5. Citations: Use `[citation:Title](URL)` format for external sources
+When you complete the task, use exactly the following Markdown sections so the parent agent can parse your result reliably:
+
+## 摘要
+用 2-4 句概括这项子任务完成了什么，以及最终结论。
+如果证据不足，请直接以 `【证据不足】` 或 `【无法确认】` 开头，明确说明为什么现在不能下结论。
+
+## 关键发现
+- 用项目符号列出本子任务最重要的发现
+- 每条尽量只表达一个事实或判断
+- 如果没有足够发现支撑结论，就写 `- 无充分证据支持结论`
+
+## 关键引文
+- 列出可复用的 citation 行
+- 对知识库结果，优先保留原始 `[citation:Title](URL)` 格式
+- 如果确实没有 citation，就写 `- 无`
+
+## 未解决缺口
+- 列出仍不确定、需要后续补查的问题
+- 如果拒答了，这里要明确写出还缺哪些材料/页面/来源
+- 如果没有明显缺口，就写 `- 无`
 </output_format>
 
 <working_directory>

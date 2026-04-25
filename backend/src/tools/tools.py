@@ -18,6 +18,10 @@ BUILTIN_TOOLS = [
     knowledge_checkpoint_tool,
 ]
 
+LEAD_ORCHESTRATOR_TOOL_NAMES = {
+    "book_search",
+}
+
 SUBAGENT_TOOLS = [
     task_tool,
     # task_status_tool is no longer exposed to LLM (backend handles polling internally)
@@ -30,6 +34,7 @@ def get_available_tools(
     model_name: str | None = None,
     subagent_enabled: bool = False,
     include_task_tool: bool | None = None,
+    allowed_tool_names: set[str] | None = None,
 ) -> list[BaseTool]:
     """Get all available tools from config.
 
@@ -43,12 +48,15 @@ def get_available_tools(
         subagent_enabled: Whether subagent execution is enabled for this run.
         include_task_tool: Whether to expose the raw `task` tool to the lead agent.
             Defaults to the value of `subagent_enabled`.
+        allowed_tool_names: Optional allowlist of tool names to expose.
 
     Returns:
         List of available tools.
     """
     config = get_app_config()
     loaded_tools = [resolve_variable(tool.use, BaseTool) for tool in config.tools if groups is None or tool.group in groups]
+    if allowed_tool_names is not None:
+        loaded_tools = [tool for tool in loaded_tools if tool.name in allowed_tool_names]
 
     # Get cached MCP tools if enabled
     # NOTE: We use ExtensionsConfig.from_file() instead of config.extensions
@@ -64,6 +72,8 @@ def get_available_tools(
             extensions_config = ExtensionsConfig.from_file()
             if extensions_config.get_enabled_mcp_servers():
                 mcp_tools = get_cached_mcp_tools()
+                if allowed_tool_names is not None:
+                    mcp_tools = [tool for tool in mcp_tools if tool.name in allowed_tool_names]
                 if mcp_tools:
                     logger.info(f"Using {len(mcp_tools)} cached MCP tool(s)")
         except ImportError:
@@ -91,5 +101,8 @@ def get_available_tools(
     if model_config is not None and model_config.supports_vision:
         builtin_tools.append(view_image_tool)
         logger.info(f"Including view_image_tool for model '{model_name}' (supports_vision=True)")
+
+    if allowed_tool_names is not None:
+        builtin_tools = [tool for tool in builtin_tools if tool.name in allowed_tool_names]
 
     return loaded_tools + builtin_tools + mcp_tools

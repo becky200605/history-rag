@@ -38,7 +38,12 @@ class Todo(TypedDict):
     task_id: NotRequired[str]
     task_prompt: NotRequired[str]
     subagent_type: NotRequired[Literal["general-purpose", "bash"]]
+    result: NotRequired[str]
     result_summary: NotRequired[str]
+    structured_summary: NotRequired[str]
+    structured_findings: NotRequired[list[str]]
+    structured_citations: NotRequired[list[str]]
+    structured_gaps: NotRequired[list[str]]
     error: NotRequired[str]
 
 
@@ -63,6 +68,52 @@ def _clip_text(text: str, *, limit: int = 240) -> str:
     return normalized[: limit - 1].rstrip() + "…"
 
 
+def _is_synthesis_todo(todo: Todo) -> bool:
+    content = str(todo.get("content", "")).strip().lower()
+    if not content:
+        return False
+
+    synthesis_markers = (
+        "总结",
+        "汇总",
+        "整合",
+        "综合",
+        "归纳",
+        "写最终",
+        "最终答案",
+        "最终回复",
+        "撰写答案",
+        "撰写最终回复",
+        "形成答案",
+        "整理结论",
+        "输出答案",
+        "synthesize",
+        "synthesis",
+        "summary",
+        "final answer",
+        "final response",
+    )
+    return any(marker in content for marker in synthesis_markers)
+
+
+def _prune_synthesis_todos(todos: list[Todo]) -> tuple[list[Todo], list[Todo]]:
+    kept: list[Todo] = []
+    removed: list[Todo] = []
+
+    for todo in todos:
+        if _is_synthesis_todo(todo):
+            removed.append(todo)
+        else:
+            kept.append(todo)
+
+    if kept:
+        return kept, removed
+
+    # If everything looked like synthesis, keep them rather than dropping the
+    # whole board silently; this makes the behavior safer for unexpected inputs.
+    return todos, []
+
+
 def _build_default_task_prompt(todo: Todo) -> str:
     return (
         "你只负责执行下面这一项 todo，不要扩展到其他任务，不要替主代理写最终总答案。\n\n"
@@ -70,8 +121,12 @@ def _build_default_task_prompt(todo: Todo) -> str:
         "要求：\n"
         "1. 只围绕这一项任务检索、分析或执行；\n"
         "2. 若属于历史 / 财政史问题，优先使用本地知识库工具并保留关键引文；\n"
-        "3. 返回简明结果：结论、关键证据/引文、未解决缺口；\n"
-        "4. 不要接管其他 todo。"
+        "3. 最终输出必须使用固定小节：`## 摘要`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
+        "4. 如果证据不足，不要硬答；在 `## 摘要` 里用 `【证据不足】` 或 `【无法确认】` 明确拒答原因；\n"
+        "5. `## 关键发现` 在证据不足时写 `- 无充分证据支持结论`；\n"
+        "6. `## 关键引文`里优先保留原始 `[citation:标题](URL)` 行；没有时明确写 `- 无`；\n"
+        "7. `## 未解决缺口`里写仍需补查的点；没有时明确写 `- 无`；\n"
+        "8. 不要接管其他 todo。"
     )
 
 
@@ -183,7 +238,18 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 "status": status,
             }
 
-            for field in ("task_id", "task_prompt", "subagent_type", "result_summary", "error"):
+            for field in (
+                "task_id",
+                "task_prompt",
+                "subagent_type",
+                "result",
+                "result_summary",
+                "structured_summary",
+                "structured_findings",
+                "structured_citations",
+                "structured_gaps",
+                "error",
+            ):
                 value = raw.get(field)
                 if value in (None, "") and existing_todo is not None:
                     value = existing_todo.get(field)
@@ -197,7 +263,12 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 and raw.get("status") != existing_todo.get("status")
             ):
                 todo.pop("task_id", None)
+                todo.pop("result", None)
                 todo.pop("result_summary", None)
+                todo.pop("structured_summary", None)
+                todo.pop("structured_findings", None)
+                todo.pop("structured_citations", None)
+                todo.pop("structured_gaps", None)
                 todo.pop("error", None)
 
             normalized.append(todo)
@@ -410,6 +481,37 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 if result.status == SubagentStatus.COMPLETED:
                     todo["status"] = "completed"
                     if result.result:
+                        todo["result"] = result.result
+                    if result.structured_result:
+                        summary = str(result.structured_result.get("summary") or "").strip()
+                        findings = [
+                            str(item).strip()
+                            for item in cast(list[Any], result.structured_result.get("findings") or [])
+                            if str(item).strip()
+                        ]
+                        citations = [
+                            str(item).strip()
+                            for item in cast(list[Any], result.structured_result.get("citations") or [])
+                            if str(item).strip()
+                        ]
+                        gaps = [
+                            str(item).strip()
+                            for item in cast(list[Any], result.structured_result.get("open_questions") or [])
+                            if str(item).strip()
+                        ]
+                        if summary:
+                            todo["structured_summary"] = summary
+                        if findings:
+                            todo["structured_findings"] = findings
+                        if citations:
+                            todo["structured_citations"] = citations
+                        if gaps:
+                            todo["structured_gaps"] = gaps
+                        todo["result_summary"] = _clip_text(
+                            summary or result.result or "已完成",
+                            limit=320,
+                        )
+                    elif result.result:
                         todo["result_summary"] = _clip_text(result.result, limit=320)
                     todo.pop("error", None)
                     log_subtask_event(
@@ -419,7 +521,17 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                         content=todo["content"],
                         result_summary=todo.get("result_summary"),
                     )
-                    writer({"type": "task_completed", "task_id": task_id, "result": result.result})
+                    writer(
+                        {
+                            "type": "task_completed",
+                            "task_id": task_id,
+                            "result": result.result,
+                            "summary": todo.get("structured_summary"),
+                            "findings": todo.get("structured_findings"),
+                            "citations": todo.get("structured_citations"),
+                            "open_questions": todo.get("structured_gaps"),
+                        }
+                    )
                     writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
                     summary_lines.append(f"[completed] {todo['content']}：{todo.get('result_summary', '已完成')}")
                     completed_task_ids.append(task_id)
@@ -512,11 +624,25 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
     def _handle_write_todos(self, *, runtime: Any, todos: list[Todo], tool_call_id: str) -> Command:
         existing_todos = cast(list[Todo] | None, runtime.state.get("todos") if runtime is not None else None)
         normalized = self._normalize_todos(todos, existing_todos)
+        removed_synthesis_todos: list[Todo] = []
+        if self.subagent_enabled:
+            normalized, removed_synthesis_todos = _prune_synthesis_todos(normalized)
+            if removed_synthesis_todos:
+                log_subtask_event(
+                    "synthesis_todos_pruned",
+                    tool_call_id=tool_call_id,
+                    removed_todos=removed_synthesis_todos,
+                )
         normalized, summary_lines, dispatch_state = self._dispatch_parallel_todos(
             runtime=runtime,
             todos=normalized,
             tool_call_id=tool_call_id,
         )
+        if removed_synthesis_todos:
+            summary_lines.insert(
+                0,
+                "已忽略总结/整合类 todo；最终综合由主任务在子任务结果返回后自行完成。",
+            )
         return Command(
             update={
                 "todos": normalized,

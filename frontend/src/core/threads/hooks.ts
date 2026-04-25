@@ -71,6 +71,10 @@ export function useThreadStream({
               type: "task_completed";
               task_id: string;
               result?: string;
+              summary?: string;
+              findings?: string[];
+              citations?: string[];
+              open_questions?: string[];
             }
           | {
               type: "task_failed" | "task_timed_out";
@@ -106,6 +110,10 @@ export function useThreadStream({
             id: e.task_id,
             status: "completed",
             result: e.result,
+            summary: e.summary,
+            findings: e.findings,
+            citations: e.citations,
+            openQuestions: e.open_questions,
           });
         } else if (e.type === "task_failed" || e.type === "task_timed_out") {
           updateSubtask({

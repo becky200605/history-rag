@@ -12,5 +12,9 @@ export interface Todo {
   stream_messages?: AIMessage[];
   result?: string;
   result_summary?: string;
+  structured_summary?: string;
+  structured_findings?: string[];
+  structured_citations?: string[];
+  structured_gaps?: string[];
   error?: string;
 }

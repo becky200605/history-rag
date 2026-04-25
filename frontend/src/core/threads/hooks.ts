@@ -49,7 +49,7 @@ export function useThreadStream({
     onCreated(run) {
       onCreated?.(run);
     },
-    onCustomEvent(event: unknown) {
+    onCustomEvent(event: unknown, options) {
       console.info(event);
       if (
         typeof event === "object" &&
@@ -81,6 +81,12 @@ export function useThreadStream({
               type: "todo_board_updated";
               todos: Todo[];
             };
+
+        if (e.type === "todo_board_updated") {
+          options.mutate({
+            todos: e.todos,
+          });
+        }
 
         if (e.type === "task_started") {
           updateSubtask({

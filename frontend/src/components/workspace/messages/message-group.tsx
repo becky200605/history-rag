@@ -30,6 +30,7 @@ import {
   findToolCallResult,
 } from "@/core/messages/utils";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
+import { dispatchTodoSelected, type Todo } from "@/core/todos";
 import { getToolCallLabel } from "@/core/tools/utils";
 import { extractTitleFromMarkdown } from "@/core/utils/markdown";
 import { env } from "@/env";
@@ -402,12 +403,32 @@ function ToolCall({
       ></ChainOfThoughtStep>
     );
   } else if (name === "write_todos") {
+    const todos = Array.isArray((args as { todos?: unknown[] }).todos)
+      ? ((args as { todos?: Todo[] }).todos ?? [])
+      : [];
     return (
       <ChainOfThoughtStep
         key={id}
         label={label}
         icon={ListTodoIcon}
-      ></ChainOfThoughtStep>
+      >
+        {todos.length > 0 && (
+          <div className="mt-1 flex flex-col gap-1.5">
+            {todos.map((todo, index) => (
+              <button
+                key={todo.id ?? todo.task_id ?? `${index}:${todo.content ?? ""}`}
+                type="button"
+                className="text-muted-foreground hover:bg-muted/40 hover:text-foreground flex w-full items-start rounded-md px-2 py-1.5 text-left text-sm transition-colors"
+                onClick={() => dispatchTodoSelected({ todo })}
+              >
+                <span className="line-clamp-2">
+                  {todo.content ?? `Todo ${index + 1}`}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </ChainOfThoughtStep>
     );
   } else {
     return (
@@ -426,7 +447,7 @@ function extractKnowledgeCheckpointTitle(
   }
 
   if (typeof result === "string") {
-    const matchedTitle = result.match(/^#\s*检索检查点：(.+)$/m)?.[1]?.trim();
+    const matchedTitle = /^#\s*检索检查点：(.+)$/m.exec(result)?.[1]?.trim();
     if (matchedTitle) {
       return matchedTitle;
     }

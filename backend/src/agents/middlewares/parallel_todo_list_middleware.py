@@ -14,7 +14,6 @@ from langchain.tools import InjectedToolCallId, ToolRuntime
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
-from langgraph.graph import END
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 from langgraph.typing import ContextT
@@ -428,7 +427,6 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 ),
                 "messages": [ToolMessage(self._build_tool_message(normalized, summary_lines), tool_call_id=tool_call_id)],
             },
-            goto=END if dispatch_state["dispatched"] else None,
         )
 
     @override

@@ -91,7 +91,7 @@ export function TodoList({
         <QueueList className="w-full px-2">
           {todos.map((todo, i) => (
             <TodoListItem
-              key={i + (todo.content ?? "")}
+              key={todo.id ?? todo.task_id ?? `${i}:${todo.content ?? ""}`}
               todo={todo}
               selected={selectedTodoId === (todo.id ?? todo.task_id ?? null)}
               onSelect={onSelectTodo}
@@ -154,14 +154,14 @@ function TodoListItem({
         <QueueItemIndicator
           className={cn(
             "mt-1.5",
-            todo.status === "in_progress"
+            detailStatus === "in_progress"
               ? "border-primary bg-primary shadow-[0_0_8px_rgba(126,51,46,0.4)]"
               : "",
-            todo.status === "failed"
+            detailStatus === "failed"
               ? "border-red-500 bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.35)]"
               : "",
           )}
-          completed={todo.status === "completed"}
+          completed={detailStatus === "completed"}
         />
         <div className="min-w-0 flex-1">
           <button
@@ -176,17 +176,17 @@ function TodoListItem({
               <QueueItemContent
                 className={cn(
                   "font-serif text-[14px] leading-relaxed",
-                  todo.status === "in_progress"
+                  detailStatus === "in_progress"
                     ? "font-medium text-foreground"
                     : "text-muted-foreground/90",
-                  todo.status === "completed"
+                  detailStatus === "completed"
                     ? "text-muted-foreground/50 italic"
                     : "",
-                  todo.status === "failed"
+                  detailStatus === "failed"
                     ? "text-red-600 dark:text-red-400"
                     : "",
                 )}
-                completed={todo.status === "completed"}
+                completed={detailStatus === "completed"}
               >
                 {todo.content}
               </QueueItemContent>

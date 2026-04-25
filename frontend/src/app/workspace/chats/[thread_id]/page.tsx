@@ -46,7 +46,11 @@ import {
   type ThreadDisplayContextSnapshot,
   titleOfThread,
 } from "@/core/threads/utils";
-import type { Todo } from "@/core/todos";
+import {
+  WORKSPACE_TODO_SELECTED_EVENT,
+  type Todo,
+  type TodoSelectionDetail,
+} from "@/core/todos";
 import { uuid } from "@/core/utils/uuid";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
@@ -339,6 +343,18 @@ function ChatPageContent({
     [persistedContext, settings.context],
   );
   const [liveTodos, setLiveTodos] = useState<Todo[] | null>(null);
+  const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
+  const [selectedTodoDraft, setSelectedTodoDraft] = useState<Todo | null>(null);
+  const selectTodo = useCallback((todo: Todo | null) => {
+    if (!todo) {
+      setSelectedTodoId(null);
+      setSelectedTodoDraft(null);
+      return;
+    }
+
+    setSelectedTodoDraft(todo);
+    setSelectedTodoId(todo.id ?? todo.task_id ?? null);
+  }, []);
   const thread = useThreadStream({
     isNewThread,
     threadId,
@@ -402,6 +418,9 @@ function ChatPageContent({
         Array.isArray(event.todos)
       ) {
         setLiveTodos(event.todos as Todo[]);
+        if (event.todos.length > 0) {
+          setTodoListCollapsed(false);
+        }
       }
     },
   }) as unknown as UseStream<AgentThreadState>;
@@ -476,35 +495,120 @@ function ChatPageContent({
     }
   }, [artifactPanelOpen]);
 
-  const [todoListCollapsed, setTodoListCollapsed] = useState(true);
-  const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
+  const [todoListCollapsed, setTodoListCollapsed] = useState(false);
   const displayedTodos = useMemo(
     () => liveTodos ?? thread.values.todos ?? [],
     [liveTodos, thread.values.todos],
   );
+  const hasActiveTodos = useMemo(
+    () =>
+      displayedTodos.some(
+        (todo) => todo.status === "pending" || todo.status === "in_progress",
+      ),
+    [displayedTodos],
+  );
 
   const selectedTodo = useMemo(() => {
-    if (!selectedTodoId) {
+    const selectedById = selectedTodoId
+      ? displayedTodos.find(
+          (todo) => (todo.id ?? todo.task_id ?? null) === selectedTodoId,
+        ) ?? null
+      : null;
+
+    if (selectedById) {
+      return selectedById;
+    }
+
+    if (!selectedTodoDraft) {
       return null;
     }
+
     return (
-      displayedTodos.find(
-        (todo) => (todo.id ?? todo.task_id ?? null) === selectedTodoId,
-      ) ?? null
+      displayedTodos.find((todo) => {
+        if (
+          selectedTodoDraft.task_id &&
+          todo.task_id === selectedTodoDraft.task_id
+        ) {
+          return true;
+        }
+
+        if (selectedTodoDraft.id && todo.id === selectedTodoDraft.id) {
+          return true;
+        }
+
+        return (
+          selectedTodoDraft.content &&
+          todo.content === selectedTodoDraft.content
+        );
+      }) ?? selectedTodoDraft
     );
-  }, [displayedTodos, selectedTodoId]);
+  }, [displayedTodos, selectedTodoDraft, selectedTodoId]);
 
   useEffect(() => {
-    if (!selectedTodoId) {
+    if (!selectedTodoDraft && !selectedTodoId) {
       return;
     }
-    const exists = displayedTodos.some(
-      (todo) => (todo.id ?? todo.task_id ?? null) === selectedTodoId,
-    );
-    if (!exists) {
-      setSelectedTodoId(null);
+
+    const matchedTodo = displayedTodos.find((todo) => {
+      if (selectedTodoId && (todo.id ?? todo.task_id ?? null) === selectedTodoId) {
+        return true;
+      }
+
+      if (!selectedTodoDraft) {
+        return false;
+      }
+
+      if (selectedTodoDraft.task_id && todo.task_id === selectedTodoDraft.task_id) {
+        return true;
+      }
+
+      if (selectedTodoDraft.id && todo.id === selectedTodoDraft.id) {
+        return true;
+      }
+
+      return (
+        selectedTodoDraft.content !== undefined &&
+        todo.content === selectedTodoDraft.content
+      );
+    });
+
+    if (matchedTodo) {
+      setSelectedTodoDraft(matchedTodo);
+      if (!selectedTodoId && (matchedTodo.id ?? matchedTodo.task_id ?? null)) {
+        setSelectedTodoId(matchedTodo.id ?? matchedTodo.task_id ?? null);
+      }
     }
-  }, [displayedTodos, selectedTodoId]);
+  }, [displayedTodos, selectedTodoDraft, selectedTodoId]);
+
+  useEffect(() => {
+    if (displayedTodos.length > 0 && hasActiveTodos) {
+      setTodoListCollapsed(false);
+    }
+  }, [displayedTodos.length, hasActiveTodos]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleTodoSelected = (event: Event) => {
+      const { detail } = event as CustomEvent<TodoSelectionDetail>;
+      selectTodo(detail.todo);
+      setTodoListCollapsed(false);
+    };
+
+    window.addEventListener(
+      WORKSPACE_TODO_SELECTED_EVENT,
+      handleTodoSelected as EventListener,
+    );
+
+    return () => {
+      window.removeEventListener(
+        WORKSPACE_TODO_SELECTED_EVENT,
+        handleTodoSelected as EventListener,
+      );
+    };
+  }, [selectTodo]);
 
   const resolvedModelName = useMemo(() => {
     if (models.length === 0) {
@@ -583,8 +687,9 @@ function ChatPageContent({
   }, [thread]);
 
   const handleSelectTodo = useCallback((todo: Todo) => {
-    setSelectedTodoId(todo.id ?? todo.task_id ?? null);
-  }, []);
+    selectTodo(todo);
+    setTodoListCollapsed(false);
+  }, [selectTodo]);
 
   if (!threadId) {
     return null;
@@ -652,7 +757,6 @@ function ChatPageContent({
                   >
                     <div className="absolute bottom-full right-0 left-0 mb-1 z-0">
                       <TodoList
-                        className="bg-transparent"
                         todos={displayedTodos}
                         collapsed={todoListCollapsed}
                         selectedTodoId={selectedTodoId}
@@ -755,7 +859,7 @@ function ChatPageContent({
           todo={selectedTodo}
           onOpenChange={(open) => {
             if (!open) {
-              setSelectedTodoId(null);
+              selectTodo(null);
             }
           }}
         />

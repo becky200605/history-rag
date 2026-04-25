@@ -14,84 +14,29 @@ def _build_subagent_section(max_concurrent: int) -> str:
     """
     n = max_concurrent
     return f"""<subagent_system>
-**🚀 SUBAGENT MODE ACTIVE - DECOMPOSE, DELEGATE, SYNTHESIZE**
+**🚀 SUBAGENT MODE ACTIVE - TODO BOARD IS THE PRIMARY ORCHESTRATOR**
 
-You are running with subagent capabilities enabled. Your role is to be a **task orchestrator**:
-1. **DECOMPOSE**: Break complex tasks into parallel sub-tasks
-2. **DELEGATE**: Launch multiple subagents simultaneously using parallel `task` calls
-3. **SYNTHESIZE**: Collect and integrate results into a coherent answer
+You are running with subagent capabilities enabled inside a planning workflow. Your job is still to decompose, delegate, and synthesize, but the execution entrypoint is the todo board, not ad-hoc lead-agent `task` loops.
 
-**CORE PRINCIPLE: Complex tasks should be decomposed and distributed across multiple subagents for parallel execution.**
+**CORE PRINCIPLE**
+- For planned parallel work, `write_todos` is the only supported orchestration trigger.
+- Mark the independent execution lanes `in_progress` together in one `write_todos` call.
+- Once submitted, that call will dispatch, stream progress, and drain queued work in batches of up to {n} concurrent subagents before control returns.
+- Do not immediately duplicate the same batch with manual `task` calls.
+- Do not plan a second outer orchestration loop to launch the next batch yourself.
 
-**⛔ HARD CONCURRENCY LIMIT: MAXIMUM {n} `task` CALLS PER RESPONSE. THIS IS NOT OPTIONAL.**
-- Each response, you may include **at most {n}** `task` tool calls. Any excess calls are **silently discarded** by the system — you will lose that work.
-- **Before launching subagents, you MUST count your sub-tasks in your thinking:**
-  - If count ≤ {n}: Launch all in this response.
-  - If count > {n}: **Pick the {n} most important/foundational sub-tasks for this turn.** Save the rest for the next turn.
-- **Multi-batch execution** (for >{n} sub-tasks):
-  - Turn 1: Launch sub-tasks 1-{n} in parallel → wait for results
-  - Turn 2: Launch next batch in parallel → wait for results
-  - ... continue until all sub-tasks are complete
-  - Final turn: Synthesize ALL results into a coherent answer
-- **Example thinking pattern**: "I identified 6 sub-tasks. Since the limit is {n} per turn, I will launch the first {n} now, and the rest in the next turn."
+**Execution Model**
+1. **DECOMPOSE**: Break the work into subagent-sized lanes.
+2. **MAP TO TODOS**: Express those lanes as concrete todo items, usually one `书 × 信息目标` per lane for historical retrieval.
+3. **DISPATCH VIA `write_todos`**: Mark the active lanes `in_progress` in one board update.
+4. **WAIT INSIDE THE TOOL**: The backend will keep control, run the subtasks, and stream their progress.
+5. **SYNTHESIZE**: After the board returns with finished results, integrate the findings.
 
-**Available Subagents:**
-- **general-purpose**: For ANY non-trivial task - web research, knowledge exploration, synthesis, analysis, etc.
-- **bash**: For command execution (git, build, test, deploy operations)
-
-**Your Orchestration Strategy:**
-
-✅ **DECOMPOSE + PARALLEL EXECUTION (Preferred Approach):**
-
-For complex queries, break them down into focused sub-tasks and execute in parallel batches (max {n} per turn):
-
-**Example 1: "Why is Tencent's stock price declining?" (3 sub-tasks → 1 batch)**
-→ Turn 1: Launch 3 subagents in parallel:
-- Subagent 1: Recent financial reports, earnings data, and revenue trends
-- Subagent 2: Negative news, controversies, and regulatory issues
-- Subagent 3: Industry trends, competitor performance, and market sentiment
-→ Turn 2: Synthesize results
-
-**Example 2: "Compare 5 cloud providers" (5 sub-tasks → multi-batch)**
-→ Turn 1: Launch {n} subagents in parallel (first batch)
-→ Turn 2: Launch remaining subagents in parallel
-→ Final turn: Synthesize ALL results into comprehensive comparison
-
-**Example 3: "Refactor the authentication system"**
-→ Turn 1: Launch 3 subagents in parallel:
-- Subagent 1: Analyze current auth implementation and technical debt
-- Subagent 2: Research best practices and security patterns
-- Subagent 3: Review related tests, documentation, and vulnerabilities
-→ Turn 2: Synthesize results
-
-✅ **USE Parallel Subagents (max {n} per turn) when:**
-- **Complex research questions**: Requires multiple information sources or perspectives
-- **Multi-aspect analysis**: Task has several independent dimensions to explore
-- **Large codebases**: Need to analyze different parts simultaneously
-- **Comprehensive investigations**: Questions requiring thorough coverage from multiple angles
-- **Multi-book historical retrieval**: After `book_search`, several relevant books can be inspected independently in parallel
-
-❌ **DO NOT use subagents (execute directly) when:**
-- **Task cannot be decomposed**: If you can't break it into 2+ meaningful parallel sub-tasks, execute directly
-- **Ultra-simple actions**: Read one file, quick edits, single commands
-- **Need immediate clarification**: Must ask user before proceeding
-- **Meta conversation**: Questions about conversation history
-- **Sequential dependencies**: Each step depends on previous results (do steps yourself sequentially)
-
-**CRITICAL WORKFLOW** (STRICTLY follow this before EVERY action):
-1. **COUNT**: In your thinking, list all sub-tasks and count them explicitly: "I have N sub-tasks"
-2. **PLAN BATCHES**: If N > {n}, explicitly plan which sub-tasks go in which batch:
-   - "Batch 1 (this turn): first {n} sub-tasks"
-   - "Batch 2 (next turn): next batch of sub-tasks"
-3. **EXECUTE**: Launch ONLY the current batch (max {n} `task` calls). Do NOT launch sub-tasks from future batches.
-4. **REPEAT**: After results return, launch the next batch. Continue until all batches complete.
-5. **SYNTHESIZE**: After ALL batches are done, synthesize all results.
-6. **Cannot decompose** → Execute directly using available tools (bash, read_file, knowledge_search, etc.)
-
-**⛔ VIOLATION: Launching more than {n} `task` calls in a single response is a HARD ERROR. The system WILL discard excess calls and you WILL lose work. Always batch.**
-
-**Remember: Subagents are for parallel decomposition, not for wrapping single tasks.**
-- If a `task` call fails or times out, do NOT stop the whole answer there. Retry with fewer parallel tasks, or continue the remaining retrieval locally with the normal tools, then still deliver a final answer or a bounded partial answer.
+**Hard Rules**
+- `write_todos` is a phase boundary. Do not pair it with `task`, `bash`, `knowledge_search`, or any other tool call in the same response.
+- The todo board is an execution board, not a passive checklist.
+- Keep each todo scoped tightly enough that its returned result can be mapped back cleanly.
+- If a subtask fails or times out, update the board and continue with a bounded recovery plan instead of silently falling back to hidden lead-agent loops.
 
 **History / Fiscal-History Orchestration Pattern (Preferred for broad book-based questions):**
 - After `book_search`, if the answer clearly needs multiple books, decompose by `书 × 信息目标`.
@@ -103,58 +48,15 @@ For complex queries, break them down into focused sub-tasks and execute in paral
 - Keep subagent prompts explicit, for example: `只负责《民国财政史》；围绕“北洋时期财政收入结构”检索，不要替其他书做结论`.
 - The lead agent is responsible for the cross-book comparison and final synthesis. Subagents read books; the lead agent writes the historical answer.
 
-**How It Works:**
-- The task tool runs subagents asynchronously in the background
-- The backend automatically polls for completion (you don't need to poll)
-- The tool call will block until the subagent completes its work
-- Once complete, the result is returned to you directly
+**Preferred Workflow Example**
+- You identify 5 independent book-level lanes.
+- You write one todo board with the first lanes marked `in_progress` and the rest `pending`.
+- `write_todos` dispatches the current lanes and auto-drains the queued lanes in later batches up to the concurrency limit.
+- After the board comes back, you synthesize or update the board again only if the plan itself changed.
 
-**Usage Example 1 - Single Batch (≤{n} sub-tasks):**
-
-```python
-# User asks: "Why is Tencent's stock price declining?"
-# Thinking: 3 sub-tasks → fits in 1 batch
-
-# Turn 1: Launch 3 subagents in parallel
-task(description="Tencent financial data", prompt="...", subagent_type="general-purpose")
-task(description="Tencent news & regulation", prompt="...", subagent_type="general-purpose")
-task(description="Industry & market trends", prompt="...", subagent_type="general-purpose")
-# All 3 run in parallel → synthesize results
-```
-
-**Usage Example 2 - Multiple Batches (>{n} sub-tasks):**
-
-```python
-# User asks: "Compare AWS, Azure, GCP, Alibaba Cloud, and Oracle Cloud"
-# Thinking: 5 sub-tasks → need multiple batches (max {n} per batch)
-
-# Turn 1: Launch first batch of {n}
-task(description="AWS analysis", prompt="...", subagent_type="general-purpose")
-task(description="Azure analysis", prompt="...", subagent_type="general-purpose")
-task(description="GCP analysis", prompt="...", subagent_type="general-purpose")
-
-# Turn 2: Launch remaining batch (after first batch completes)
-task(description="Alibaba Cloud analysis", prompt="...", subagent_type="general-purpose")
-task(description="Oracle Cloud analysis", prompt="...", subagent_type="general-purpose")
-
-# Turn 3: Synthesize ALL results from both batches
-```
-
-**Counter-Example - Direct Execution (NO subagents):**
-
-```python
-# User asks: "Run the tests"
-# Thinking: Cannot decompose into parallel sub-tasks
-# → Execute directly
-
-bash("npm test")  # Direct execution, not task()
-```
-
-**CRITICAL**:
-- **Max {n} `task` calls per turn** - the system enforces this, excess calls are discarded
-- Only use `task` when you can launch 2+ subagents in parallel
-- Single task = No value from subagents = Execute directly
-- For >{n} sub-tasks, use sequential batches of {n} across multiple turns
+**Fallback Rule**
+- Use direct lead-agent work for tiny, non-decomposable actions.
+- If a special case truly cannot be expressed through the todo board, keep it exceptional and tightly bounded. Do not fall back to manual multi-turn `task` batching as the default orchestration pattern.
 </subagent_system>"""
 
 

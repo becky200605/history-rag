@@ -12,7 +12,8 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain.tools import BaseTool
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.messages.utils import message_chunk_to_message
 from langchain_core.runnables import RunnableConfig
 
 from src.agents.thread_state import SandboxState, ThreadDataState, ThreadState
@@ -243,32 +244,44 @@ class SubagentExecutor:
 
             logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting execution with max_turns={self.config.max_turns}")
 
-            # Use stream instead of invoke to get real-time updates
-            # This allows us to collect AI messages as they are generated
+            # Use stream instead of invoke to get real-time updates.
+            # `messages` yields incremental AI chunks; `values` gives us the final state.
             final_state = None
-            for chunk in agent.stream(state, config=run_config, context=context, stream_mode="values"):  # type: ignore[arg-type]
-                final_state = chunk
+            aggregated_chunks: dict[str, AIMessageChunk] = {}
+            for mode, payload in agent.stream(  # type: ignore[arg-type]
+                state,
+                config=run_config,
+                context=context,
+                stream_mode=["messages", "values"],
+            ):
+                if mode == "values":
+                    final_state = payload
+                    continue
 
-                # Extract AI messages from the current state
-                messages = chunk.get("messages", [])
-                if messages:
-                    last_message = messages[-1]
-                    # Check if this is a new AI message
-                    if isinstance(last_message, AIMessage):
-                        # Convert message to dict for serialization
-                        message_dict = last_message.model_dump()
-                        # Only add if it's not already in the list (avoid duplicates)
-                        # Check by comparing message IDs if available, otherwise compare full dict
-                        message_id = message_dict.get("id")
-                        is_duplicate = False
-                        if message_id:
-                            is_duplicate = any(msg.get("id") == message_id for msg in result.ai_messages)
-                        else:
-                            is_duplicate = message_dict in result.ai_messages
+                if mode != "messages":
+                    continue
 
-                        if not is_duplicate:
-                            result.ai_messages.append(message_dict)
-                            logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} captured AI message #{len(result.ai_messages)}")
+                streamed_message, _metadata = payload
+                if isinstance(streamed_message, AIMessageChunk):
+                    message_id = streamed_message.id or str(uuid.uuid4())
+                    previous_chunk = aggregated_chunks.get(message_id)
+                    aggregated_chunk = (
+                        streamed_message
+                        if previous_chunk is None
+                        else previous_chunk + streamed_message
+                    )
+                    aggregated_chunks[message_id] = aggregated_chunk
+                    message_dict = message_chunk_to_message(aggregated_chunk).model_dump()
+                elif isinstance(streamed_message, AIMessage):
+                    message_dict = streamed_message.model_dump()
+                else:
+                    continue
+
+                if not result.ai_messages or result.ai_messages[-1] != message_dict:
+                    result.ai_messages.append(message_dict)
+                    logger.info(
+                        f"[trace={self.trace_id}] Subagent {self.config.name} captured AI message snapshot #{len(result.ai_messages)}"
+                    )
 
             logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} completed execution")
 

@@ -108,6 +108,38 @@ def test_make_lead_agent_disables_thinking_when_model_does_not_support_it(monkey
     assert result["model"] is not None
 
 
+def test_make_lead_agent_hides_raw_task_tool_in_plan_mode(monkeypatch):
+    app_config = _make_app_config([_make_model("safe-model", supports_thinking=False)])
+
+    import src.tools as tools_module
+
+    captured_tool_kwargs: dict[str, object] = {}
+
+    def _fake_get_available_tools(**kwargs):
+        captured_tool_kwargs.update(kwargs)
+        return []
+
+    monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
+    monkeypatch.setattr(tools_module, "get_available_tools", _fake_get_available_tools)
+    monkeypatch.setattr(lead_agent_module, "_build_middlewares", lambda config, model_name: [])
+    monkeypatch.setattr(lead_agent_module, "create_chat_model", lambda **kwargs: object())
+    monkeypatch.setattr(lead_agent_module, "create_agent", lambda **kwargs: kwargs)
+
+    lead_agent_module.make_lead_agent(
+        {
+            "configurable": {
+                "model_name": "safe-model",
+                "thinking_enabled": False,
+                "is_plan_mode": True,
+                "subagent_enabled": True,
+            }
+        }
+    )
+
+    assert captured_tool_kwargs["subagent_enabled"] is True
+    assert captured_tool_kwargs["include_task_tool"] is False
+
+
 def test_build_middlewares_uses_resolved_model_name_for_vision(monkeypatch):
     app_config = _make_app_config(
         [

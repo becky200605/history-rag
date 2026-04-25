@@ -298,9 +298,9 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
     if model_config is not None and model_config.supports_vision:
         middlewares.append(ViewImageMiddleware())
 
-    # Add SubagentLimitMiddleware to truncate excess parallel task calls
+    # Add SubagentLimitMiddleware only when the lead agent can call raw `task` directly.
     subagent_enabled = configurable.get("subagent_enabled", False)
-    if subagent_enabled:
+    if subagent_enabled and not is_plan_mode:
         max_concurrent_subagents = configurable.get("max_concurrent_subagents", 3)
         middlewares.append(SubagentLimitMiddleware(max_concurrent=max_concurrent_subagents))
 
@@ -327,6 +327,7 @@ def make_lead_agent(config: RunnableConfig):
     max_concurrent_subagents = config.get("configurable", {}).get("max_concurrent_subagents", 3)
     qa_mode = config.get("configurable", {}).get("qa_mode", False)
     concise_answers = config.get("configurable", {}).get("concise_answers", False)
+    allow_direct_task_tool = subagent_enabled and not is_plan_mode
 
     app_config = get_app_config()
     model_config = app_config.get_model_config(model_name) if model_name else None
@@ -362,7 +363,11 @@ def make_lead_agent(config: RunnableConfig):
 
     return create_agent(
         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled),
-        tools=get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled),
+        tools=get_available_tools(
+            model_name=model_name,
+            subagent_enabled=subagent_enabled,
+            include_task_tool=allow_direct_task_tool,
+        ),
         middleware=_build_middlewares(config, model_name=model_name),
         system_prompt=apply_prompt_template(
             subagent_enabled=subagent_enabled,

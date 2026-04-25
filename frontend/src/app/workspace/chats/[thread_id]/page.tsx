@@ -1,6 +1,6 @@
 "use client";
 
-import type { Message } from "@langchain/langgraph-sdk";
+import type { AIMessage, Message } from "@langchain/langgraph-sdk";
 import type { UseStream } from "@langchain/langgraph-sdk/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FilesIcon, XIcon } from "lucide-react";
@@ -126,6 +126,187 @@ function clearThreadRouteHandoff(threadId?: string) {
   if (!threadId || handoff.threadId === threadId) {
     window.sessionStorage.removeItem(THREAD_ROUTE_HANDOFF_KEY);
   }
+}
+
+type TaskStartedEvent = {
+  type: "task_started";
+  task_id: string;
+  description?: string;
+};
+
+type TaskRunningEvent = {
+  type: "task_running";
+  task_id: string;
+  message: AIMessage;
+};
+
+type TaskCompletedEvent = {
+  type: "task_completed";
+  task_id: string;
+  result?: string;
+};
+
+type TaskFailedEvent = {
+  type: "task_failed" | "task_timed_out";
+  task_id: string;
+  error?: string;
+};
+
+type TodoBoardUpdatedEvent = {
+  type: "todo_board_updated";
+  todos: Todo[];
+};
+
+function isTaskStartedEvent(event: unknown): event is TaskStartedEvent {
+  return (
+    typeof event === "object" &&
+    event !== null &&
+    "type" in event &&
+    event.type === "task_started" &&
+    "task_id" in event &&
+    typeof event.task_id === "string"
+  );
+}
+
+function isTaskRunningEvent(event: unknown): event is TaskRunningEvent {
+  return (
+    typeof event === "object" &&
+    event !== null &&
+    "type" in event &&
+    event.type === "task_running" &&
+    "task_id" in event &&
+    typeof event.task_id === "string" &&
+    "message" in event &&
+    typeof event.message === "object" &&
+    event.message !== null
+  );
+}
+
+function isTaskCompletedEvent(event: unknown): event is TaskCompletedEvent {
+  return (
+    typeof event === "object" &&
+    event !== null &&
+    "type" in event &&
+    event.type === "task_completed" &&
+    "task_id" in event &&
+    typeof event.task_id === "string"
+  );
+}
+
+function isTaskFailedEvent(event: unknown): event is TaskFailedEvent {
+  return (
+    typeof event === "object" &&
+    event !== null &&
+    "type" in event &&
+    (event.type === "task_failed" || event.type === "task_timed_out") &&
+    "task_id" in event &&
+    typeof event.task_id === "string"
+  );
+}
+
+function isTodoBoardUpdatedEvent(event: unknown): event is TodoBoardUpdatedEvent {
+  return (
+    typeof event === "object" &&
+    event !== null &&
+    "type" in event &&
+    event.type === "todo_board_updated" &&
+    "todos" in event &&
+    Array.isArray(event.todos)
+  );
+}
+
+function normalizeTodoContent(content?: string | null) {
+  if (!content) {
+    return "";
+  }
+
+  return content
+    .replace(/\s+/g, " ")
+    .replace(/（/g, "(")
+    .replace(/）/g, ")")
+    .replace(/：/g, ":")
+    .trim();
+}
+
+function todosMatch(left: Todo | null | undefined, right: Todo | null | undefined) {
+  if (!left || !right) {
+    return false;
+  }
+
+  if (left.task_id && right.task_id && left.task_id === right.task_id) {
+    return true;
+  }
+
+  if (left.id && right.id && left.id === right.id) {
+    return true;
+  }
+
+  const leftContent = normalizeTodoContent(left.content);
+  const rightContent = normalizeTodoContent(right.content);
+  if (!leftContent || !rightContent) {
+    return false;
+  }
+
+  return (
+    leftContent === rightContent ||
+    leftContent.includes(rightContent) ||
+    rightContent.includes(leftContent)
+  );
+}
+
+function mergeTaskEventIntoTodos(
+  todos: Todo[] | null,
+  event:
+    | TaskStartedEvent
+    | TaskRunningEvent
+    | TaskCompletedEvent
+    | TaskFailedEvent,
+) {
+  if (!todos || todos.length === 0) {
+    return todos;
+  }
+
+  let changed = false;
+  const nextTodos = todos.map((todo) => {
+    if (todo.task_id !== event.task_id) {
+      return todo;
+    }
+
+    changed = true;
+    if (event.type === "task_started") {
+      return {
+        ...todo,
+        status: "in_progress" as const,
+        task_description: event.description ?? todo.task_description ?? todo.content,
+      };
+    }
+
+    if (event.type === "task_running") {
+      return {
+        ...todo,
+        status: "in_progress" as const,
+        latest_message: event.message,
+        stream_messages: [...(todo.stream_messages ?? []), event.message],
+      };
+    }
+
+    if (event.type === "task_completed") {
+      return {
+        ...todo,
+        status: "completed" as const,
+        result: event.result,
+        result_summary: event.result ?? todo.result_summary,
+      };
+    }
+
+    return {
+      ...todo,
+      status: "failed" as const,
+      error: event.error ?? todo.error,
+    };
+  });
+
+  return changed ? nextTodos : todos;
 }
 
 export default function ChatPage() {
@@ -409,18 +590,63 @@ function ChatPageContent({
       }
     },
     onCustomEvent: (event) => {
-      if (
-        typeof event === "object" &&
-        event !== null &&
-        "type" in event &&
-        event.type === "todo_board_updated" &&
-        "todos" in event &&
-        Array.isArray(event.todos)
-      ) {
-        setLiveTodos(event.todos as Todo[]);
+      if (isTodoBoardUpdatedEvent(event)) {
+        setLiveTodos((currentTodos) => {
+          const eventTodos = event.todos;
+          if (!currentTodos || currentTodos.length === 0) {
+            return eventTodos;
+          }
+
+          return eventTodos.map((todo) => {
+            const currentTodo =
+              currentTodos.find((candidate) => todosMatch(candidate, todo)) ??
+              null;
+            if (!currentTodo) {
+              return todo;
+            }
+
+            return {
+              ...currentTodo,
+              ...todo,
+              stream_messages: todo.stream_messages ?? currentTodo.stream_messages,
+              latest_message: todo.latest_message ?? currentTodo.latest_message,
+              result: todo.result ?? currentTodo.result,
+              task_description:
+                todo.task_description ?? currentTodo.task_description,
+            };
+          });
+        });
         if (event.todos.length > 0) {
           setTodoListCollapsed(false);
         }
+        return;
+      }
+
+      if (isTaskStartedEvent(event)) {
+        setLiveTodos((currentTodos) =>
+          mergeTaskEventIntoTodos(currentTodos, event),
+        );
+        return;
+      }
+
+      if (isTaskRunningEvent(event)) {
+        setLiveTodos((currentTodos) =>
+          mergeTaskEventIntoTodos(currentTodos, event),
+        );
+        return;
+      }
+
+      if (isTaskCompletedEvent(event)) {
+        setLiveTodos((currentTodos) =>
+          mergeTaskEventIntoTodos(currentTodos, event),
+        );
+        return;
+      }
+
+      if (isTaskFailedEvent(event)) {
+        setLiveTodos((currentTodos) =>
+          mergeTaskEventIntoTodos(currentTodos, event),
+        );
       }
     },
   }) as unknown as UseStream<AgentThreadState>;
@@ -525,21 +751,7 @@ function ChatPageContent({
 
     return (
       displayedTodos.find((todo) => {
-        if (
-          selectedTodoDraft.task_id &&
-          todo.task_id === selectedTodoDraft.task_id
-        ) {
-          return true;
-        }
-
-        if (selectedTodoDraft.id && todo.id === selectedTodoDraft.id) {
-          return true;
-        }
-
-        return (
-          selectedTodoDraft.content &&
-          todo.content === selectedTodoDraft.content
-        );
+        return todosMatch(selectedTodoDraft, todo);
       }) ?? selectedTodoDraft
     );
   }, [displayedTodos, selectedTodoDraft, selectedTodoId]);
@@ -558,18 +770,7 @@ function ChatPageContent({
         return false;
       }
 
-      if (selectedTodoDraft.task_id && todo.task_id === selectedTodoDraft.task_id) {
-        return true;
-      }
-
-      if (selectedTodoDraft.id && todo.id === selectedTodoDraft.id) {
-        return true;
-      }
-
-      return (
-        selectedTodoDraft.content !== undefined &&
-        todo.content === selectedTodoDraft.content
-      );
+      return todosMatch(selectedTodoDraft, todo);
     });
 
     if (matchedTodo) {
@@ -636,9 +837,7 @@ function ChatPageContent({
         resolvedContext.scenario === "research" ||
         (resolvedContext.scenario === "qa" && resolvedContext.tier === "pro"),
       is_plan_mode: resolvedContext.scenario === "research",
-      subagent_enabled:
-        resolvedContext.scenario === "research" &&
-        resolvedContext.tier === "ultra",
+      subagent_enabled: true,
       qa_mode: resolvedContext.scenario === "qa",
       concise_answers:
         resolvedContext.scenario === "qa" && resolvedContext.tier === "ultra",

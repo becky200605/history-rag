@@ -20,6 +20,7 @@ from src.agents.thread_state import SandboxState, ThreadDataState, ThreadState
 from src.models import create_chat_model
 from src.subagents.config import SubagentConfig
 from src.utils.error_logging import append_error_doc
+from src.utils.subtask_logging import log_subtask_event
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,14 @@ class SubagentExecutor:
         )
 
         logger.info(f"[trace={self.trace_id}] SubagentExecutor initialized: {config.name} with {len(self.tools)} tools")
+        log_subtask_event(
+            "subagent_executor_initialized",
+            trace_id=self.trace_id,
+            subagent_name=config.name,
+            tool_count=len(self.tools),
+            parent_model=parent_model,
+            thread_id=thread_id,
+        )
 
     def _create_agent(self):
         """Create the agent instance."""
@@ -368,6 +377,13 @@ class SubagentExecutor:
         )
 
         logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting async execution, task_id={task_id}, timeout={self.config.timeout_seconds}s")
+        log_subtask_event(
+            "subtask_async_queued",
+            trace_id=self.trace_id,
+            task_id=task_id,
+            subagent_name=self.config.name,
+            timeout_seconds=self.config.timeout_seconds,
+        )
 
         with _background_tasks_lock:
             _background_tasks[task_id] = result
@@ -378,6 +394,12 @@ class SubagentExecutor:
                 _background_tasks[task_id].status = SubagentStatus.RUNNING
                 _background_tasks[task_id].started_at = datetime.now()
                 result_holder = _background_tasks[task_id]
+            log_subtask_event(
+                "subtask_async_started",
+                trace_id=self.trace_id,
+                task_id=task_id,
+                subagent_name=self.config.name,
+            )
 
             try:
                 # Submit execution to execution pool with timeout
@@ -392,6 +414,16 @@ class SubagentExecutor:
                         _background_tasks[task_id].error = exec_result.error
                         _background_tasks[task_id].completed_at = datetime.now()
                         _background_tasks[task_id].ai_messages = exec_result.ai_messages
+                    log_subtask_event(
+                        "subtask_async_finished",
+                        trace_id=self.trace_id,
+                        task_id=task_id,
+                        subagent_name=self.config.name,
+                        status=exec_result.status.value,
+                        result=exec_result.result,
+                        error=exec_result.error,
+                        ai_message_count=len(exec_result.ai_messages or []),
+                    )
                 except FuturesTimeoutError:
                     logger.error(f"[trace={self.trace_id}] Subagent {self.config.name} execution timed out after {self.config.timeout_seconds}s")
                     append_error_doc(
@@ -408,6 +440,13 @@ class SubagentExecutor:
                         _background_tasks[task_id].status = SubagentStatus.TIMED_OUT
                         _background_tasks[task_id].error = f"Execution timed out after {self.config.timeout_seconds} seconds"
                         _background_tasks[task_id].completed_at = datetime.now()
+                    log_subtask_event(
+                        "subtask_async_timeout",
+                        trace_id=self.trace_id,
+                        task_id=task_id,
+                        subagent_name=self.config.name,
+                        timeout_seconds=self.config.timeout_seconds,
+                    )
                     # Cancel the future (best effort - may not stop the actual execution)
                     execution_future.cancel()
             except Exception as e:
@@ -426,6 +465,13 @@ class SubagentExecutor:
                     _background_tasks[task_id].status = SubagentStatus.FAILED
                     _background_tasks[task_id].error = str(e)
                     _background_tasks[task_id].completed_at = datetime.now()
+                log_subtask_event(
+                    "subtask_async_failed",
+                    trace_id=self.trace_id,
+                    task_id=task_id,
+                    subagent_name=self.config.name,
+                    error=str(e),
+                )
 
         _scheduler_pool.submit(run_task)
         return task_id

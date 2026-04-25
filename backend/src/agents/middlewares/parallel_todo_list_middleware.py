@@ -24,6 +24,7 @@ from src.agents.thread_state import ThreadState
 from src.subagents import SubagentExecutor, get_subagent_config
 from src.subagents.executor import SubagentStatus, get_background_task_result
 from src.utils.error_logging import append_error_doc
+from src.utils.subtask_logging import log_subtask_event
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,36 @@ def _build_default_task_prompt(todo: Todo) -> str:
 
 def _serialize_todos_for_event(todos: list[Todo]) -> list[dict[str, Any]]:
     return [dict(todo) for todo in todos]
+
+
+def _should_preserve_bound_task_status(
+    *,
+    raw: Todo,
+    existing_todo: Todo | None,
+    next_status: Literal["pending", "in_progress", "completed", "failed"],
+) -> bool:
+    if existing_todo is None:
+        return False
+
+    if not existing_todo.get("task_id") or raw.get("task_id"):
+        return False
+
+    existing_status = cast(
+        Literal["pending", "in_progress", "completed", "failed"],
+        existing_todo.get("status", "pending"),
+    )
+
+    # Once a todo is bound to a real subtask, the lead model should not mutate
+    # that task's lifecycle without providing a new task binding. The executor
+    # owns the transition from running -> completed/failed.
+    if existing_status == "in_progress" and next_status != "in_progress":
+        return True
+
+    # Also prevent later board rewrites from regressing an executor-owned final state.
+    if existing_status in {"completed", "failed"} and next_status != existing_status:
+        return True
+
+    return False
 
 
 class TodoListMiddleware(AgentMiddleware[PlanningState]):
@@ -135,6 +166,16 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
             if status not in {"pending", "in_progress", "completed", "failed"}:
                 status = "pending"
 
+            if _should_preserve_bound_task_status(
+                raw=raw,
+                existing_todo=existing_todo,
+                next_status=status,
+            ):
+                status = cast(
+                    Literal["pending", "in_progress", "completed", "failed"],
+                    existing_todo.get("status", status),
+                )
+
             todo_id = str(raw.get("id") or (existing_todo.get("id") if existing_todo else "") or f"todo-{uuid.uuid4().hex[:8]}")
             todo: Todo = {
                 "id": todo_id,
@@ -189,13 +230,33 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
             "todo_ids": [],
             "task_ids": [],
         }
+        log_subtask_event(
+            "write_todos_received",
+            tool_call_id=tool_call_id,
+            todo_count=len(todos),
+            in_progress_or_pending_count=sum(1 for todo in todos if todo["status"] in {"in_progress", "pending"}),
+            subagent_enabled=self.subagent_enabled,
+            max_concurrent_subagents=self.max_concurrent_subagents,
+        )
         if not self.subagent_enabled:
+            log_subtask_event(
+                "write_todos_dispatch_skipped",
+                tool_call_id=tool_call_id,
+                reason="subagent_disabled",
+                todos=todos,
+            )
             return todos, [], dispatch_state
 
         queued_todos = [
             todo for todo in todos if todo["status"] in {"in_progress", "pending"} and not todo.get("task_id")
         ]
         if not queued_todos:
+            log_subtask_event(
+                "write_todos_dispatch_skipped",
+                tool_call_id=tool_call_id,
+                reason="no_queued_todos",
+                todos=todos,
+            )
             return todos, [], dispatch_state
 
         writer = get_stream_writer()
@@ -278,6 +339,17 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                     "message_count": 0,
                     "timeout_seconds": config.timeout_seconds,
                 }
+                log_subtask_event(
+                    "subtask_dispatching",
+                    tool_call_id=tool_call_id,
+                    task_id=task_id,
+                    todo_id=todo.get("id"),
+                    content=todo["content"],
+                    subagent_type=subagent_type,
+                    queue_remaining=len(queue),
+                    launched=len(launched),
+                    timeout_seconds=config.timeout_seconds,
+                )
                 executor.execute_async(task_prompt, task_id=task_id)
                 logger.info(
                     "[trace=%s] Dispatched todo subtask %s (active=%s queued=%s): %s",
@@ -299,6 +371,12 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 if result is None:
                     todo["status"] = "failed"
                     todo["error"] = "Task disappeared from background tasks"
+                    log_subtask_event(
+                        "subtask_missing",
+                        task_id=task_id,
+                        todo_id=todo.get("id"),
+                        content=todo["content"],
+                    )
                     append_error_doc(
                         location="parallel_todo_list_middleware",
                         summary="Todo-linked subtask disappeared before completion",
@@ -334,6 +412,13 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                     if result.result:
                         todo["result_summary"] = _clip_text(result.result, limit=320)
                     todo.pop("error", None)
+                    log_subtask_event(
+                        "subtask_completed",
+                        task_id=task_id,
+                        todo_id=todo.get("id"),
+                        content=todo["content"],
+                        result_summary=todo.get("result_summary"),
+                    )
                     writer({"type": "task_completed", "task_id": task_id, "result": result.result})
                     writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
                     summary_lines.append(f"[completed] {todo['content']}：{todo.get('result_summary', '已完成')}")
@@ -341,6 +426,13 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 elif result.status == SubagentStatus.FAILED:
                     todo["status"] = "failed"
                     todo["error"] = result.error or "Unknown subtask error"
+                    log_subtask_event(
+                        "subtask_failed",
+                        task_id=task_id,
+                        todo_id=todo.get("id"),
+                        content=todo["content"],
+                        error=todo["error"],
+                    )
                     append_error_doc(
                         location="parallel_todo_list_middleware",
                         summary="Todo-linked subtask failed",
@@ -358,6 +450,13 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 elif result.status == SubagentStatus.TIMED_OUT:
                     todo["status"] = "failed"
                     todo["error"] = result.error or "Subtask timed out"
+                    log_subtask_event(
+                        "subtask_timed_out",
+                        task_id=task_id,
+                        todo_id=todo.get("id"),
+                        content=todo["content"],
+                        error=todo["error"],
+                    )
                     append_error_doc(
                         location="parallel_todo_list_middleware",
                         summary="Todo-linked subtask timed out",

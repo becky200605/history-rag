@@ -65,19 +65,26 @@ export function SubtaskDetailSheet({
 }) {
   const { t } = useI18n();
   const linkedSubtask = useSubtask(todo?.task_id ?? "");
+  const fallbackLatestMessage = linkedSubtask?.latestMessage ?? todo?.latest_message;
+  const fallbackStreamingMessages =
+    linkedSubtask?.messages ?? todo?.stream_messages ?? [];
+  const fallbackDescription =
+    linkedSubtask?.description ?? todo?.task_description ?? todo?.content ?? null;
+  const fallbackResult = linkedSubtask?.result ?? todo?.result;
+  const fallbackError = linkedSubtask?.error ?? todo?.error;
 
   const detailStatus = linkedSubtask?.status ?? todo?.status;
   const liveAction =
-    linkedSubtask?.status === "in_progress" &&
-    linkedSubtask.latestMessage &&
-    hasToolCalls(linkedSubtask.latestMessage)
-      ? explainLastToolCall(linkedSubtask.latestMessage, t)
+    detailStatus === "in_progress" &&
+    fallbackLatestMessage &&
+    hasToolCalls(fallbackLatestMessage)
+      ? explainLastToolCall(fallbackLatestMessage, t)
       : null;
   const latestProgress = latestProgressText(
-    linkedSubtask?.latestMessage,
-    liveAction ?? linkedSubtask?.description ?? todo?.content ?? null,
+    fallbackLatestMessage,
+    liveAction ?? fallbackDescription,
   );
-  const streamingMessages = linkedSubtask?.messages ?? [];
+  const streamingMessages = fallbackStreamingMessages;
 
   const statusIcon = useMemo(() => {
     if (detailStatus === "completed") {
@@ -132,6 +139,14 @@ export function SubtaskDetailSheet({
                 </Section>
               )}
 
+              {detailStatus === "in_progress" && !todo.task_id && (
+                <Section title="下发状态">
+                  <DetailBlock tone="danger">
+                    这个 todo 目前还没有拿到真实的 subtask task_id。也就是说，当前看到的是主任务里的进行中项，不是已经下发出去并可独立 streaming 的子任务。
+                  </DetailBlock>
+                </Section>
+              )}
+
               {streamingMessages.length > 0 && (
                 <Section title="实时过程">
                   <div className="space-y-3">
@@ -152,35 +167,32 @@ export function SubtaskDetailSheet({
                 </Section>
               )}
 
-              {linkedSubtask?.result && (
+              {fallbackResult && (
                 <Section title="执行结果">
-                  <DetailBlock>{linkedSubtask.result}</DetailBlock>
+                  <DetailBlock>{fallbackResult}</DetailBlock>
                 </Section>
               )}
 
-              {!linkedSubtask?.result && todo.result_summary && (
+              {!fallbackResult && todo.result_summary && (
                 <Section title="结果摘要">
                   <DetailBlock>{todo.result_summary}</DetailBlock>
                 </Section>
               )}
 
-              {linkedSubtask?.error && (
+              {fallbackError && (
                 <Section title="错误信息">
-                  <DetailBlock tone="danger">{linkedSubtask.error}</DetailBlock>
-                </Section>
-              )}
-
-              {!linkedSubtask?.error && todo.error && (
-                <Section title="错误信息">
-                  <DetailBlock tone="danger">{todo.error}</DetailBlock>
+                  <DetailBlock tone="danger">{fallbackError}</DetailBlock>
                 </Section>
               )}
 
               {!linkedSubtask &&
                 !todo.result_summary &&
-                !todo.error &&
+                !fallbackError &&
                 !todo.task_prompt &&
-                !todo.task_id && (
+                !todo.task_id &&
+                !todo.task_description &&
+                streamingMessages.length === 0 &&
+                !fallbackResult && (
                 <div className="text-muted-foreground text-sm">
                   这个 todo 还没有关联到可展示的子任务详情。
                 </div>

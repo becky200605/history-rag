@@ -119,11 +119,14 @@ function TodoListItem({
     if (!detailStatus) {
       return null;
     }
+    if (detailStatus === "in_progress" && !todo.task_id) {
+      return "主任务执行中";
+    }
     if (detailStatus === "pending") {
       return "Pending";
     }
     return t.subtasks[detailStatus];
-  }, [detailStatus, t]);
+  }, [detailStatus, t, todo.task_id]);
 
   const liveAction =
     linkedSubtask?.status === "in_progress" &&

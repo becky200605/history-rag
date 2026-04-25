@@ -22,6 +22,7 @@ import { InputBox } from "@/components/workspace/input-box";
 import { MessageList } from "@/components/workspace/messages";
 import { ThreadContext } from "@/components/workspace/messages/context";
 import { SilkRibbon } from "@/components/workspace/silk-ribbon";
+import { SubtaskDetailSheet } from "@/components/workspace/subtask-detail-sheet";
 import { ThreadTitle } from "@/components/workspace/thread-title";
 import { TodoList } from "@/components/workspace/todo-list";
 import { Tooltip } from "@/components/workspace/tooltip";
@@ -45,6 +46,7 @@ import {
   type ThreadDisplayContextSnapshot,
   titleOfThread,
 } from "@/core/threads/utils";
+import type { Todo } from "@/core/todos";
 import { uuid } from "@/core/utils/uuid";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
@@ -461,6 +463,30 @@ function ChatPageContent({
   }, [artifactPanelOpen]);
 
   const [todoListCollapsed, setTodoListCollapsed] = useState(true);
+  const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
+
+  const selectedTodo = useMemo(() => {
+    if (!selectedTodoId) {
+      return null;
+    }
+    return (
+      thread.values.todos?.find(
+        (todo) => (todo.id ?? todo.task_id ?? null) === selectedTodoId,
+      ) ?? null
+    );
+  }, [selectedTodoId, thread.values.todos]);
+
+  useEffect(() => {
+    if (!selectedTodoId) {
+      return;
+    }
+    const exists = thread.values.todos?.some(
+      (todo) => (todo.id ?? todo.task_id ?? null) === selectedTodoId,
+    );
+    if (!exists) {
+      setSelectedTodoId(null);
+    }
+  }, [selectedTodoId, thread.values.todos]);
 
   const resolvedModelName = useMemo(() => {
     if (models.length === 0) {
@@ -531,6 +557,10 @@ function ChatPageContent({
     await thread.stop();
   }, [thread]);
 
+  const handleSelectTodo = useCallback((todo: Todo) => {
+    setSelectedTodoId(todo.id ?? todo.task_id ?? null);
+  }, []);
+
   if (!threadId) {
     return null;
   }
@@ -600,10 +630,12 @@ function ChatPageContent({
                         className="bg-transparent"
                         todos={thread.values.todos ?? []}
                         collapsed={todoListCollapsed}
+                        selectedTodoId={selectedTodoId}
                         hidden={
                           !thread.values.todos ||
                           thread.values.todos.length === 0
                         }
+                        onSelectTodo={handleSelectTodo}
                         onToggle={() =>
                           setTodoListCollapsed(!todoListCollapsed)
                         }
@@ -696,6 +728,15 @@ function ChatPageContent({
             )}
           </div>
         )}
+        <SubtaskDetailSheet
+          open={selectedTodo !== null}
+          todo={selectedTodo}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelectedTodoId(null);
+            }
+          }}
+        />
       </div>
     </ThreadContext.Provider>
   );

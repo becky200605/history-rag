@@ -1,13 +1,12 @@
 import {
   CheckCircle2Icon,
-  ChevronRightIcon,
   ChevronUpIcon,
   CircleDotIcon,
   ListTodoIcon,
   Loader2Icon,
   XCircleIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { useI18n } from "@/core/i18n/hooks";
 import { hasToolCalls } from "@/core/messages/utils";
@@ -29,14 +28,17 @@ export function TodoList({
   collapsed = false,
   hidden = false,
   onToggle,
+  onSelectTodo,
+  selectedTodoId,
 }: {
   className?: string;
   todos: Todo[];
   collapsed?: boolean;
   hidden?: boolean;
   onToggle?: () => void;
+  onSelectTodo?: (todo: Todo) => void;
+  selectedTodoId?: string | null;
 }) {
-  const [expandedTodoIds, setExpandedTodoIds] = useState<Record<string, boolean>>({});
   const completedCount = todos.filter((t) => t.status === "completed").length;
   const runningCount = todos.filter((t) => t.status === "in_progress").length;
   const failedCount = todos.filter((t) => t.status === "failed").length;
@@ -91,14 +93,8 @@ export function TodoList({
             <TodoListItem
               key={i + (todo.content ?? "")}
               todo={todo}
-              expanded={Boolean(expandedTodoIds[todo.id ?? todo.task_id ?? String(i)])}
-              onToggle={() => {
-                const todoKey = todo.id ?? todo.task_id ?? String(i);
-                setExpandedTodoIds((prev) => ({
-                  ...prev,
-                  [todoKey]: !prev[todoKey],
-                }));
-              }}
+              selected={selectedTodoId === (todo.id ?? todo.task_id ?? null)}
+              onSelect={onSelectTodo}
             />
           ))}
         </QueueList>
@@ -109,12 +105,12 @@ export function TodoList({
 
 function TodoListItem({
   todo,
-  expanded,
-  onToggle,
+  selected,
+  onSelect,
 }: {
   todo: Todo;
-  expanded: boolean;
-  onToggle: () => void;
+  selected: boolean;
+  onSelect?: (todo: Todo) => void;
 }) {
   const { t } = useI18n();
   const linkedSubtask = useSubtask(todo.task_id ?? "");
@@ -156,7 +152,12 @@ function TodoListItem({
   );
 
   return (
-    <QueueItem className="py-1.5 transition-all hover:translate-x-0.5">
+    <QueueItem
+      className={cn(
+        "py-1.5 transition-all hover:translate-x-0.5",
+        selected ? "rounded-xl bg-muted/40" : "",
+      )}
+    >
       <div className="flex items-start gap-3">
         <QueueItemIndicator
           className={cn(
@@ -173,10 +174,12 @@ function TodoListItem({
         <div className="min-w-0 flex-1">
           <button
             type="button"
-            onClick={hasDetails ? onToggle : undefined}
+            onClick={hasDetails ? () => onSelect?.(todo) : undefined}
             className={cn(
-              "flex w-full items-start gap-2 text-left",
-              hasDetails ? "cursor-pointer" : "cursor-default",
+              "flex w-full items-start gap-2 rounded-lg px-1 py-0.5 text-left",
+              hasDetails
+                ? "cursor-pointer transition-colors hover:bg-muted/30"
+                : "cursor-default",
             )}
           >
             <div className="min-w-0 flex-1">
@@ -204,55 +207,7 @@ function TodoListItem({
                 </div>
               )}
             </div>
-            {hasDetails && (
-              <ChevronRightIcon
-                className={cn(
-                  "mt-0.5 size-4 shrink-0 text-muted-foreground/60 transition-transform",
-                  expanded ? "rotate-90" : "",
-                )}
-              />
-            )}
           </button>
-
-          {hasDetails && expanded && (
-            <div className="mt-2 space-y-2 rounded-xl border border-border/50 bg-muted/20 p-3">
-              {todo.task_id && (
-                <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60">
-                  {todo.subagent_type ?? linkedSubtask?.subagent_type ?? "subagent"} · {todo.task_id}
-                </div>
-              )}
-              {todo.task_prompt && (
-                <div className="text-[12px] leading-relaxed text-muted-foreground/85">
-                  {todo.task_prompt}
-                </div>
-              )}
-              {liveAction && (
-                <div className="text-[12px] leading-relaxed text-foreground/80">
-                  当前动作：{liveAction}
-                </div>
-              )}
-              {linkedSubtask?.result && (
-                <div className="text-[12px] leading-relaxed text-muted-foreground/85">
-                  {linkedSubtask.result}
-                </div>
-              )}
-              {!linkedSubtask?.result && todo.result_summary && (
-                <div className="text-[12px] leading-relaxed text-muted-foreground/85">
-                  {todo.result_summary}
-                </div>
-              )}
-              {linkedSubtask?.error && (
-                <div className="text-[12px] leading-relaxed text-red-600 dark:text-red-400">
-                  {linkedSubtask.error}
-                </div>
-              )}
-              {!linkedSubtask?.error && todo.error && (
-                <div className="text-[12px] leading-relaxed text-red-600 dark:text-red-400">
-                  {todo.error}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </QueueItem>

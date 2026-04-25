@@ -143,14 +143,6 @@ function TodoListItem({
       <CircleDotIcon className="size-3.5 text-muted-foreground/70" />
     );
 
-  const hasDetails = Boolean(
-    todo.task_id ??
-      linkedSubtask ??
-      todo.result_summary ??
-      todo.error ??
-      todo.task_prompt,
-  );
-
   return (
     <QueueItem
       className={cn(
@@ -174,12 +166,10 @@ function TodoListItem({
         <div className="min-w-0 flex-1">
           <button
             type="button"
-            onClick={hasDetails ? () => onSelect?.(todo) : undefined}
+            onClick={() => onSelect?.(todo)}
             className={cn(
               "flex w-full items-start gap-2 rounded-lg px-1 py-0.5 text-left",
-              hasDetails
-                ? "cursor-pointer transition-colors hover:bg-muted/30"
-                : "cursor-default",
+              "cursor-pointer transition-colors hover:bg-muted/30",
             )}
           >
             <div className="min-w-0 flex-1">

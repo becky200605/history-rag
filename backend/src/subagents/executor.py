@@ -129,6 +129,14 @@ def _extract_citations(text: str) -> list[str]:
     return _dedupe_strings(citations)
 
 
+def _strip_reasoning_from_message_dict(message_dict: dict[str, Any]) -> dict[str, Any]:
+    additional_kwargs = message_dict.get("additional_kwargs")
+    if isinstance(additional_kwargs, dict):
+        additional_kwargs.pop("reasoning_content", None)
+        additional_kwargs.pop("reasoning", None)
+    return message_dict
+
+
 def _parse_refusal_summary(summary: str) -> tuple[bool, str | None]:
     normalized = summary.strip()
     for prefix in _REFUSAL_PREFIXES:
@@ -418,9 +426,13 @@ class SubagentExecutor:
                         else previous_chunk + streamed_message
                     )
                     aggregated_chunks[message_id] = aggregated_chunk
-                    message_dict = message_chunk_to_message(aggregated_chunk).model_dump()
+                    message_dict = _strip_reasoning_from_message_dict(
+                        message_chunk_to_message(aggregated_chunk).model_dump()
+                    )
                 elif isinstance(streamed_message, AIMessage):
-                    message_dict = streamed_message.model_dump()
+                    message_dict = _strip_reasoning_from_message_dict(
+                        streamed_message.model_dump()
+                    )
                 else:
                     continue
 

@@ -1,6 +1,6 @@
 "use client";
 
-import type { AIMessage } from "@langchain/langgraph-sdk";
+import type { AIMessage, Message } from "@langchain/langgraph-sdk";
 import {
   CheckCircle2Icon,
   CircleDotIcon,
@@ -9,13 +9,22 @@ import {
 } from "lucide-react";
 import { useMemo } from "react";
 
+import {
+  Message as AIElementMessage,
+  MessageContent as AIElementMessageContent,
+} from "@/components/ai-elements/message";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useI18n } from "@/core/i18n/hooks";
 import { extractTextFromMessage, hasToolCalls } from "@/core/messages/utils";
+import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
 import { useSubtask } from "@/core/tasks/context";
 import type { Todo } from "@/core/todos";
 import { explainLastToolCall } from "@/core/tools/utils";
 import { cn } from "@/lib/utils";
+
+import { MarkdownContent } from "./messages/markdown-content";
+import { MessageGroup } from "./messages/message-group";
+import { MessageListItem } from "./messages/message-list-item";
 
 function statusLabel(
   status: Todo["status"] | "in_progress" | "completed" | "failed" | undefined,
@@ -38,20 +47,15 @@ function latestProgressText(message: AIMessage | undefined, detail: string | nul
   return detail;
 }
 
-function renderStreamingEntry(
-  message: AIMessage,
-  detail: string | null,
-  t: ReturnType<typeof useI18n>["t"],
-) {
-  const text = extractTextFromMessage(message).trim();
-  const normalizedText = text.length > 0 ? text : null;
-  const toolAction = hasToolCalls(message)
-    ? explainLastToolCall(message, t)
-    : null;
+function buildSyntheticAssistantMessage(
+  id: string,
+  content: string,
+): Message {
   return {
-    text: normalizedText ?? detail ?? toolAction ?? "等待更多输出…",
-    toolAction,
-  };
+    type: "ai",
+    id,
+    content,
+  } as Message;
 }
 
 export function SubtaskDetailSheet({
@@ -65,6 +69,7 @@ export function SubtaskDetailSheet({
 }) {
   const { t } = useI18n();
   const linkedSubtask = useSubtask(todo?.task_id ?? "");
+  const rehypePlugins = useRehypeSplitWordsIntoSpans(false);
   const fallbackLatestMessage = linkedSubtask?.latestMessage ?? todo?.latest_message;
   const fallbackStreamingMessages =
     linkedSubtask?.messages ?? todo?.stream_messages ?? [];
@@ -89,7 +94,46 @@ export function SubtaskDetailSheet({
     fallbackLatestMessage,
     liveAction ?? fallbackDescription,
   );
-  const streamingMessages = fallbackStreamingMessages;
+  const streamingMessages = fallbackStreamingMessages as Message[];
+
+  const structuredResultContent = useMemo(() => {
+    const sections: string[] = [];
+    if (fallbackSummary) {
+      sections.push(`## 摘要\n${fallbackSummary}`);
+    }
+    if (fallbackFindings.length > 0) {
+      sections.push(
+        `## 关键发现\n${fallbackFindings.map((item) => `- ${item}`).join("\n")}`,
+      );
+    }
+    if (fallbackCitations.length > 0) {
+      sections.push(
+        `## 关键引文\n${fallbackCitations.map((item) => `- ${item}`).join("\n")}`,
+      );
+    }
+    if (fallbackOpenQuestions.length > 0) {
+      sections.push(
+        `## 未解决缺口\n${fallbackOpenQuestions.map((item) => `- ${item}`).join("\n")}`,
+      );
+    }
+    return sections.join("\n\n").trim();
+  }, [
+    fallbackCitations,
+    fallbackFindings,
+    fallbackOpenQuestions,
+    fallbackSummary,
+  ]);
+
+  const renderedResultMessage = useMemo(() => {
+    const content = structuredResultContent || fallbackResult;
+    if (!content || !todo) {
+      return null;
+    }
+    return buildSyntheticAssistantMessage(
+      `${todo.task_id ?? todo.id ?? "subtask"}:result`,
+      content,
+    );
+  }, [fallbackResult, structuredResultContent, todo]);
 
   const statusIcon = useMemo(() => {
     if (detailStatus === "completed") {
@@ -106,7 +150,7 @@ export function SubtaskDetailSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-xl">
+      <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-2xl">
         <SheetHeader className="border-b border-border/60 px-6 py-5">
           <SheetTitle className="pr-8 text-base leading-relaxed">
             {todo?.content ?? "子任务详情"}
@@ -117,101 +161,95 @@ export function SubtaskDetailSheet({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-5">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-6">
           {!todo ? (
             <div className="text-muted-foreground text-sm">未选中子任务。</div>
           ) : (
-            <div className="space-y-5">
+            <div className="space-y-6">
               {todo.task_id && (
-                <Section title="任务标识">
-                  <div className="text-[11px] uppercase tracking-widest text-muted-foreground/70">
-                    {todo.subagent_type ?? linkedSubtask?.subagent_type ?? "subagent"} · {todo.task_id}
-                  </div>
-                </Section>
+                <div className="text-[11px] uppercase tracking-widest text-muted-foreground/70">
+                  {todo.subagent_type ?? linkedSubtask?.subagent_type ?? "subagent"} · {todo.task_id}
+                </div>
               )}
 
               {todo.task_prompt && (
-                <Section title="任务说明">
-                  <DetailBlock>{todo.task_prompt}</DetailBlock>
-                </Section>
-              )}
-
-              {latestProgress && (
-                <Section title="当前进度">
-                  <DetailBlock emphasis={detailStatus === "in_progress"}>
-                    {latestProgress}
-                  </DetailBlock>
-                </Section>
+                <AIElementMessage from="assistant">
+                  <AIElementMessageContent className="w-full">
+                    <MarkdownContent
+                      content={`## 任务说明\n${todo.task_prompt}`}
+                      isLoading={false}
+                      rehypePlugins={rehypePlugins}
+                      className="my-2"
+                    />
+                  </AIElementMessageContent>
+                </AIElementMessage>
               )}
 
               {detailStatus === "in_progress" && !todo.task_id && (
-                <Section title="下发状态">
-                  <DetailBlock tone="danger">
-                    这个 todo 目前还没有拿到真实的 subtask task_id。也就是说，当前看到的是主任务里的进行中项，不是已经下发出去并可独立 streaming 的子任务。
-                  </DetailBlock>
-                </Section>
+                <AIElementMessage from="assistant">
+                  <AIElementMessageContent className="w-full">
+                    <MarkdownContent
+                      content={"## 下发状态\n这个 todo 目前还没有拿到真实的 subtask task_id。当前看到的是主任务里的进行中项，不是已经下发出去并可独立 streaming 的子任务。"}
+                      isLoading={false}
+                      rehypePlugins={rehypePlugins}
+                      className="my-2 text-red-600 dark:text-red-400"
+                    />
+                  </AIElementMessageContent>
+                </AIElementMessage>
               )}
 
-              {streamingMessages.length > 0 && (
-                <Section title="实时过程">
-                  <div className="space-y-3">
-                    {streamingMessages.map((message, index) => {
-                      const entry = renderStreamingEntry(message, liveAction, t);
-                      return (
-                        <DetailBlock key={`${todo.task_id ?? todo.id ?? "todo"}-${index}`}>
-                          {entry.toolAction && (
-                            <div className="mb-1 text-[11px] font-semibold tracking-widest text-muted-foreground/70 uppercase">
-                              {entry.toolAction}
-                            </div>
-                          )}
-                          {entry.text}
-                        </DetailBlock>
-                      );
-                    })}
-                  </div>
-                </Section>
+              {streamingMessages.length > 0 ? (
+                <MessageGroup
+                  messages={streamingMessages}
+                  isLoading={detailStatus === "in_progress"}
+                />
+              ) : latestProgress && detailStatus === "in_progress" ? (
+                <AIElementMessage from="assistant">
+                  <AIElementMessageContent className="w-full">
+                    <MarkdownContent
+                      content={latestProgress}
+                      isLoading={true}
+                      rehypePlugins={rehypePlugins}
+                      className={cn(
+                        "my-2",
+                        detailStatus === "in_progress" ? "text-foreground" : "",
+                      )}
+                    />
+                  </AIElementMessageContent>
+                </AIElementMessage>
+              ) : null}
+
+              {renderedResultMessage && (
+                <MessageListItem
+                  message={renderedResultMessage}
+                  isLoading={false}
+                />
               )}
 
-              {fallbackSummary && (
-                <Section title="摘要">
-                  <DetailBlock>{fallbackSummary}</DetailBlock>
-                </Section>
-              )}
-
-              {fallbackFindings.length > 0 && (
-                <Section title="关键发现">
-                  <BulletDetail items={fallbackFindings} />
-                </Section>
-              )}
-
-              {fallbackCitations.length > 0 && (
-                <Section title="关键引文">
-                  <BulletDetail items={fallbackCitations} />
-                </Section>
-              )}
-
-              {fallbackOpenQuestions.length > 0 && (
-                <Section title="未解决缺口">
-                  <BulletDetail items={fallbackOpenQuestions} />
-                </Section>
-              )}
-
-              {fallbackResult && (
-                <Section title="执行结果">
-                  <DetailBlock>{fallbackResult}</DetailBlock>
-                </Section>
-              )}
-
-              {!fallbackResult && todo.result_summary && (
-                <Section title="结果摘要">
-                  <DetailBlock>{todo.result_summary}</DetailBlock>
-                </Section>
+              {!renderedResultMessage && todo.result_summary && (
+                <AIElementMessage from="assistant">
+                  <AIElementMessageContent className="w-full">
+                    <MarkdownContent
+                      content={todo.result_summary}
+                      isLoading={false}
+                      rehypePlugins={rehypePlugins}
+                      className="my-2"
+                    />
+                  </AIElementMessageContent>
+                </AIElementMessage>
               )}
 
               {fallbackError && (
-                <Section title="错误信息">
-                  <DetailBlock tone="danger">{fallbackError}</DetailBlock>
-                </Section>
+                <AIElementMessage from="assistant">
+                  <AIElementMessageContent className="w-full">
+                    <MarkdownContent
+                      content={fallbackError}
+                      isLoading={false}
+                      rehypePlugins={rehypePlugins}
+                      className="my-2 text-red-600 dark:text-red-400"
+                    />
+                  </AIElementMessageContent>
+                </AIElementMessage>
               )}
 
               {!linkedSubtask &&
@@ -231,54 +269,5 @@ export function SubtaskDetailSheet({
         </div>
       </SheetContent>
     </Sheet>
-  );
-}
-
-function BulletDetail({ items }: { items: string[] }) {
-  return (
-    <div className="space-y-2">
-      {items.map((item, index) => (
-        <DetailBlock key={`${index}:${item}`}>{`- ${item}`}</DetailBlock>
-      ))}
-    </div>
-  );
-}
-
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="space-y-2">
-      <h3 className="text-xs font-semibold tracking-widest text-muted-foreground/70 uppercase">
-        {title}
-      </h3>
-      {children}
-    </section>
-  );
-}
-
-function DetailBlock({
-  children,
-  emphasis = false,
-  tone = "default",
-}: {
-  children: React.ReactNode;
-  emphasis?: boolean;
-  tone?: "default" | "danger";
-}) {
-  return (
-    <div
-      className={cn(
-        "rounded-2xl border border-border/50 bg-muted/20 px-4 py-3 text-sm leading-7 whitespace-pre-wrap break-words",
-        emphasis ? "border-primary/40 bg-primary/5 text-foreground" : "text-muted-foreground/90",
-        tone === "danger" ? "border-red-500/30 bg-red-500/5 text-red-600 dark:text-red-400" : "",
-      )}
-    >
-      {children}
-    </div>
   );
 }

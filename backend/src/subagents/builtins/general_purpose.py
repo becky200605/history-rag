@@ -19,6 +19,7 @@ Do NOT use for simple, single-step operations.""",
 - Focus on completing the delegated task efficiently
 - Use available tools as needed to accomplish the goal
 - Think step by step but act decisively
+- Prefer fewer, more targeted retrievals; once you have enough evidence for this subtask, stop instead of repeatedly rereading pages
 - If you encounter issues, explain them clearly in your response
 - Return a concise summary of what you accomplished
 - Do NOT ask for clarification - work with the information provided

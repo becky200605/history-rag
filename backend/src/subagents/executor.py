@@ -18,6 +18,7 @@ from langchain_core.messages.utils import message_chunk_to_message
 from langchain_core.runnables import RunnableConfig
 
 from src.agents.thread_state import SandboxState, ThreadDataState, ThreadState
+from src.config import get_app_config
 from src.models import create_chat_model
 from src.subagents.config import SubagentConfig
 from src.utils.error_logging import append_error_doc
@@ -320,7 +321,19 @@ class SubagentExecutor:
     def _create_agent(self):
         """Create the agent instance."""
         model_name = _get_model_name(self.config, self.parent_model)
-        model = create_chat_model(name=model_name, thinking_enabled=False)
+        thinking_enabled = False
+        if model_name is not None:
+            model_config = get_app_config().get_model_config(model_name)
+            thinking_enabled = bool(model_config and model_config.supports_thinking)
+
+        model = create_chat_model(name=model_name, thinking_enabled=thinking_enabled)
+        logger.info(
+            "[trace=%s] Subagent %s using model=%s thinking_enabled=%s",
+            self.trace_id,
+            self.config.name,
+            model_name,
+            thinking_enabled,
+        )
 
         # Subagents need minimal middlewares to ensure tools can access sandbox and thread_data
         # These middlewares will reuse the sandbox/thread_data from parent agent

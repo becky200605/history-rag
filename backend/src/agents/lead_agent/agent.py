@@ -90,7 +90,7 @@ def _create_todo_list_middleware(
     is_plan_mode: bool,
     *,
     subagent_enabled: bool = False,
-    max_concurrent_subagents: int = 3,
+    max_concurrent_subagents: int = 4,
 ) -> TodoListMiddleware | None:
     """Create and configure the TodoList middleware.
 
@@ -280,7 +280,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
     configurable = config.get("configurable", {})
     is_plan_mode = configurable.get("is_plan_mode", False)
     subagent_enabled = configurable.get("subagent_enabled", False)
-    max_concurrent_subagents = configurable.get("max_concurrent_subagents", 3)
+    max_concurrent_subagents = configurable.get("max_concurrent_subagents", 4)
     todo_list_middleware = _create_todo_list_middleware(
         is_plan_mode,
         subagent_enabled=subagent_enabled,
@@ -305,7 +305,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
     # Add SubagentLimitMiddleware only when the lead agent can call raw `task` directly.
     subagent_enabled = configurable.get("subagent_enabled", False)
     if subagent_enabled and not is_plan_mode:
-        max_concurrent_subagents = configurable.get("max_concurrent_subagents", 3)
+        max_concurrent_subagents = configurable.get("max_concurrent_subagents", 4)
         middlewares.append(SubagentLimitMiddleware(max_concurrent=max_concurrent_subagents))
 
     # ClarificationMiddleware should always be last
@@ -328,7 +328,7 @@ def make_lead_agent(config: RunnableConfig):
         )
     is_plan_mode = config.get("configurable", {}).get("is_plan_mode", False)
     subagent_enabled = config.get("configurable", {}).get("subagent_enabled", False)
-    max_concurrent_subagents = config.get("configurable", {}).get("max_concurrent_subagents", 3)
+    max_concurrent_subagents = config.get("configurable", {}).get("max_concurrent_subagents", 4)
     qa_mode = config.get("configurable", {}).get("qa_mode", False)
     concise_answers = config.get("configurable", {}).get("concise_answers", False)
     allow_direct_task_tool = subagent_enabled and not is_plan_mode

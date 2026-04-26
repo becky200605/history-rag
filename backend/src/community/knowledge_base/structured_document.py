@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -178,11 +179,20 @@ def save_structured_document(directory: Path, source_filename: str, payload: dic
     return path
 
 
+@lru_cache(maxsize=512)
+def _load_structured_document_cached(path_str: str, mtime_ns: int) -> dict[str, Any] | None:
+    try:
+        return json.loads(Path(path_str).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def load_structured_document(path: Path) -> dict[str, Any] | None:
     """Load a structured JSON document if it exists and is valid."""
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+        mtime_ns = path.stat().st_mtime_ns
+    except OSError:
         return None
+    return _load_structured_document_cached(str(path), mtime_ns)

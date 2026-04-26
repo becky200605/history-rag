@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useState, type Dispatch, type SetStateAction } from "react";
+import type { AIMessage } from "@langchain/langgraph-sdk";
 
 import type { Subtask } from "./types";
 
@@ -38,6 +39,31 @@ export function useSubtask(id: string) {
   return tasks[id];
 }
 
+function mergeMessageSnapshots(
+  previousMessages: AIMessage[] | undefined,
+  incomingMessages: AIMessage[],
+) {
+  const merged = [...(previousMessages ?? [])];
+
+  for (const incoming of incomingMessages) {
+    const incomingId = incoming.id;
+    if (!incomingId) {
+      merged.push(incoming);
+      continue;
+    }
+
+    const existingIndex = merged.findIndex((message) => message.id === incomingId);
+    if (existingIndex >= 0) {
+      merged[existingIndex] = incoming;
+      continue;
+    }
+
+    merged.push(incoming);
+  }
+
+  return merged;
+}
+
 export function useUpdateSubtask() {
   const { setTasks } = useSubtaskContext();
   const updateSubtask = useCallback(
@@ -50,10 +76,10 @@ export function useUpdateSubtask() {
         } as Subtask;
 
         if (task.messages && task.messages.length > 0) {
-          nextTask.messages = [
-            ...(previousTask?.messages ?? []),
-            ...task.messages,
-          ];
+          nextTask.messages = mergeMessageSnapshots(
+            previousTask?.messages,
+            task.messages,
+          );
         }
 
         return {

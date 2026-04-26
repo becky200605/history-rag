@@ -216,12 +216,21 @@ def _parse_structured_subtask_result(text: str | None) -> dict[str, Any] | None:
 _background_tasks: dict[str, SubagentResult] = {}
 _background_tasks_lock = threading.Lock()
 
+# Default subagent concurrency budget for orchestrated runs.
+MAX_CONCURRENT_SUBAGENTS = 4
+
 # Thread pool for background task scheduling and orchestration
-_scheduler_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="subagent-scheduler-")
+_scheduler_pool = ThreadPoolExecutor(
+    max_workers=MAX_CONCURRENT_SUBAGENTS,
+    thread_name_prefix="subagent-scheduler-",
+)
 
 # Thread pool for actual subagent execution (with timeout support)
 # Larger pool to avoid blocking when scheduler submits execution tasks
-_execution_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="subagent-exec-")
+_execution_pool = ThreadPoolExecutor(
+    max_workers=MAX_CONCURRENT_SUBAGENTS,
+    thread_name_prefix="subagent-exec-",
+)
 
 
 def _filter_tools(
@@ -642,9 +651,6 @@ class SubagentExecutor:
 
         _scheduler_pool.submit(run_task)
         return task_id
-
-
-MAX_CONCURRENT_SUBAGENTS = 3
 
 
 def get_background_task_result(task_id: str) -> SubagentResult | None:

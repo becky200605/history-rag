@@ -175,7 +175,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         system_prompt: str = WRITE_TODOS_SYSTEM_PROMPT,
         tool_description: str = WRITE_TODOS_TOOL_DESCRIPTION,
         subagent_enabled: bool = False,
-        max_concurrent_subagents: int = 3,
+        max_concurrent_subagents: int = 4,
     ) -> None:
         super().__init__()
         self.system_prompt = system_prompt
@@ -588,7 +588,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 launched.pop(task_id, None)
 
             if launched or queue:
-                time.sleep(0.25)
+                time.sleep(0.1)
 
         return todos, summary_lines, dispatch_state
 

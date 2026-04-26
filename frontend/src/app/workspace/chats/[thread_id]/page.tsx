@@ -258,6 +258,31 @@ function todosMatch(left: Todo | null | undefined, right: Todo | null | undefine
   );
 }
 
+function mergeStreamingMessages(
+  previousMessages: AIMessage[] | undefined,
+  incomingMessages: AIMessage[],
+) {
+  const merged = [...(previousMessages ?? [])];
+
+  for (const incoming of incomingMessages) {
+    const incomingId = incoming.id;
+    if (!incomingId) {
+      merged.push(incoming);
+      continue;
+    }
+
+    const existingIndex = merged.findIndex((message) => message.id === incomingId);
+    if (existingIndex >= 0) {
+      merged[existingIndex] = incoming;
+      continue;
+    }
+
+    merged.push(incoming);
+  }
+
+  return merged;
+}
+
 function mergeTaskEventIntoTodos(
   todos: Todo[] | null,
   event:
@@ -290,7 +315,10 @@ function mergeTaskEventIntoTodos(
         ...todo,
         status: "in_progress" as const,
         latest_message: event.message,
-        stream_messages: [...(todo.stream_messages ?? []), event.message],
+        stream_messages: mergeStreamingMessages(
+          todo.stream_messages,
+          [event.message],
+        ),
       };
     }
 
@@ -853,6 +881,7 @@ function ChatPageContent({
         resolvedContext.scenario === "research" ||
         (resolvedContext.scenario === "qa" && resolvedContext.tier === "pro"),
       is_plan_mode: resolvedContext.scenario === "research",
+      max_concurrent_subagents: 4,
       subagent_enabled: true,
       qa_mode: resolvedContext.scenario === "qa",
       concise_answers:

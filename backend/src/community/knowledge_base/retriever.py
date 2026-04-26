@@ -508,6 +508,15 @@ class KnowledgeBaseRetriever:
 
         return selected
 
+    def _prepare_ranked_results(self, results: list[dict], *, limit: int) -> tuple[list[dict], int]:
+        for result in results:
+            result["weighted_score"] = self._score_result(result)
+
+        results.sort(key=lambda item: item.get("weighted_score", item.get("score", 0)), reverse=True)
+        deduped_results = self._merge_duplicate_results(results)
+        deduped_results.sort(key=lambda item: item.get("weighted_score", item.get("score", 0)), reverse=True)
+        return self._select_diverse_results(deduped_results, limit=limit), len(deduped_results)
+
     def search(
         self,
         query: str,
@@ -536,6 +545,41 @@ class KnowledgeBaseRetriever:
                 (time.perf_counter() - started_at) * 1000,
             )
             return []
+
+        if _looks_like_exact_lookup(query):
+            lexical_started_at = time.perf_counter()
+            lexical_results = lexical_search_documents(
+                query,
+                thread_id=thread_id,
+                user_id=user_id,
+                doc_ids=effective_doc_ids,
+                scopes=enabled_scopes,
+                top_k=max(self.config.retrieval.top_k, MIN_RESULT_LIMIT),
+            )
+            logger.info(
+                "Knowledge exact fast-path lexical search: query=%r doc_ids=%s hits=%s elapsed_ms=%.1f",
+                query,
+                len(effective_doc_ids or []),
+                len(lexical_results),
+                (time.perf_counter() - lexical_started_at) * 1000,
+            )
+            if lexical_results:
+                for result in lexical_results:
+                    result["matched_query"] = "精确命中"
+                    result["query_variant"] = query
+                    result["query_variant_weight"] = 1.0
+                selected, deduped_count = self._prepare_ranked_results(
+                    lexical_results,
+                    limit=max(self.config.retrieval.top_k, MIN_RESULT_LIMIT),
+                )
+                logger.info(
+                    "Knowledge exact fast-path returned early: query=%r deduped=%s returned=%s elapsed_ms=%.1f",
+                    query,
+                    deduped_count,
+                    len(selected),
+                    (time.perf_counter() - started_at) * 1000,
+                )
+                return selected
 
         query_variants = _select_query_variants(query, doc_ids=effective_doc_ids)
         per_query_top_k = max(self.config.retrieval.top_k, MIN_PER_QUERY_TOP_K)
@@ -637,13 +681,7 @@ class KnowledgeBaseRetriever:
                 result for result in merged_results if _is_substantive_result(result)
             ]
 
-        for result in merged_results:
-            result["weighted_score"] = self._score_result(result)
-
-        merged_results.sort(key=lambda item: item.get("weighted_score", item.get("score", 0)), reverse=True)
-        deduped_results = self._merge_duplicate_results(merged_results)
-        deduped_results.sort(key=lambda item: item.get("weighted_score", item.get("score", 0)), reverse=True)
-        selected = self._select_diverse_results(deduped_results, limit=final_limit)
+        selected, deduped_count = self._prepare_ranked_results(merged_results, limit=final_limit)
         logger.info(
             "Knowledge search complete: query=%r variants=%s collections=%s doc_ids=%s merged=%s deduped=%s returned=%s elapsed_ms=%.1f",
             query,
@@ -651,7 +689,7 @@ class KnowledgeBaseRetriever:
             len(collections),
             len(effective_doc_ids or []),
             len(merged_results),
-            len(deduped_results),
+            deduped_count,
             len(selected),
             (time.perf_counter() - started_at) * 1000,
         )

@@ -434,7 +434,7 @@ def _build_qa_response_section(*, qa_mode: bool, concise_answers: bool, subagent
 
 def apply_prompt_template(
     subagent_enabled: bool = False,
-    max_concurrent_subagents: int = 3,
+    max_concurrent_subagents: int = 4,
     *,
     qa_mode: bool = False,
     concise_answers: bool = False,

@@ -56,6 +56,25 @@ def _build_request_with_variant_citation(model=None) -> ModelRequest:
     )
 
 
+def _build_request_with_parenthesized_url_citation(model=None) -> ModelRequest:
+    return ModelRequest(
+        model=model or _SuggestionModel(),
+        messages=[
+            HumanMessage(content="请根据知识库回答这个问题"),
+            ToolMessage(
+                content=(
+                    "citation: "
+                    "[citation:民国财政史 (杨荫溥) 原书第10页第1段]"
+                    "(</api/knowledge/docs/%E6%B0%91%E5%9B%BD%E8%B4%A2%E6%94%BF%E5%8F%B2%20%28%E6%9D%A8%E8%8D%AB%E6%BA%A5%29.pdf?page_no=10&paragraph_no=1>)"
+                ),
+                tool_call_id="tool-call-1",
+                name="knowledge_locate",
+            ),
+        ],
+        system_message=SystemMessage(content="You are a helpful assistant."),
+    )
+
+
 def _build_request_with_checkpoint_citation(model=None) -> ModelRequest:
     return ModelRequest(
         model=model or _SuggestionModel(),
@@ -210,6 +229,55 @@ class TestCitationEnforcementMiddleware:
         assert (
             "[citation:光绪朝上谕档第一七册（光绪一七年） 原书第263页第6段]"
             "(/api/knowledge/docs/book.pdf?page_no=263&paragraph_no=6)"
+        ) in content
+
+    def test_accepts_angle_bracket_citation_url_with_parentheses_in_title_or_path(self):
+        middleware = CitationEnforcementMiddleware()
+        request = _build_request_with_parenthesized_url_citation()
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                result=[
+                    AIMessage(
+                        content=(
+                            "可以据此得出结论。"
+                            "[citation:民国财政史 (杨荫溥) 原书第10页第1段]"
+                        )
+                    )
+                ]
+            )
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert (
+            "[citation:民国财政史 (杨荫溥) 原书第10页第1段]"
+            "(</api/knowledge/docs/%E6%B0%91%E5%9B%BD%E8%B4%A2%E6%94%BF%E5%8F%B2%20%28%E6%9D%A8%E8%8D%AB%E6%BA%A5%29.pdf?page_no=10&paragraph_no=1>)"
+        ) in content
+
+    def test_repairs_truncated_citation_link_using_tool_candidate(self):
+        middleware = CitationEnforcementMiddleware()
+        request = _build_request_with_parenthesized_url_citation()
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                result=[
+                    AIMessage(
+                        content=(
+                            "可以据此得出结论。"
+                            "[citation:民国财政史 (杨荫溥) 原书第10页第1段]"
+                            "(/api/knowledge/docs/民国财政史%20(杨荫溥)"
+                        )
+                    )
+                ]
+            )
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert (
+            "[citation:民国财政史 (杨荫溥) 原书第10页第1段]"
+            "(</api/knowledge/docs/%E6%B0%91%E5%9B%BD%E8%B4%A2%E6%94%BF%E5%8F%B2%20%28%E6%9D%A8%E8%8D%AB%E6%BA%A5%29.pdf?page_no=10&paragraph_no=1>)"
         ) in content
 
     def test_upgrades_bare_citation_from_checkpoint_candidates(self):

@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from src.community.knowledge_base.citations import resolve_result_citation_context
+from src.community.knowledge_base.tools import _build_citation
 
 
 def test_user_note_citation_prefers_user_document_and_current_location(monkeypatch) -> None:
@@ -82,3 +83,15 @@ def test_user_upload_citation_uses_uploaded_document_url(monkeypatch) -> None:
         "/api/secure-knowledge/users/me/knowledge/docs/user-upload.pdf?"
     )
     assert "page=4" in context["citation_url"]
+
+
+def test_build_citation_wraps_url_in_angle_brackets_for_markdown_safety() -> None:
+    citation = _build_citation(
+        "民国财政史 (杨荫溥) 原书第10页第1段",
+        "/api/knowledge/docs/%E6%B0%91%E5%9B%BD%E8%B4%A2%E6%94%BF%E5%8F%B2%20%28%E6%9D%A8%E8%8D%AB%E6%BA%A5%29.pdf?page_no=10&paragraph_no=1",
+    )
+
+    assert (
+        citation
+        == "[citation:民国财政史 (杨荫溥) 原书第10页第1段](</api/knowledge/docs/%E6%B0%91%E5%9B%BD%E8%B4%A2%E6%94%BF%E5%8F%B2%20%28%E6%9D%A8%E8%8D%AB%E6%BA%A5%29.pdf?page_no=10&paragraph_no=1>)"
+    )

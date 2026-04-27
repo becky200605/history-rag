@@ -611,7 +611,7 @@ def _build_citation_label(
 def _build_citation(citation_label: str, citation_link: str | None) -> str | None:
     if not citation_link:
         return None
-    return f"[citation:{citation_label}]({citation_link})"
+    return f"[citation:{citation_label}](<{citation_link}>)"
 
 
 def _build_locate_excerpt_citation(

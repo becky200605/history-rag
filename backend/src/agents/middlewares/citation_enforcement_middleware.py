@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 GROUNDING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
 CITATION_SOURCE_TOOL_NAMES = GROUNDING_TOOL_NAMES | {"knowledge_checkpoint", "write_todos"}
-LINKED_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\([^)]+\)", re.IGNORECASE)
-CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\](?:\([^)]+\))?", re.IGNORECASE)
+LINKED_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\((?:<[^>\n]+>|[^)\n]+)\)", re.IGNORECASE)
+CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\](?:\((?:<[^>\n]+>|[^)\n]+)\))?", re.IGNORECASE)
 REFUSAL_PREFIX_PATTERN = re.compile(r"^\s*【无法回答】", re.IGNORECASE)
 REFERENCE_SECTION_PATTERNS = (
     re.compile(r"(?im)^\s{0,3}(?:#{1,6}\s*)?参考文献\s*$"),
@@ -259,6 +259,23 @@ def _normalize_answer_citations(answer_body: str, messages: list) -> str:
         return answer_body
 
     candidate_set = {candidate.full_citation for candidate in candidates}
+    repaired_body = answer_body
+
+    # Repair malformed citation mentions such as:
+    # - bare labels: [citation:...]
+    # - partial/broken links: [citation:...](...   (missing closing `)`)
+    # - links truncated by unescaped parentheses inside filenames/titles
+    #
+    # We already have exact citation lines from tool outputs in this turn, so
+    # the safest fallback is to replace any recognizable mention of the same
+    # citation label with the exact full markdown link from the tool messages.
+    for candidate in candidates:
+        escaped_label = re.escape(f"[citation:{candidate.label}]")
+        repaired_body = re.sub(
+            escaped_label + r"(?:\((?:<[^>\n]*>?|[^\s\n，。；！？、]*)\)?)?",
+            candidate.full_citation,
+            repaired_body,
+        )
 
     def _replace(match: re.Match[str]) -> str:
         citation = match.group(0)
@@ -269,7 +286,7 @@ def _normalize_answer_citations(answer_body: str, messages: list) -> str:
             return resolved
         return citation
 
-    return CITATION_PATTERN.sub(_replace, answer_body)
+    return CITATION_PATTERN.sub(_replace, repaired_body)
 
 
 def _has_supported_body_citation(answer_body: str, messages: list) -> bool:

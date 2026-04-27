@@ -37,9 +37,21 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "One-Facet-Per-Query Rule" in prompt
     assert "Historical Person Rule" in prompt
     assert "Historical Period Rule" in prompt
+    assert "Historical Question Types Rule" in prompt
+    assert "Historical Analysis Core Rule" in prompt
+    assert "Time-Span Closure Rule" in prompt
+    assert "Canonical Node Check Rule" in prompt
+    assert "Continuity-and-Rupture Rule" in prompt
+    assert "Cause-Mechanism-Effect Rule" in prompt
+    assert "Formal-Informal Institutions Rule" in prompt
+    assert "Multi-Actor Perspective Rule" in prompt
+    assert "Concept Hygiene Rule" in prompt
+    assert "Historical Evaluation Rule" in prompt
     assert "北洋政府" in prompt
     assert "Distributed Evidence Rule" in prompt
     assert "Historical Report Rule" in prompt
+    assert "Historical Answer Pattern Rule" in prompt
+    assert "Historical Default Report Shape Rule" in prompt
     assert "Recommended Report Shape" in prompt
     assert "Suggested Questions Rule" in prompt
     assert "建议问题" in prompt
@@ -105,6 +117,7 @@ def test_prompt_supports_parallel_book_subtasks_and_fiscal_historian_style(monke
     assert "let that call dispatch/wait for the subagent batch" in prompt
     assert "Do not immediately duplicate the same batch with manual `task` calls" in prompt
     assert "Historian Voice Rule" in prompt
+    assert "历史综合题默认补足这些维度" in prompt
     assert "Fiscal History Framing Rule" in prompt
     assert "Fiscal History Question Types Rule" in prompt
     assert "Fiscal History Answer Pattern Rule" in prompt

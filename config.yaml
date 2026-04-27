@@ -37,6 +37,20 @@ models:
   #       thinking:
   #         type: enabled
 
+  - name: deepseek-v4-flash
+    display_name: DeepSeek V4 Flash
+    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
+    model: deepseek/deepseek-v4-flash
+    base_url: https://openrouter.ai/api/v1
+    api_key: $OPENAI_API_KEY
+    max_tokens: 8192
+    request_timeout: 18000
+    supports_thinking: true
+    when_thinking_enabled:
+      extra_body:
+        include_reasoning: true
+    supports_vision: false
+
   - name: openrouter-qwen3.5-27b
     display_name: OpenRouter Qwen3.5-27b
     use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
@@ -51,10 +65,10 @@ models:
         include_reasoning: true
     supports_vision: true
 
-  - name: deepseek-v3.2
-    display_name: DeepSeek V3.2
+  - name: deepseek-v4-pro
+    display_name: DeepSeek V4 Pro
     use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
-    model: deepseek/deepseek-v3.2
+    model: deepseek/deepseek-v4-pro
     base_url: https://openrouter.ai/api/v1
     api_key: $OPENAI_API_KEY
     max_tokens: 8192
@@ -208,14 +222,17 @@ sandbox:
 # Configure timeouts for subagent execution
 # Subagents are background workers delegated tasks by the lead agent
 
-# subagents:
-#   # Default timeout in seconds for all subagents (default: 900 = 15 minutes)
-#   timeout_seconds: 900
+subagents:
+  # Default timeout in seconds for all subagents (default: 900 = 15 minutes)
+  timeout_seconds: 900
+#   # Optional default model for all subagents. Subagent execution keeps thinking disabled.
+  model_name: deepseek-v4-flash
 #
 #   # Optional per-agent timeout overrides
 #   agents:
 #     general-purpose:
 #       timeout_seconds: 1800  # 30 minutes for complex multi-step tasks
+#       # model_name: deepseek-v4-flash
 #     bash:
 #       timeout_seconds: 300   # 5 minutes for quick command execution
 

@@ -193,10 +193,6 @@ def _should_preserve_bound_task_status(
     if existing_status == "in_progress" and next_status != "in_progress":
         return True
 
-    # Also prevent later board rewrites from regressing an executor-owned final state.
-    if existing_status in {"completed", "failed"} and next_status != existing_status:
-        return True
-
     return False
 
 

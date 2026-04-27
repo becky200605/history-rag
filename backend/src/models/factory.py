@@ -1,4 +1,5 @@
 import logging
+from copy import deepcopy
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -6,6 +7,17 @@ from src.config import get_app_config, get_tracing_config, is_tracing_enabled
 from src.reflection import resolve_class
 
 logger = logging.getLogger(__name__)
+
+
+def _deep_merge_dicts(base: dict, update: dict) -> dict:
+    """Recursively merge two dictionaries, with update taking precedence."""
+    merged = deepcopy(base)
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
 
 
 def create_chat_model(name: str | None = None, thinking_enabled: bool = False, **kwargs) -> BaseChatModel:
@@ -40,7 +52,15 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
         if not model_config.supports_thinking:
             raise ValueError(f"Model {name} does not support thinking. Set `supports_thinking` to true in the `config.yaml` to enable thinking.") from None
         model_settings_from_config.update(model_config.when_thinking_enabled)
-    model_instance = model_class(**kwargs, **model_settings_from_config)
+
+    model_kwargs = _deep_merge_dicts(model_settings_from_config, kwargs)
+    if not thinking_enabled:
+        model_kwargs = _deep_merge_dicts(
+            model_kwargs,
+            {"extra_body": {"reasoning": {"effort": "none"}}},
+        )
+
+    model_instance = model_class(**model_kwargs)
 
     if is_tracing_enabled():
         try:

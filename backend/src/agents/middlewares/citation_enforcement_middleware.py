@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 GROUNDING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
-CITATION_SOURCE_TOOL_NAMES = GROUNDING_TOOL_NAMES | {"knowledge_checkpoint"}
+CITATION_SOURCE_TOOL_NAMES = GROUNDING_TOOL_NAMES | {"knowledge_checkpoint", "write_todos"}
 LINKED_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\([^)]+\)", re.IGNORECASE)
 CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\](?:\([^)]+\))?", re.IGNORECASE)
 REFUSAL_PREFIX_PATTERN = re.compile(r"^\s*【无法回答】", re.IGNORECASE)
@@ -121,6 +121,10 @@ def _extract_citations(content: str) -> list[str]:
         seen.add(citation)
         citations.append(citation)
     return citations
+
+
+def _tool_message_contains_citations(message: ToolMessage) -> bool:
+    return bool(LINKED_CITATION_PATTERN.search(_stringify_content(message.content)))
 
 
 def _citation_label(citation: str) -> str:
@@ -254,13 +258,36 @@ def _normalize_answer_citations(answer_body: str, messages: list) -> str:
     if not candidates:
         return answer_body
 
+    candidate_set = {candidate.full_citation for candidate in candidates}
+
     def _replace(match: re.Match[str]) -> str:
         citation = match.group(0)
-        if "](" in citation:
+        if citation in candidate_set:
             return citation
-        return _resolve_citation_from_candidates(citation, messages) or citation
+        resolved = _resolve_citation_from_candidates(citation, messages)
+        if resolved:
+            return resolved
+        return citation
 
     return CITATION_PATTERN.sub(_replace, answer_body)
+
+
+def _has_supported_body_citation(answer_body: str, messages: list) -> bool:
+    citations = _extract_citations(answer_body)
+    if not citations:
+        return False
+
+    candidates = _build_citation_candidates(messages)
+    if not candidates:
+        return True
+
+    candidate_set = {candidate.full_citation for candidate in candidates}
+    for citation in citations:
+        if citation in candidate_set:
+            return True
+        if _resolve_citation_from_candidates(citation, messages):
+            return True
+    return False
 
 
 def _build_reference_section(answer_body: str) -> str:
@@ -345,7 +372,12 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
     def _turn_used_grounding_tools(self, messages: list) -> bool:
         start = _latest_human_index(messages)
         for message in messages[start:]:
-            if isinstance(message, ToolMessage) and getattr(message, "name", None) in GROUNDING_TOOL_NAMES:
+            if not isinstance(message, ToolMessage):
+                continue
+            tool_name = getattr(message, "name", None)
+            if tool_name in GROUNDING_TOOL_NAMES:
+                return True
+            if tool_name == "write_todos" and _tool_message_contains_citations(message):
                 return True
         return False
 
@@ -365,7 +397,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         answer_body = _normalize_answer_citations(_strip_generated_sections(content), messages)
         if _is_refusal(answer_body):
             return False
-        return not CITATION_PATTERN.search(answer_body)
+        return not _has_supported_body_citation(answer_body, messages)
 
     def _build_retry_request(self, request: ModelRequest, appendix: str) -> ModelRequest:
         current_system = _stringify_content(request.system_message.content) if request.system_message else ""

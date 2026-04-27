@@ -125,7 +125,7 @@ def _build_default_task_prompt(todo: Todo) -> str:
         "4. 如果 1-2 次 `knowledge_locate` 扩展后已经够写结论，就停止继续探测；\n"
         "5. 最终输出必须使用固定小节：`## 摘要`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
         "6. 如果证据不足，不要硬答；在 `## 摘要` 里用 `【证据不足】` 或 `【无法确认】` 明确拒答原因；\n"
-        "7. `## 关键发现` 在证据不足时写 `- 无充分证据支持结论`；\n"
+        "7. `## 关键发现` 里的每一条，只要有证据，就直接在该条后面附上最相关的原始 `[citation:标题](URL)`；不要把引用只堆到 `## 关键引文` 里；证据不足时写 `- 无充分证据支持结论`；\n"
         "8. `## 关键引文`里优先保留原始 `[citation:标题](URL)` 行；没有时明确写 `- 无`；\n"
         "9. `## 未解决缺口`里写仍需补查的点；没有时明确写 `- 无`；\n"
         "10. 不要接管其他 todo。"
@@ -134,6 +134,40 @@ def _build_default_task_prompt(todo: Todo) -> str:
 
 def _serialize_todos_for_event(todos: list[Todo]) -> list[dict[str, Any]]:
     return [dict(todo) for todo in todos]
+
+
+def _render_todo_evidence_block(todo: Todo) -> str:
+    lines = [
+        f"### Todo: {todo.get('content', '')}",
+        f"状态: {todo.get('status', 'pending')}",
+    ]
+
+    summary = str(todo.get("structured_summary") or "").strip()
+    findings = [str(item).strip() for item in todo.get("structured_findings", []) or [] if str(item).strip()]
+    citations = [str(item).strip() for item in todo.get("structured_citations", []) or [] if str(item).strip()]
+    gaps = [str(item).strip() for item in todo.get("structured_gaps", []) or [] if str(item).strip()]
+    error = str(todo.get("error") or "").strip()
+
+    if summary:
+        lines.append("摘要:")
+        lines.append(summary)
+
+    if findings:
+        lines.append("关键发现:")
+        lines.extend(f"- {item}" for item in findings)
+
+    if citations:
+        lines.append("关键引文:")
+        lines.extend(f"- {item}" for item in citations)
+
+    if gaps:
+        lines.append("未解决缺口:")
+        lines.extend(f"- {item}" for item in gaps)
+
+    if error:
+        lines.append(f"错误: {error}")
+
+    return "\n".join(lines)
 
 
 def _should_preserve_bound_task_status(
@@ -620,6 +654,21 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
             if todo.get("error"):
                 line += f" | error: {todo['error']}"
             lines.append(line)
+
+        detailed_completed = [todo for todo in todos if todo.get("status") == "completed"]
+        if detailed_completed:
+            lines.append("")
+            lines.append("Completed todo evidence packets:")
+            for todo in detailed_completed:
+                lines.append(_render_todo_evidence_block(todo))
+                lines.append("")
+
+            lines.append(
+                "Synthesis instructions: when you write the final answer, prefer reusing the citation-bearing lines above."
+            )
+            lines.append(
+                "Do not invent placeholder links or generic source mentions; copy the exact `[citation:...](...)` links from the completed todo evidence packets."
+            )
 
         return "\n".join(lines)
 

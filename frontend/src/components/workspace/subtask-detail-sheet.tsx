@@ -73,8 +73,6 @@ export function SubtaskDetailSheet({
   const fallbackLatestMessage = linkedSubtask?.latestMessage ?? todo?.latest_message;
   const fallbackStreamingMessages =
     linkedSubtask?.messages ?? todo?.stream_messages ?? [];
-  const fallbackDescription =
-    linkedSubtask?.description ?? todo?.task_description ?? todo?.content ?? null;
   const fallbackResult = linkedSubtask?.result ?? todo?.result;
   const fallbackSummary = linkedSubtask?.summary ?? todo?.structured_summary;
   const fallbackFindings = linkedSubtask?.findings ?? todo?.structured_findings ?? [];
@@ -92,7 +90,7 @@ export function SubtaskDetailSheet({
       : null;
   const latestProgress = latestProgressText(
     fallbackLatestMessage,
-    liveAction ?? fallbackDescription,
+    liveAction ?? (detailStatus === "in_progress" ? "子任务运行中..." : null),
   );
   const streamingMessages = fallbackStreamingMessages as Message[];
 
@@ -172,19 +170,6 @@ export function SubtaskDetailSheet({
                 </div>
               )}
 
-              {todo.task_prompt && (
-                <AIElementMessage from="assistant">
-                  <AIElementMessageContent className="w-full">
-                    <MarkdownContent
-                      content={`## 任务说明\n${todo.task_prompt}`}
-                      isLoading={false}
-                      rehypePlugins={rehypePlugins}
-                      className="my-2"
-                    />
-                  </AIElementMessageContent>
-                </AIElementMessage>
-              )}
-
               {detailStatus === "in_progress" && !todo.task_id && (
                 <AIElementMessage from="assistant">
                   <AIElementMessageContent className="w-full">
@@ -255,9 +240,7 @@ export function SubtaskDetailSheet({
               {!linkedSubtask &&
                 !todo.result_summary &&
                 !fallbackError &&
-                !todo.task_prompt &&
                 !todo.task_id &&
-                !todo.task_description &&
                 streamingMessages.length === 0 &&
                 !fallbackResult && (
                 <div className="text-muted-foreground text-sm">

@@ -39,6 +39,8 @@ When you complete the task, use exactly the following Markdown sections so the p
 ## 关键发现
 - 用项目符号列出本子任务最重要的发现
 - 每条尽量只表达一个事实或判断
+- 只要有证据，每条后面都必须直接附上 1-3 个最相关的原始 `[citation:Title](URL)` 链接，方便主任务直接复用
+- 不要把 citation 只放在 `## 关键引文` 里而让 `## 关键发现` 变成无引文断言
 - 如果没有足够发现支撑结论，就写 `- 无充分证据支持结论`
 
 ## 关键引文

@@ -62,7 +62,7 @@ models:
       extra_body:
         include_reasoning: true
     supports_vision: true
-    
+
   - name: deepseek-v4-flash
     display_name: DeepSeek V4 Flash
     use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
@@ -237,8 +237,10 @@ sandbox:
 subagents:
   # Default timeout in seconds for all subagents (default: 900 = 15 minutes)
   timeout_seconds: 900
-#   # Optional default model for all subagents. Subagent execution keeps thinking disabled.
+  # Optional default model for all subagents.
   model_name: qwen/qwen3.6-flash
+  # Optional default thinking mode for all subagents.
+  thinking_enabled: false
 #
 #   # Optional per-agent timeout overrides
 #   agents:

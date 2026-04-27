@@ -28,6 +28,7 @@ def get_subagent_config(name: str) -> SubagentConfig | None:
     app_config = get_subagents_app_config()
     effective_timeout = app_config.get_timeout_for(name)
     effective_model = app_config.get_model_for(name)
+    effective_thinking_enabled = app_config.get_thinking_enabled_for(name)
 
     replacements = {}
     if effective_timeout != config.timeout_seconds:
@@ -36,6 +37,14 @@ def get_subagent_config(name: str) -> SubagentConfig | None:
     if effective_model is not None and effective_model != config.model:
         logger.debug(f"Subagent '{name}': model overridden by config.yaml ({config.model} -> {effective_model})")
         replacements["model"] = effective_model
+    if effective_thinking_enabled is not None and effective_thinking_enabled != config.thinking_enabled:
+        logger.debug(
+            "Subagent '%s': thinking overridden by config.yaml (%s -> %s)",
+            name,
+            config.thinking_enabled,
+            effective_thinking_enabled,
+        )
+        replacements["thinking_enabled"] = effective_thinking_enabled
 
     if replacements:
         config = replace(config, **replacements)

@@ -19,6 +19,10 @@ class SubagentOverrideConfig(BaseModel):
         default=None,
         description="Model name for this subagent (None = use global default or builtin behavior)",
     )
+    thinking_enabled: bool | None = Field(
+        default=None,
+        description="Whether to enable thinking for this subagent (None = use global default or builtin behavior)",
+    )
 
 
 class SubagentsAppConfig(BaseModel):
@@ -32,6 +36,10 @@ class SubagentsAppConfig(BaseModel):
     model_name: str | None = Field(
         default=None,
         description="Default model name for all subagents (None = preserve builtin subagent model behavior)",
+    )
+    thinking_enabled: bool | None = Field(
+        default=None,
+        description="Default thinking mode for all subagents (None = preserve builtin subagent behavior)",
     )
     agents: dict[str, SubagentOverrideConfig] = Field(
         default_factory=dict,
@@ -67,6 +75,13 @@ class SubagentsAppConfig(BaseModel):
             return override.model_name
         return self.model_name
 
+    def get_thinking_enabled_for(self, agent_name: str) -> bool | None:
+        """Get the effective thinking mode for a specific agent."""
+        override = self.agents.get(agent_name)
+        if override is not None and override.thinking_enabled is not None:
+            return override.thinking_enabled
+        return self.thinking_enabled
+
 
 _subagents_config: SubagentsAppConfig = SubagentsAppConfig()
 
@@ -88,18 +103,22 @@ def load_subagents_config_from_dict(config_dict: dict) -> None:
             parts.append(f"timeout={override.timeout_seconds}s")
         if override.model_name is not None:
             parts.append(f"model={override.model_name}")
+        if override.thinking_enabled is not None:
+            parts.append(f"thinking={override.thinking_enabled}")
         if parts:
             overrides_summary[name] = ", ".join(parts)
     if overrides_summary:
         logger.info(
-            "Subagents config loaded: default timeout=%ss, default model=%s, per-agent overrides=%s",
+            "Subagents config loaded: default timeout=%ss, default model=%s, default thinking=%s, per-agent overrides=%s",
             _subagents_config.timeout_seconds,
             _subagents_config.model_name or "<builtin>",
+            _subagents_config.thinking_enabled if _subagents_config.thinking_enabled is not None else "<builtin>",
             overrides_summary,
         )
     else:
         logger.info(
-            "Subagents config loaded: default timeout=%ss, default model=%s, no per-agent overrides",
+            "Subagents config loaded: default timeout=%ss, default model=%s, default thinking=%s, no per-agent overrides",
             _subagents_config.timeout_seconds,
             _subagents_config.model_name or "<builtin>",
+            _subagents_config.thinking_enabled if _subagents_config.thinking_enabled is not None else "<builtin>",
         )

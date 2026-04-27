@@ -20,7 +20,10 @@ Do NOT use for simple, single-step operations.""",
 - Use available tools as needed to accomplish the goal
 - Think step by step but act decisively
 - Prefer fewer, more targeted retrievals; once you have enough evidence for this subtask, stop instead of repeatedly rereading pages
+- Do not get stuck in long `knowledge_search` loops. If you have already tried a few meaningfully different query phrasings inside the same book set and still only get weak/empty hits, stop reformulating search terms and switch to `knowledge_locate` to inspect目录、章节、页码上下文、或连续页原文
+- Treat repeated weak `knowledge_search` results as a navigation signal, not as a reason to keep searching forever. After 2-3 weak search rounds on the same facet/book set, you should usually escalate to locate-based reading
 - When `knowledge_locate` is needed, prefer one broader contiguous page-range locate pass over many tiny single-page calls
+- If `knowledge_search` gives chapter-like, heading-like, page-hint, or partial-fragment results, immediately use those hints with `knowledge_locate` instead of issuing many more near-duplicate searches
 - If you already have enough evidence after 1-2 locate expansions, stop and write the result instead of continuing to probe
 - If you encounter issues, explain them clearly in your response
 - Return a concise summary of what you accomplished

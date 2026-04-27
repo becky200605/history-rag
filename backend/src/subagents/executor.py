@@ -329,13 +329,13 @@ class SubagentExecutor:
     def _create_agent(self):
         """Create the agent instance."""
         model_name = _get_model_name(self.config, self.parent_model)
-        model = create_chat_model(name=model_name, thinking_enabled=False)
+        model = create_chat_model(name=model_name, thinking_enabled=self.config.thinking_enabled)
         logger.info(
             "[trace=%s] Subagent %s using model=%s thinking_enabled=%s",
             self.trace_id,
             self.config.name,
             model_name,
-            False,
+            self.config.thinking_enabled,
         )
 
         # Subagents need minimal middlewares to ensure tools can access sandbox and thread_data

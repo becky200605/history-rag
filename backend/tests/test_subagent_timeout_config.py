@@ -27,6 +27,7 @@ from src.subagents.config import SubagentConfig
 def _reset_subagents_config(
     timeout_seconds: int = 900,
     model_name: str | None = None,
+    thinking_enabled: bool | None = None,
     agents: dict | None = None,
 ) -> None:
     """Reset global subagents config to a known state."""
@@ -34,6 +35,7 @@ def _reset_subagents_config(
         {
             "timeout_seconds": timeout_seconds,
             "model_name": model_name,
+            "thinking_enabled": thinking_enabled,
             "agents": agents or {},
         }
     )
@@ -49,11 +51,17 @@ class TestSubagentOverrideConfig:
         override = SubagentOverrideConfig()
         assert override.timeout_seconds is None
         assert override.model_name is None
+        assert override.thinking_enabled is None
 
     def test_explicit_value(self):
-        override = SubagentOverrideConfig(timeout_seconds=300, model_name="deepseek-v4-flash")
+        override = SubagentOverrideConfig(
+            timeout_seconds=300,
+            model_name="deepseek-v4-flash",
+            thinking_enabled=True,
+        )
         assert override.timeout_seconds == 300
         assert override.model_name == "deepseek-v4-flash"
+        assert override.thinking_enabled is True
 
     def test_rejects_zero(self):
         with pytest.raises(ValueError):
@@ -78,15 +86,21 @@ class TestSubagentsAppConfigDefaults:
         config = SubagentsAppConfig()
         assert config.timeout_seconds == 900
         assert config.model_name is None
+        assert config.thinking_enabled is None
 
     def test_default_agents_empty(self):
         config = SubagentsAppConfig()
         assert config.agents == {}
 
     def test_custom_global_timeout(self):
-        config = SubagentsAppConfig(timeout_seconds=1800, model_name="deepseek-v4-flash")
+        config = SubagentsAppConfig(
+            timeout_seconds=1800,
+            model_name="deepseek-v4-flash",
+            thinking_enabled=True,
+        )
         assert config.timeout_seconds == 1800
         assert config.model_name == "deepseek-v4-flash"
+        assert config.thinking_enabled is True
 
     def test_rejects_zero_timeout(self):
         with pytest.raises(ValueError):
@@ -104,46 +118,75 @@ class TestSubagentsAppConfigDefaults:
 
 class TestSubagentOverrideResolution:
     def test_returns_global_default_when_no_override(self):
-        config = SubagentsAppConfig(timeout_seconds=600, model_name="deepseek-v4-flash")
+        config = SubagentsAppConfig(
+            timeout_seconds=600,
+            model_name="deepseek-v4-flash",
+            thinking_enabled=True,
+        )
         assert config.get_timeout_for("general-purpose") == 600
         assert config.get_timeout_for("bash") == 600
         assert config.get_timeout_for("unknown-agent") == 600
         assert config.get_model_for("general-purpose") == "deepseek-v4-flash"
         assert config.get_model_for("unknown-agent") == "deepseek-v4-flash"
+        assert config.get_thinking_enabled_for("general-purpose") is True
+        assert config.get_thinking_enabled_for("unknown-agent") is True
 
     def test_returns_per_agent_override_when_set(self):
         config = SubagentsAppConfig(
             timeout_seconds=900,
             model_name="deepseek-v4-flash",
-            agents={"bash": SubagentOverrideConfig(timeout_seconds=300, model_name="deepseek-v4-pro")},
+            thinking_enabled=True,
+            agents={
+                "bash": SubagentOverrideConfig(
+                    timeout_seconds=300,
+                    model_name="deepseek-v4-pro",
+                    thinking_enabled=False,
+                )
+            },
         )
         assert config.get_timeout_for("bash") == 300
         assert config.get_model_for("bash") == "deepseek-v4-pro"
+        assert config.get_thinking_enabled_for("bash") is False
 
     def test_other_agents_still_use_global_default(self):
         config = SubagentsAppConfig(
             timeout_seconds=900,
             model_name="deepseek-v4-flash",
+            thinking_enabled=True,
             agents={"bash": SubagentOverrideConfig(timeout_seconds=300)},
         )
         assert config.get_timeout_for("general-purpose") == 900
         assert config.get_model_for("general-purpose") == "deepseek-v4-flash"
+        assert config.get_thinking_enabled_for("general-purpose") is True
 
     def test_agent_with_none_override_falls_back_to_global(self):
         config = SubagentsAppConfig(
             timeout_seconds=900,
             model_name="deepseek-v4-flash",
-            agents={"general-purpose": SubagentOverrideConfig(timeout_seconds=None, model_name=None)},
+            thinking_enabled=True,
+            agents={
+                "general-purpose": SubagentOverrideConfig(
+                    timeout_seconds=None,
+                    model_name=None,
+                    thinking_enabled=None,
+                )
+            },
         )
         assert config.get_timeout_for("general-purpose") == 900
         assert config.get_model_for("general-purpose") == "deepseek-v4-flash"
+        assert config.get_thinking_enabled_for("general-purpose") is True
 
     def test_multiple_per_agent_overrides(self):
         config = SubagentsAppConfig(
             timeout_seconds=900,
             model_name="deepseek-v4-flash",
+            thinking_enabled=True,
             agents={
-                "general-purpose": SubagentOverrideConfig(timeout_seconds=1800, model_name="deepseek-v4-pro"),
+                "general-purpose": SubagentOverrideConfig(
+                    timeout_seconds=1800,
+                    model_name="deepseek-v4-pro",
+                    thinking_enabled=False,
+                ),
                 "bash": SubagentOverrideConfig(timeout_seconds=120),
             },
         )
@@ -151,6 +194,8 @@ class TestSubagentOverrideResolution:
         assert config.get_timeout_for("bash") == 120
         assert config.get_model_for("general-purpose") == "deepseek-v4-pro"
         assert config.get_model_for("bash") == "deepseek-v4-flash"
+        assert config.get_thinking_enabled_for("general-purpose") is False
+        assert config.get_thinking_enabled_for("bash") is True
 
 
 # ---------------------------------------------------------------------------
@@ -164,17 +209,25 @@ class TestLoadSubagentsConfig:
         _reset_subagents_config()
 
     def test_load_global_timeout(self):
-        load_subagents_config_from_dict({"timeout_seconds": 300, "model_name": "deepseek-v4-flash"})
+        load_subagents_config_from_dict(
+            {"timeout_seconds": 300, "model_name": "deepseek-v4-flash", "thinking_enabled": True}
+        )
         assert get_subagents_app_config().timeout_seconds == 300
         assert get_subagents_app_config().model_name == "deepseek-v4-flash"
+        assert get_subagents_app_config().thinking_enabled is True
 
     def test_load_with_per_agent_overrides(self):
         load_subagents_config_from_dict(
             {
                 "timeout_seconds": 900,
                 "model_name": "deepseek-v4-flash",
+                "thinking_enabled": True,
                 "agents": {
-                    "general-purpose": {"timeout_seconds": 1800, "model_name": "deepseek-v4-pro"},
+                    "general-purpose": {
+                        "timeout_seconds": 1800,
+                        "model_name": "deepseek-v4-pro",
+                        "thinking_enabled": False,
+                    },
                     "bash": {"timeout_seconds": 60},
                 },
             }
@@ -184,12 +237,15 @@ class TestLoadSubagentsConfig:
         assert cfg.get_timeout_for("bash") == 60
         assert cfg.get_model_for("general-purpose") == "deepseek-v4-pro"
         assert cfg.get_model_for("bash") == "deepseek-v4-flash"
+        assert cfg.get_thinking_enabled_for("general-purpose") is False
+        assert cfg.get_thinking_enabled_for("bash") is True
 
     def test_load_partial_override(self):
         load_subagents_config_from_dict(
             {
                 "timeout_seconds": 600,
                 "model_name": "deepseek-v4-flash",
+                "thinking_enabled": True,
                 "agents": {"bash": {"timeout_seconds": 120}},
             }
         )
@@ -197,12 +253,14 @@ class TestLoadSubagentsConfig:
         assert cfg.get_timeout_for("general-purpose") == 600
         assert cfg.get_timeout_for("bash") == 120
         assert cfg.get_model_for("general-purpose") == "deepseek-v4-flash"
+        assert cfg.get_thinking_enabled_for("general-purpose") is True
 
     def test_load_empty_dict_uses_defaults(self):
         load_subagents_config_from_dict({})
         cfg = get_subagents_app_config()
         assert cfg.timeout_seconds == 900
         assert cfg.model_name is None
+        assert cfg.thinking_enabled is None
         assert cfg.agents == {}
 
     def test_load_replaces_previous_config(self):
@@ -213,7 +271,9 @@ class TestLoadSubagentsConfig:
         assert get_subagents_app_config().timeout_seconds == 200
 
     def test_singleton_returns_same_instance_between_calls(self):
-        load_subagents_config_from_dict({"timeout_seconds": 777, "model_name": "deepseek-v4-flash"})
+        load_subagents_config_from_dict(
+            {"timeout_seconds": 777, "model_name": "deepseek-v4-flash", "thinking_enabled": True}
+        )
         assert get_subagents_app_config() is get_subagents_app_config()
 
 
@@ -244,14 +304,20 @@ class TestRegistryGetSubagentConfig:
         config = get_subagent_config("general-purpose")
         assert config.timeout_seconds == 900
         assert config.model == "inherit"
+        assert config.thinking_enabled is True
 
     def test_global_timeout_override_applied(self):
         from src.subagents.registry import get_subagent_config
 
-        _reset_subagents_config(timeout_seconds=1800, model_name="deepseek-v4-flash")
+        _reset_subagents_config(
+            timeout_seconds=1800,
+            model_name="deepseek-v4-flash",
+            thinking_enabled=False,
+        )
         config = get_subagent_config("general-purpose")
         assert config.timeout_seconds == 1800
         assert config.model == "deepseek-v4-flash"
+        assert config.thinking_enabled is False
 
     def test_per_agent_timeout_override_applied(self):
         from src.subagents.registry import get_subagent_config
@@ -260,12 +326,20 @@ class TestRegistryGetSubagentConfig:
             {
                 "timeout_seconds": 900,
                 "model_name": "deepseek-v4-flash",
-                "agents": {"bash": {"timeout_seconds": 120, "model_name": "deepseek-v4-pro"}},
+                "thinking_enabled": True,
+                "agents": {
+                    "bash": {
+                        "timeout_seconds": 120,
+                        "model_name": "deepseek-v4-pro",
+                        "thinking_enabled": False,
+                    }
+                },
             }
         )
         bash_config = get_subagent_config("bash")
         assert bash_config.timeout_seconds == 120
         assert bash_config.model == "deepseek-v4-pro"
+        assert bash_config.thinking_enabled is False
 
     def test_per_agent_override_does_not_affect_other_agents(self):
         from src.subagents.registry import get_subagent_config
@@ -274,12 +348,14 @@ class TestRegistryGetSubagentConfig:
             {
                 "timeout_seconds": 900,
                 "model_name": "deepseek-v4-flash",
+                "thinking_enabled": True,
                 "agents": {"bash": {"timeout_seconds": 120}},
             }
         )
         gp_config = get_subagent_config("general-purpose")
         assert gp_config.timeout_seconds == 900
         assert gp_config.model == "deepseek-v4-flash"
+        assert gp_config.thinking_enabled is True
 
     def test_builtin_config_object_is_not_mutated(self):
         """Registry must return a new object, leaving the builtin default intact."""
@@ -287,20 +363,28 @@ class TestRegistryGetSubagentConfig:
         from src.subagents.registry import get_subagent_config
 
         original_timeout = BUILTIN_SUBAGENTS["bash"].timeout_seconds
-        load_subagents_config_from_dict({"timeout_seconds": 42, "model_name": "deepseek-v4-flash"})
+        load_subagents_config_from_dict(
+            {"timeout_seconds": 42, "model_name": "deepseek-v4-flash", "thinking_enabled": False}
+        )
 
         returned = get_subagent_config("bash")
         assert returned.timeout_seconds == 42
         assert returned.model == "deepseek-v4-flash"
+        assert returned.thinking_enabled is False
         assert BUILTIN_SUBAGENTS["bash"].timeout_seconds == original_timeout
         assert BUILTIN_SUBAGENTS["bash"].model == "inherit"
+        assert BUILTIN_SUBAGENTS["bash"].thinking_enabled is True
 
     def test_config_preserves_other_fields(self):
         """Applying timeout override must not change other SubagentConfig fields."""
         from src.subagents.builtins import BUILTIN_SUBAGENTS
         from src.subagents.registry import get_subagent_config
 
-        _reset_subagents_config(timeout_seconds=300, model_name="deepseek-v4-flash")
+        _reset_subagents_config(
+            timeout_seconds=300,
+            model_name="deepseek-v4-flash",
+            thinking_enabled=False,
+        )
         original = BUILTIN_SUBAGENTS["general-purpose"]
         overridden = get_subagent_config("general-purpose")
 
@@ -308,6 +392,7 @@ class TestRegistryGetSubagentConfig:
         assert overridden.description == original.description
         assert overridden.max_turns == original.max_turns
         assert overridden.model == "deepseek-v4-flash"
+        assert overridden.thinking_enabled is False
         assert overridden.tools == original.tools
         assert overridden.disallowed_tools == original.disallowed_tools
 
@@ -331,10 +416,15 @@ class TestRegistryListSubagents:
     def test_all_returned_configs_get_global_override(self):
         from src.subagents.registry import list_subagents
 
-        _reset_subagents_config(timeout_seconds=123, model_name="deepseek-v4-flash")
+        _reset_subagents_config(
+            timeout_seconds=123,
+            model_name="deepseek-v4-flash",
+            thinking_enabled=False,
+        )
         for cfg in list_subagents():
             assert cfg.timeout_seconds == 123, f"{cfg.name} has wrong timeout"
             assert cfg.model == "deepseek-v4-flash", f"{cfg.name} has wrong model"
+            assert cfg.thinking_enabled is False, f"{cfg.name} has wrong thinking flag"
 
     def test_per_agent_overrides_reflected_in_list(self):
         from src.subagents.registry import list_subagents
@@ -343,8 +433,13 @@ class TestRegistryListSubagents:
             {
                 "timeout_seconds": 900,
                 "model_name": "deepseek-v4-flash",
+                "thinking_enabled": True,
                 "agents": {
-                    "general-purpose": {"timeout_seconds": 1800, "model_name": "deepseek-v4-pro"},
+                    "general-purpose": {
+                        "timeout_seconds": 1800,
+                        "model_name": "deepseek-v4-pro",
+                        "thinking_enabled": False,
+                    },
                     "bash": {"timeout_seconds": 60},
                 },
             }
@@ -354,6 +449,8 @@ class TestRegistryListSubagents:
         assert by_name["bash"].timeout_seconds == 60
         assert by_name["general-purpose"].model == "deepseek-v4-pro"
         assert by_name["bash"].model == "deepseek-v4-flash"
+        assert by_name["general-purpose"].thinking_enabled is False
+        assert by_name["bash"].thinking_enabled is True
 
 
 # ---------------------------------------------------------------------------

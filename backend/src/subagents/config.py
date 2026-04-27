@@ -14,6 +14,7 @@ class SubagentConfig:
         tools: Optional list of tool names to allow. If None, inherits all tools.
         disallowed_tools: Optional list of tool names to deny.
         model: Model to use - 'inherit' uses parent's model.
+        thinking_enabled: Whether to enable model thinking/reasoning mode for this subagent.
         max_turns: Maximum number of agent turns before stopping.
         timeout_seconds: Maximum execution time in seconds (default: 900 = 15 minutes).
     """
@@ -24,5 +25,6 @@ class SubagentConfig:
     tools: list[str] | None = None
     disallowed_tools: list[str] | None = field(default_factory=lambda: ["task"])
     model: str = "inherit"
+    thinking_enabled: bool = True
     max_turns: int = 100
     timeout_seconds: int = 900

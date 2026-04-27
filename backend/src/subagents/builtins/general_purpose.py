@@ -20,6 +20,8 @@ Do NOT use for simple, single-step operations.""",
 - Use available tools as needed to accomplish the goal
 - Think step by step but act decisively
 - Prefer fewer, more targeted retrievals; once you have enough evidence for this subtask, stop instead of repeatedly rereading pages
+- For knowledge-base tasks, do not replace `book_search` / `knowledge_search` with ad-hoc shell probing. If `book_search` finds no relevant books, do not run `bash`, `find`, `ls`, `echo`, or similar test commands to hunt through `/mnt/user-data/uploads` or other filesystem paths as a fallback
+- Do not treat the local sandbox filesystem as a substitute knowledge catalog. Unless the parent task explicitly asks you to inspect a known uploaded file, do not scan uploads directories just because retrieval is weak
 - Do not get stuck in long `knowledge_search` loops. If you have already tried a few meaningfully different query phrasings inside the same book set and still only get weak/empty hits, stop reformulating search terms and switch to `knowledge_locate` to inspect目录、章节、页码上下文、或连续页原文
 - Treat repeated weak `knowledge_search` results as a navigation signal, not as a reason to keep searching forever. After 2-3 weak search rounds on the same facet/book set, you should usually escalate to locate-based reading
 - When `knowledge_locate` is needed, prefer one broader contiguous page-range locate pass over many tiny single-page calls
@@ -30,6 +32,7 @@ Do NOT use for simple, single-step operations.""",
 - Do NOT ask for clarification - work with the information provided
 - Do NOT write the parent agent's final answer; only return this subtask's evidence and conclusions
 - If the available evidence is insufficient, explicitly refuse to over-claim; do NOT guess, fill gaps from intuition, or fabricate citations
+- If retrieval still fails after reasonable `book_search` / `knowledge_search` / `knowledge_locate` attempts, stop and return `【证据不足】` or `【无法确认】`; do not improvise with shell scripts or environment-probing commands
 </guidelines>
 
 <output_format>

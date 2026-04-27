@@ -75,6 +75,25 @@ def _build_request_with_parenthesized_url_citation(model=None) -> ModelRequest:
     )
 
 
+def _build_request_with_long_encoded_citation(model=None) -> ModelRequest:
+    return ModelRequest(
+        model=model or _SuggestionModel(),
+        messages=[
+            HumanMessage(content="请根据知识库回答这个问题"),
+            ToolMessage(
+                content=(
+                    "citation: "
+                    "[citation:张之洞全集 12 书札 家书 勤学篇 輶轩语 书目答问 读经札记 论金石札路上 古文 骈体文 诗集 弟子记_12733686_可搜索 原书第178页第1段]"
+                    "(</api/knowledge/docs/%E5%BC%A0%E4%B9%8B%E6%B4%9E%E5%85%A8%E9%9B%86%2012%20%E4%B9%A6%E6%9C%AD%20%E5%AE%B6%E4%B9%A6%20%E5%8B%A4%E5%AD%A6%E7%AF%87%20%E8%BC%B6%E8%BD%A9%E8%AF%AD%20%E4%B9%A6%E7%9B%AE%E7%AD%94%E9%97%AE%20%E8%AF%BB%E7%BB%8F%E6%9C%AD%E8%AE%B0%20%E8%AE%BA%E9%87%91%E7%9F%B3%E6%9C%AD%E8%B7%AF%E4%B8%8A%2B%E5%8F%A4%E6%96%87%20%E9%AA%88%E4%BD%93%E6%96%87%20%E8%AF%97%E9%9B%86%20%E5%BC%9F%E5%AD%90%E8%AE%B0_12733686_%E5%8F%AF%E6%90%9C%E7%B4%A2.pdf?page_no=178&pdf_page_no=178&paragraph_no=1&citation_source_kind=structured#page=178>)"
+                ),
+                tool_call_id="tool-call-1",
+                name="knowledge_locate",
+            ),
+        ],
+        system_message=SystemMessage(content="You are a helpful assistant."),
+    )
+
+
 def _build_request_with_checkpoint_citation(model=None) -> ModelRequest:
     return ModelRequest(
         model=model or _SuggestionModel(),
@@ -279,6 +298,32 @@ class TestCitationEnforcementMiddleware:
             "[citation:民国财政史 (杨荫溥) 原书第10页第1段]"
             "(</api/knowledge/docs/%E6%B0%91%E5%9B%BD%E8%B4%A2%E6%94%BF%E5%8F%B2%20%28%E6%9D%A8%E8%8D%AB%E6%BA%A5%29.pdf?page_no=10&paragraph_no=1>)"
         ) in content
+
+    def test_repairs_citation_link_with_raw_spaces_using_tool_candidate(self):
+        middleware = CitationEnforcementMiddleware()
+        request = _build_request_with_long_encoded_citation()
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                result=[
+                    AIMessage(
+                        content=(
+                            "可以据此得出结论。"
+                            "[citation:张之洞全集 12 书札 家书 勤学篇 輶轩语 书目答问 读经札记 论金石札路上 古文 骈体文 诗集 弟子记_12733686_可搜索 原书第178页第1段]"
+                            "(/api/knowledge/docs/张之洞全集 12 书札 家书 勤学篇 輶轩语 书目答问 读经札记 论金石札路上+古文 骈体文 诗集 弟子记_12733686_可搜索.pdf?page_no=178&pdf_page_no=178&paragraph_no=1&citation_source_kind=structured#page=178)"
+                        )
+                    )
+                ]
+            )
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert (
+            "[citation:张之洞全集 12 书札 家书 勤学篇 輶轩语 书目答问 读经札记 论金石札路上 古文 骈体文 诗集 弟子记_12733686_可搜索 原书第178页第1段]"
+            "(</api/knowledge/docs/%E5%BC%A0%E4%B9%8B%E6%B4%9E%E5%85%A8%E9%9B%86%2012%20%E4%B9%A6%E6%9C%AD%20%E5%AE%B6%E4%B9%A6%20%E5%8B%A4%E5%AD%A6%E7%AF%87%20%E8%BC%B6%E8%BD%A9%E8%AF%AD%20%E4%B9%A6%E7%9B%AE%E7%AD%94%E9%97%AE%20%E8%AF%BB%E7%BB%8F%E6%9C%AD%E8%AE%B0%20%E8%AE%BA%E9%87%91%E7%9F%B3%E6%9C%AD%E8%B7%AF%E4%B8%8A%2B%E5%8F%A4%E6%96%87%20%E9%AA%88%E4%BD%93%E6%96%87%20%E8%AF%97%E9%9B%86%20%E5%BC%9F%E5%AD%90%E8%AE%B0_12733686_%E5%8F%AF%E6%90%9C%E7%B4%A2.pdf?page_no=178&pdf_page_no=178&paragraph_no=1&citation_source_kind=structured#page=178>)"
+        ) in content
+        assert "(/api/knowledge/docs/张之洞全集 12 书札" not in content
 
     def test_upgrades_bare_citation_from_checkpoint_candidates(self):
         middleware = CitationEnforcementMiddleware()

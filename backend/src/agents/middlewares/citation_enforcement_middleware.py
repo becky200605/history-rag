@@ -253,29 +253,75 @@ def _resolve_citation_from_candidates(citation: str, messages: list) -> str | No
     return scored[0][1].full_citation
 
 
+def _consume_optional_markdown_link_target(text: str, start_index: int) -> int:
+    index = start_index
+    while index < len(text) and text[index] in {" ", "\t"}:
+        index += 1
+    if index >= len(text) or text[index] != "(":
+        return start_index
+
+    index += 1
+    if index < len(text) and text[index] == "<":
+        while index < len(text) and text[index] not in {">", "\n"}:
+            index += 1
+        if index < len(text) and text[index] == ">":
+            index += 1
+        if index < len(text) and text[index] == ")":
+            index += 1
+        return index
+
+    depth = 1
+    while index < len(text):
+        char = text[index]
+        if char == "\n":
+            break
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                index += 1
+                return index
+        index += 1
+    return index
+
+
+def _replace_exact_candidate_mentions(answer_body: str, candidates: list[_CitationCandidate]) -> str:
+    repaired_body = answer_body
+    for candidate in candidates:
+        label_token = f"[citation:{candidate.label}]"
+        if label_token not in repaired_body:
+            continue
+
+        parts: list[str] = []
+        cursor = 0
+        label_length = len(label_token)
+        while True:
+            match_index = repaired_body.find(label_token, cursor)
+            if match_index < 0:
+                parts.append(repaired_body[cursor:])
+                break
+            parts.append(repaired_body[cursor:match_index])
+            end_index = _consume_optional_markdown_link_target(
+                repaired_body,
+                match_index + label_length,
+            )
+            if end_index == match_index + label_length:
+                end_index = match_index + label_length
+            parts.append(candidate.full_citation)
+            cursor = end_index
+
+        repaired_body = "".join(parts)
+    return repaired_body
+
+
 def _normalize_answer_citations(answer_body: str, messages: list) -> str:
     candidates = _build_citation_candidates(messages)
     if not candidates:
         return answer_body
 
     candidate_set = {candidate.full_citation for candidate in candidates}
-    repaired_body = answer_body
-
-    # Repair malformed citation mentions such as:
-    # - bare labels: [citation:...]
-    # - partial/broken links: [citation:...](...   (missing closing `)`)
-    # - links truncated by unescaped parentheses inside filenames/titles
-    #
-    # We already have exact citation lines from tool outputs in this turn, so
-    # the safest fallback is to replace any recognizable mention of the same
-    # citation label with the exact full markdown link from the tool messages.
-    for candidate in candidates:
-        escaped_label = re.escape(f"[citation:{candidate.label}]")
-        repaired_body = re.sub(
-            escaped_label + r"(?:\((?:<[^>\n]*>?|[^\s\n，。；！？、]*)\)?)?",
-            candidate.full_citation,
-            repaired_body,
-        )
+    repaired_body = _replace_exact_candidate_mentions(answer_body, candidates)
 
     def _replace(match: re.Match[str]) -> str:
         citation = match.group(0)

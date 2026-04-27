@@ -36,6 +36,33 @@ models:
   #     extra_body:
   #       thinking:
   #         type: enabled
+  - name: openrouter-qwen3.5-27b
+    display_name: OpenRouter Qwen3.5-27b
+    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
+    model: qwen/qwen3.5-27b
+    base_url: https://openrouter.ai/api/v1
+    api_key: $OPENAI_API_KEY
+    max_tokens: 8192
+    request_timeout: 18000
+    supports_thinking: true
+    when_thinking_enabled:
+      extra_body:
+        include_reasoning: true
+    supports_vision: true
+  
+  - name: qwen/qwen3.6-35b-a3b
+    display_name: Qwen 3.6-35b-a3b
+    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
+    model: qwen/qwen3.6-35b-a3b
+    base_url: https://openrouter.ai/api/v1
+    api_key: $OPENAI_API_KEY
+    max_tokens: 8192
+    request_timeout: 18000
+    supports_thinking: true
+    when_thinking_enabled:
+      extra_body:
+        include_reasoning: true
+    supports_vision: false
 
   - name: deepseek-v4-flash
     display_name: DeepSeek V4 Flash
@@ -50,20 +77,6 @@ models:
       extra_body:
         include_reasoning: true
     supports_vision: false
-
-  - name: openrouter-qwen3.5-27b
-    display_name: OpenRouter Qwen3.5-27b
-    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
-    model: qwen/qwen3.5-27b
-    base_url: https://openrouter.ai/api/v1
-    api_key: $OPENAI_API_KEY
-    max_tokens: 8192
-    request_timeout: 18000
-    supports_thinking: true
-    when_thinking_enabled:
-      extra_body:
-        include_reasoning: true
-    supports_vision: true
 
   - name: deepseek-v4-pro
     display_name: DeepSeek V4 Pro
@@ -226,7 +239,7 @@ subagents:
   # Default timeout in seconds for all subagents (default: 900 = 15 minutes)
   timeout_seconds: 900
 #   # Optional default model for all subagents. Subagent execution keeps thinking disabled.
-  model_name: deepseek-v4-flash
+  model_name: qwen/qwen3.6-35b-a3b
 #
 #   # Optional per-agent timeout overrides
 #   agents:

@@ -60,6 +60,7 @@ class ThreadState(AgentState):
     artifacts: Annotated[list[str], merge_artifacts]
     todos: NotRequired[list | None]
     todo_orchestration: NotRequired[TodoOrchestrationState | None]
+    subtasks_cancel_requested_at: NotRequired[str | None]
     uploaded_files: NotRequired[list[dict] | None]
     viewed_images: Annotated[dict[str, ViewedImageData], merge_viewed_images]  # image_path -> {base64, mime_type}
     knowledge_reading_set_doc_ids: NotRequired[list[str] | None]

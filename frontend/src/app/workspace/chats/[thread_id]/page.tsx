@@ -927,8 +927,21 @@ function ChatPageContent({
     [submitThread],
   );
   const handleStop = useCallback(async () => {
-    await thread.stop();
-  }, [thread]);
+    const currentThreadId = threadId;
+    try {
+      if (currentThreadId) {
+        await getAPIClient().threads.updateState(currentThreadId, {
+          values: {
+            subtasks_cancel_requested_at: new Date().toISOString(),
+          },
+        });
+      }
+    } catch (error) {
+      console.error("Failed to mark subtasks for cancellation:", error);
+    } finally {
+      await thread.stop();
+    }
+  }, [thread, threadId]);
 
   const handleSelectTodo = useCallback((todo: Todo) => {
     selectTodo(todo);

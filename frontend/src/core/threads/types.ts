@@ -8,6 +8,7 @@ export interface AgentThreadState extends Record<string, unknown> {
   messages: BaseMessage[];
   artifacts: string[];
   todos?: Todo[];
+  subtasks_cancel_requested_at?: string | null;
 }
 
 export interface AgentThread extends Thread<AgentThreadState> {}

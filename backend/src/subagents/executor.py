@@ -1,16 +1,19 @@
 """Subagent execution engine."""
 
 import logging
+import os
 import re
 import threading
+import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+import httpx
 from langchain.agents import create_agent
 from langchain.tools import BaseTool
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
@@ -34,6 +37,7 @@ class SubagentStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     TIMED_OUT = "timed_out"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -94,6 +98,19 @@ _REFUSAL_PREFIXES = (
     "【无法回答】",
     "【信息不足】",
 )
+
+_DEFAULT_LANGGRAPH_BASE_URL = "http://127.0.0.1:2024"
+_THREAD_CANCEL_CACHE_TTL_SECONDS = 1.0
+
+
+class SubagentCancelledError(RuntimeError):
+    """Raised when a subagent is cancelled because its parent session stopped."""
+
+
+@dataclass
+class _ThreadCancelCacheEntry:
+    fetched_at_monotonic: float
+    cancel_requested_at: datetime | None
 
 
 def _normalize_heading(heading: str) -> str:
@@ -216,6 +233,8 @@ def _parse_structured_subtask_result(text: str | None) -> dict[str, Any] | None:
 # Global storage for background task results
 _background_tasks: dict[str, SubagentResult] = {}
 _background_tasks_lock = threading.Lock()
+_thread_cancel_cache: dict[str, _ThreadCancelCacheEntry] = {}
+_thread_cancel_cache_lock = threading.Lock()
 
 # Default subagent concurrency budget for orchestrated runs.
 MAX_CONCURRENT_SUBAGENTS = 4
@@ -232,6 +251,98 @@ _execution_pool = ThreadPoolExecutor(
     max_workers=MAX_CONCURRENT_SUBAGENTS,
     thread_name_prefix="subagent-exec-",
 )
+
+
+def _get_langgraph_base_url() -> str:
+    return (
+        os.getenv("LANGGRAPH_BASE_URL")
+        or os.getenv("NEXT_PUBLIC_LANGGRAPH_BASE_URL")
+        or _DEFAULT_LANGGRAPH_BASE_URL
+    )
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+
+    return parsed.astimezone(UTC)
+
+
+def _fetch_thread_cancel_requested_at(thread_id: str) -> datetime | None:
+    url = f"{_get_langgraph_base_url().rstrip('/')}/threads/{thread_id}"
+    response = httpx.get(
+        url,
+        headers={"accept": "application/json"},
+        timeout=2.0,
+    )
+    response.raise_for_status()
+
+    payload = response.json()
+    values = payload.get("values")
+    if not isinstance(values, dict):
+        return None
+
+    return _parse_iso_datetime(values.get("subtasks_cancel_requested_at"))
+
+
+def _get_thread_cancel_requested_at(thread_id: str) -> datetime | None:
+    now = time.monotonic()
+    with _thread_cancel_cache_lock:
+        cached = _thread_cancel_cache.get(thread_id)
+        if cached and now - cached.fetched_at_monotonic < _THREAD_CANCEL_CACHE_TTL_SECONDS:
+            return cached.cancel_requested_at
+
+    try:
+        cancel_requested_at = _fetch_thread_cancel_requested_at(thread_id)
+    except Exception:
+        logger.debug(
+            "Failed to fetch cancellation marker for thread %s",
+            thread_id,
+            exc_info=True,
+        )
+        cancel_requested_at = None
+
+    with _thread_cancel_cache_lock:
+        _thread_cancel_cache[thread_id] = _ThreadCancelCacheEntry(
+            fetched_at_monotonic=now,
+            cancel_requested_at=cancel_requested_at,
+        )
+
+    return cancel_requested_at
+
+
+def _is_thread_cancellation_requested(
+    thread_id: str | None,
+    started_at: datetime | None,
+) -> bool:
+    if not thread_id or started_at is None:
+        return False
+
+    cancel_requested_at = _get_thread_cancel_requested_at(thread_id)
+    if cancel_requested_at is None:
+        return False
+
+    normalized_started_at = (
+        started_at.astimezone(UTC)
+        if started_at.tzinfo is not None
+        else started_at.replace(tzinfo=UTC)
+    )
+    return cancel_requested_at >= normalized_started_at
 
 
 def _filter_tools(
@@ -379,12 +490,28 @@ class SubagentExecutor:
 
         return state
 
-    def execute(self, task: str, result_holder: SubagentResult | None = None) -> SubagentResult:
+    def _raise_if_cancelled(
+        self,
+        result: SubagentResult,
+        cancel_event: threading.Event | None,
+    ) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise SubagentCancelledError(
+                f"Subtask {result.task_id} cancelled because the parent session was interrupted."
+            )
+
+    def execute(
+        self,
+        task: str,
+        result_holder: SubagentResult | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> SubagentResult:
         """Execute a task synchronously.
 
         Args:
             task: The task description for the subagent.
             result_holder: Optional pre-created result object to update during execution.
+            cancel_event: Cooperative cancellation signal shared with the scheduler.
 
         Returns:
             SubagentResult with the execution result.
@@ -399,10 +526,11 @@ class SubagentExecutor:
                 task_id=task_id,
                 trace_id=self.trace_id,
                 status=SubagentStatus.RUNNING,
-                started_at=datetime.now(),
+                started_at=datetime.now(UTC),
             )
 
         try:
+            self._raise_if_cancelled(result, cancel_event)
             agent = self._create_agent()
             state = self._build_initial_state(task)
 
@@ -427,6 +555,7 @@ class SubagentExecutor:
                 context=context,
                 stream_mode=["messages", "values"],
             ):
+                self._raise_if_cancelled(result, cancel_event)
                 if mode == "values":
                     final_state = payload
                     continue
@@ -461,6 +590,7 @@ class SubagentExecutor:
                     )
 
             logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} completed execution")
+            self._raise_if_cancelled(result, cancel_event)
 
             if final_state is None:
                 logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no final state")
@@ -504,10 +634,33 @@ class SubagentExecutor:
 
             result.structured_result = _parse_structured_subtask_result(result.result)
 
+            self._raise_if_cancelled(result, cancel_event)
             result.status = SubagentStatus.COMPLETED
-            result.completed_at = datetime.now()
+            result.completed_at = datetime.now(UTC)
 
+        except SubagentCancelledError as e:
+            logger.info(
+                "[trace=%s] Subagent %s cancelled: %s",
+                self.trace_id,
+                self.config.name,
+                e,
+            )
+            result.status = SubagentStatus.CANCELLED
+            result.error = str(e)
+            result.completed_at = datetime.now(UTC)
         except Exception as e:
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info(
+                    "[trace=%s] Subagent %s observed cancellation during exception handling",
+                    self.trace_id,
+                    self.config.name,
+                )
+                result.status = SubagentStatus.CANCELLED
+                result.error = (
+                    f"Subtask {result.task_id} cancelled because the parent session was interrupted."
+                )
+                result.completed_at = datetime.now(UTC)
+                return result
             logger.exception(f"[trace={self.trace_id}] Subagent {self.config.name} execution failed")
             append_error_doc(
                 location="subagent_executor.execute",
@@ -521,7 +674,7 @@ class SubagentExecutor:
             )
             result.status = SubagentStatus.FAILED
             result.error = str(e)
-            result.completed_at = datetime.now()
+            result.completed_at = datetime.now(UTC)
 
         return result
 
@@ -562,27 +715,81 @@ class SubagentExecutor:
         def run_task():
             with _background_tasks_lock:
                 _background_tasks[task_id].status = SubagentStatus.RUNNING
-                _background_tasks[task_id].started_at = datetime.now()
+                _background_tasks[task_id].started_at = datetime.now(UTC)
                 result_holder = _background_tasks[task_id]
+                started_at = result_holder.started_at
             log_subtask_event(
                 "subtask_async_started",
                 trace_id=self.trace_id,
                 task_id=task_id,
                 subagent_name=self.config.name,
             )
+            cancel_event = threading.Event()
+            cancel_logged = False
+            cancel_grace_deadline_monotonic: float | None = None
 
             try:
                 # Submit execution to execution pool with timeout
                 # Pass result_holder so execute() can update it in real-time
-                execution_future: Future = _execution_pool.submit(self.execute, task, result_holder)
-                try:
-                    # Wait for execution with timeout
-                    exec_result = execution_future.result(timeout=self.config.timeout_seconds)
+                execution_future: Future = _execution_pool.submit(
+                    self.execute,
+                    task,
+                    result_holder,
+                    cancel_event,
+                )
+                timeout_deadline_monotonic = time.monotonic() + self.config.timeout_seconds
+
+                while True:
+                    if _is_thread_cancellation_requested(self.thread_id, started_at):
+                        if not cancel_event.is_set():
+                            cancel_event.set()
+                            cancel_grace_deadline_monotonic = time.monotonic() + 2.0
+                            execution_future.cancel()
+                            if not cancel_logged:
+                                log_subtask_event(
+                                    "subtask_async_cancel_requested",
+                                    trace_id=self.trace_id,
+                                    task_id=task_id,
+                                    subagent_name=self.config.name,
+                                    thread_id=self.thread_id,
+                                )
+                                cancel_logged = True
+
+                        if (
+                            cancel_grace_deadline_monotonic is not None
+                            and time.monotonic() >= cancel_grace_deadline_monotonic
+                        ):
+                            with _background_tasks_lock:
+                                _background_tasks[task_id].status = SubagentStatus.CANCELLED
+                                _background_tasks[task_id].error = (
+                                    "Subtask cancelled because the parent session was interrupted."
+                                )
+                                _background_tasks[task_id].completed_at = datetime.now(UTC)
+                            log_subtask_event(
+                                "subtask_async_cancelled",
+                                trace_id=self.trace_id,
+                                task_id=task_id,
+                                subagent_name=self.config.name,
+                                thread_id=self.thread_id,
+                            )
+                            return
+
+                    remaining_timeout = timeout_deadline_monotonic - time.monotonic()
+                    if remaining_timeout <= 0:
+                        raise FuturesTimeoutError
+
+                    try:
+                        exec_result = execution_future.result(
+                            timeout=min(0.25, remaining_timeout),
+                        )
+                    except FuturesTimeoutError:
+                        continue
+
                     with _background_tasks_lock:
                         _background_tasks[task_id].status = exec_result.status
                         _background_tasks[task_id].result = exec_result.result
                         _background_tasks[task_id].error = exec_result.error
-                        _background_tasks[task_id].completed_at = datetime.now()
+                        _background_tasks[task_id].completed_at = datetime.now(UTC)
                         _background_tasks[task_id].ai_messages = exec_result.ai_messages
                         _background_tasks[task_id].structured_result = exec_result.structured_result
                     log_subtask_event(
@@ -596,31 +803,47 @@ class SubagentExecutor:
                         ai_message_count=len(exec_result.ai_messages or []),
                         structured_result=exec_result.structured_result,
                     )
-                except FuturesTimeoutError:
-                    logger.error(f"[trace={self.trace_id}] Subagent {self.config.name} execution timed out after {self.config.timeout_seconds}s")
-                    append_error_doc(
-                        location="subagent_executor.execute_async",
-                        summary=f"Subagent {self.config.name} execution timed out",
-                        error=f"Execution timed out after {self.config.timeout_seconds} seconds",
-                        context={
-                            "trace_id": self.trace_id,
-                            "subagent_name": self.config.name,
-                            "task_id": task_id,
-                        },
-                    )
+                    return
+            except FuturesTimeoutError:
+                if cancel_event.is_set():
                     with _background_tasks_lock:
-                        _background_tasks[task_id].status = SubagentStatus.TIMED_OUT
-                        _background_tasks[task_id].error = f"Execution timed out after {self.config.timeout_seconds} seconds"
-                        _background_tasks[task_id].completed_at = datetime.now()
+                        _background_tasks[task_id].status = SubagentStatus.CANCELLED
+                        _background_tasks[task_id].error = (
+                            "Subtask cancelled because the parent session was interrupted."
+                        )
+                        _background_tasks[task_id].completed_at = datetime.now(UTC)
                     log_subtask_event(
-                        "subtask_async_timeout",
+                        "subtask_async_cancelled",
                         trace_id=self.trace_id,
                         task_id=task_id,
                         subagent_name=self.config.name,
-                        timeout_seconds=self.config.timeout_seconds,
+                        thread_id=self.thread_id,
                     )
-                    # Cancel the future (best effort - may not stop the actual execution)
-                    execution_future.cancel()
+                    return
+                logger.error(f"[trace={self.trace_id}] Subagent {self.config.name} execution timed out after {self.config.timeout_seconds}s")
+                append_error_doc(
+                    location="subagent_executor.execute_async",
+                    summary=f"Subagent {self.config.name} execution timed out",
+                    error=f"Execution timed out after {self.config.timeout_seconds} seconds",
+                    context={
+                        "trace_id": self.trace_id,
+                        "subagent_name": self.config.name,
+                        "task_id": task_id,
+                    },
+                )
+                with _background_tasks_lock:
+                    _background_tasks[task_id].status = SubagentStatus.TIMED_OUT
+                    _background_tasks[task_id].error = f"Execution timed out after {self.config.timeout_seconds} seconds"
+                    _background_tasks[task_id].completed_at = datetime.now(UTC)
+                log_subtask_event(
+                    "subtask_async_timeout",
+                    trace_id=self.trace_id,
+                    task_id=task_id,
+                    subagent_name=self.config.name,
+                    timeout_seconds=self.config.timeout_seconds,
+                )
+                # Cancel the future (best effort - may not stop the actual execution)
+                execution_future.cancel()
             except Exception as e:
                 logger.exception(f"[trace={self.trace_id}] Subagent {self.config.name} async execution failed")
                 append_error_doc(
@@ -636,7 +859,7 @@ class SubagentExecutor:
                 with _background_tasks_lock:
                     _background_tasks[task_id].status = SubagentStatus.FAILED
                     _background_tasks[task_id].error = str(e)
-                    _background_tasks[task_id].completed_at = datetime.now()
+                    _background_tasks[task_id].completed_at = datetime.now(UTC)
                 log_subtask_event(
                     "subtask_async_failed",
                     trace_id=self.trace_id,

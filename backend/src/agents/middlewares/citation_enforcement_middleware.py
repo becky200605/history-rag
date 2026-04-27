@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import override
+from urllib.parse import quote, urlsplit
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
@@ -116,10 +117,13 @@ def _extract_citations(content: str) -> list[str]:
     seen: set[str] = set()
     citations: list[str] = []
     for citation in CITATION_PATTERN.findall(content):
-        if citation in seen:
+        normalized_citation = _normalize_citation_markdown(citation)
+        if not _is_valid_citation_markdown(normalized_citation):
             continue
-        seen.add(citation)
-        citations.append(citation)
+        if normalized_citation in seen:
+            continue
+        seen.add(normalized_citation)
+        citations.append(normalized_citation)
     return citations
 
 
@@ -136,6 +140,69 @@ def _citation_label(citation: str) -> str:
 def _extract_citation_inner_label(citation: str) -> str:
     match = re.match(r"\[citation:([^\]]+)\](?:\([^)]+\))?", citation, re.IGNORECASE)
     return match.group(1).strip() if match else citation.strip()
+
+
+def _extract_citation_url(citation: str) -> str | None:
+    match = re.match(r"\[citation:[^\]]+\]\((<[^>\n]+>|[^)\n]+)\)", citation, re.IGNORECASE)
+    if not match:
+        return None
+    url = match.group(1).strip()
+    if url.startswith("<") and url.endswith(">"):
+        url = url[1:-1].strip()
+    return url or None
+
+
+def _normalize_internal_citation_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    if url.startswith("/api/knowledge/docs/") or url.startswith("/api/secure-knowledge/users/me/knowledge/docs/"):
+        return quote(url, safe="/:?=&%#")
+    return url
+
+
+def _normalize_citation_markdown(citation: str) -> str:
+    url = _extract_citation_url(citation)
+    normalized_url = _normalize_internal_citation_url(url)
+    if not url or not normalized_url or normalized_url == url:
+        return citation
+    wrapped_url = f"<{normalized_url}>" if "<" in citation else normalized_url
+    return re.sub(
+        r"\((<[^>\n]+>|[^)\n]+)\)$",
+        f"({wrapped_url})",
+        citation,
+        count=1,
+    )
+
+
+def _is_valid_citation_url(url: str | None) -> bool:
+    if not url:
+        return False
+    if re.match(r"^citations?:", url, re.IGNORECASE):
+        return False
+
+    normalized_url = _normalize_internal_citation_url(url)
+    if normalized_url is None:
+        return False
+    if re.search(r"\s", normalized_url):
+        return False
+
+    if normalized_url.startswith("/"):
+        try:
+            parts = urlsplit(normalized_url)
+        except Exception:
+            return False
+        return bool(parts.path)
+
+    try:
+        parts = urlsplit(normalized_url)
+    except Exception:
+        return False
+    return parts.scheme in {"http", "https"} and bool(parts.netloc)
+
+
+def _is_valid_citation_markdown(citation: str) -> bool:
+    url = _extract_citation_url(citation)
+    return _is_valid_citation_url(url)
 
 
 def _normalize_citation_text(text: str) -> str:
@@ -317,20 +384,20 @@ def _replace_exact_candidate_mentions(answer_body: str, candidates: list[_Citati
 
 def _normalize_answer_citations(answer_body: str, messages: list) -> str:
     candidates = _build_citation_candidates(messages)
-    if not candidates:
-        return answer_body
-
     candidate_set = {candidate.full_citation for candidate in candidates}
-    repaired_body = _replace_exact_candidate_mentions(answer_body, candidates)
+    repaired_body = _replace_exact_candidate_mentions(answer_body, candidates) if candidates else answer_body
 
     def _replace(match: re.Match[str]) -> str:
         citation = match.group(0)
-        if citation in candidate_set:
-            return citation
+        normalized_citation = _normalize_citation_markdown(citation)
+        if normalized_citation in candidate_set:
+            return normalized_citation
         resolved = _resolve_citation_from_candidates(citation, messages)
         if resolved:
             return resolved
-        return citation
+        if _is_valid_citation_markdown(normalized_citation):
+            return normalized_citation
+        return ""
 
     return CITATION_PATTERN.sub(_replace, repaired_body)
 

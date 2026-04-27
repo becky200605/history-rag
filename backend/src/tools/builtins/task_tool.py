@@ -210,6 +210,10 @@ def task_tool(
                     },
                 )
                 return f"Task timed out. Error: {result.error}"
+            elif result.status == SubagentStatus.CANCELLED:
+                writer({"type": "task_failed", "task_id": task_id, "error": result.error})
+                logger.info(f"[trace={trace_id}] Task {task_id} cancelled: {result.error}")
+                return f"Task cancelled. Error: {result.error}"
 
             # Still running, wait before next poll
             time.sleep(5)  # Poll every 5 seconds

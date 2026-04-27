@@ -642,6 +642,20 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                     writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
                     summary_lines.append(f"[failed] {todo['content']}：{todo['error']}")
                     completed_task_ids.append(task_id)
+                elif result.status == SubagentStatus.CANCELLED:
+                    todo["status"] = "failed"
+                    todo["error"] = result.error or "Subtask cancelled because the parent session was interrupted."
+                    log_subtask_event(
+                        "subtask_cancelled",
+                        task_id=task_id,
+                        todo_id=todo.get("id"),
+                        content=todo["content"],
+                        error=todo["error"],
+                    )
+                    writer({"type": "task_failed", "task_id": task_id, "error": todo["error"]})
+                    writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
+                    summary_lines.append(f"[cancelled] {todo['content']}：{todo['error']}")
+                    completed_task_ids.append(task_id)
 
             for task_id in completed_task_ids:
                 launched.pop(task_id, None)

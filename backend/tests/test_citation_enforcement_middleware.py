@@ -119,6 +119,25 @@ def _build_request_with_checkpoint_citation(model=None) -> ModelRequest:
     )
 
 
+def _build_request_with_standard_citation(model=None) -> ModelRequest:
+    return ModelRequest(
+        model=model or _SuggestionModel(),
+        messages=[
+            HumanMessage(content="请根据知识库回答这个问题"),
+            ToolMessage(
+                content=(
+                    "citation: "
+                    "[citation:史料 第7页第2段]"
+                    "(/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)"
+                ),
+                tool_call_id="tool-call-1",
+                name="knowledge_locate",
+            ),
+        ],
+        system_message=SystemMessage(content="You are a helpful assistant."),
+    )
+
+
 def _bad_response() -> ModelResponse:
     return ModelResponse(result=[AIMessage(content="这是一个没有 citation 的回答。")])
 
@@ -324,6 +343,61 @@ class TestCitationEnforcementMiddleware:
             "(</api/knowledge/docs/%E5%BC%A0%E4%B9%8B%E6%B4%9E%E5%85%A8%E9%9B%86%2012%20%E4%B9%A6%E6%9C%AD%20%E5%AE%B6%E4%B9%A6%20%E5%8B%A4%E5%AD%A6%E7%AF%87%20%E8%BC%B6%E8%BD%A9%E8%AF%AD%20%E4%B9%A6%E7%9B%AE%E7%AD%94%E9%97%AE%20%E8%AF%BB%E7%BB%8F%E6%9C%AD%E8%AE%B0%20%E8%AE%BA%E9%87%91%E7%9F%B3%E6%9C%AD%E8%B7%AF%E4%B8%8A%2B%E5%8F%A4%E6%96%87%20%E9%AA%88%E4%BD%93%E6%96%87%20%E8%AF%97%E9%9B%86%20%E5%BC%9F%E5%AD%90%E8%AE%B0_12733686_%E5%8F%AF%E6%90%9C%E7%B4%A2.pdf?page_no=178&pdf_page_no=178&paragraph_no=1&citation_source_kind=structured#page=178>)"
         ) in content
         assert "(/api/knowledge/docs/张之洞全集 12 书札" not in content
+
+    def test_normalizes_internal_citation_with_raw_spaces_in_body_and_references(self):
+        middleware = CitationEnforcementMiddleware()
+        request = _build_request_with_standard_citation()
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                result=[
+                    AIMessage(
+                        content=(
+                            "可据现有资料得出一个可靠结论。"
+                            "[citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)"
+                            "另有一条损坏引用"
+                            "[citation:中国财政通史 第7卷 清代财政史 下 原书第514页]"
+                            "(/api/knowledge/docs/中国财政通史 第7卷 清代财政史 下.pdf?page_no=514)"
+                        )
+                    )
+                ]
+            )
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert "[citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)" in content
+        assert (
+            "[citation:中国财政通史 第7卷 清代财政史 下 原书第514页]"
+            "(/api/knowledge/docs/%E4%B8%AD%E5%9B%BD%E8%B4%A2%E6%94%BF%E9%80%9A%E5%8F%B2%20%E7%AC%AC7%E5%8D%B7%20%E6%B8%85%E4%BB%A3%E8%B4%A2%E6%94%BF%E5%8F%B2%20%E4%B8%8B.pdf?page_no=514)"
+        ) in content
+        assert "/api/knowledge/docs/中国财政通史 第7卷 清代财政史 下.pdf?page_no=514" not in content
+
+    def test_drops_unparseable_citation_with_invalid_scheme_from_body_and_references(self):
+        middleware = CitationEnforcementMiddleware()
+        request = _build_request_with_standard_citation()
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                result=[
+                    AIMessage(
+                        content=(
+                            "可据现有资料得出一个可靠结论。"
+                            "[citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)"
+                            "另有一条损坏引用"
+                            "[citation:中国财政通史 第7卷 清代财政史 下 原书第676页]"
+                            "(citations:中国财政通史 第7卷 清代财政史 下 原书第677页)"
+                        )
+                    )
+                ]
+            )
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert "[citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)" in content
+        assert "(citations:中国财政通史 第7卷 清代财政史 下 原书第677页)" not in content
+        assert "中国财政通史 第7卷 清代财政史 下 原书第676页" not in content.split("参考文献", 1)[-1]
 
     def test_upgrades_bare_citation_from_checkpoint_candidates(self):
         middleware = CitationEnforcementMiddleware()

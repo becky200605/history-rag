@@ -50,6 +50,7 @@ def test_write_todos_dispatches_parallel_batch_and_updates_todos(monkeypatch):
             result=f"result for {task_id}",
             error=None,
             ai_messages=[],
+            structured_result=None,
         ),
     )
 
@@ -131,6 +132,7 @@ def test_write_todos_auto_promotes_pending_queue_until_all_batches_finish(monkey
             result=f"done: {task_id}",
             error=None,
             ai_messages=[],
+            structured_result=None,
         ),
     )
 
@@ -238,6 +240,7 @@ def test_write_todos_can_redispatch_completed_todo_with_same_content(monkeypatch
             result=f"rerun: {task_id}",
             error=None,
             ai_messages=[],
+            structured_result=None,
         ),
     )
 

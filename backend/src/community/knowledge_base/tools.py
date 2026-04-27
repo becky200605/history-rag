@@ -51,8 +51,8 @@ from src.community.knowledge_base.reading_state import (
 
 BOOK_SEARCH_TOP_K = 20
 KNOWLEDGE_SEARCH_TOP_K = 6
-KNOWLEDGE_RESULT_MAX_CHARS = 900
-KNOWLEDGE_RESULT_MAX_LINES = 24
+KNOWLEDGE_RESULT_MAX_CHARS = 1400
+KNOWLEDGE_RESULT_MAX_LINES = 36
 BOOK_READING_SET_LIMIT = 6
 ALLOWED_SEARCH_SCOPES = {"user", "thread", "global"}
 SEARCH_SCOPE_ORDER = ("user", "thread", "global")
@@ -669,8 +669,7 @@ def _looks_like_navigation_page(page_text: str) -> bool:
 def _build_navigation_locate_preview(
     *,
     payload: dict[str, Any],
-    max_pages: int = 4,
-    max_lines_per_page: int = 12,
+    max_pages: int = 3,
 ) -> list[dict[str, Any]]:
     pages = payload.get("pages") or []
     if not pages:
@@ -702,26 +701,21 @@ def _build_navigation_locate_preview(
     previews: list[dict[str, Any]] = []
     for page in selected_pages[:max_pages]:
         page_text = str(page.get("text") or "").strip()
-        page_lines = [line.strip() for line in page_text.splitlines() if line.strip()]
-        preview_text = "\n".join(page_lines[:max_lines_per_page]).strip()
-        if not preview_text:
+        if not page_text:
             paragraphs = page.get("paragraphs") or []
-            preview_text = "\n".join(
+            page_text = "\n\n".join(
                 str(paragraph.get("text") or "").strip()
-                for paragraph in paragraphs[:3]
+                for paragraph in paragraphs
                 if str(paragraph.get("text") or "").strip()
             ).strip()
-        if not preview_text:
+        if not page_text:
             continue
         previews.append(
             {
                 "page_no": page.get("page_no"),
                 "pdf_page_no": page.get("pdf_page_no"),
                 "book_page_no": page.get("book_page_no"),
-                "paragraph_no": None,
-                "line_start": None,
-                "line_end": None,
-                "text": preview_text,
+                "text": page_text,
                 "is_navigation_page": _looks_like_navigation_page(page_text),
             }
         )
@@ -1324,30 +1318,22 @@ def knowledge_locate_tool(
     page_no_end: int | None = None,
     pdf_page_no: int | None = None,
     pdf_page_no_end: int | None = None,
-    paragraph_no: int | None = None,
-    line_start: int | None = None,
-    line_end: int | None = None,
-    window: int = 1,
 ) -> str:
-    """Locate exact nearby source context from a known document and location.
+    """Locate full-page source context from a known document and page range.
 
     Use this after `knowledge_search` when you already know the relevant `doc_id`
-    and need the nearby paragraphs around a cited page, paragraph, or line range.
+    and need the full text of one page or a contiguous page range.
     If you only know the relevant book but not the exact location yet, you may
     call `knowledge_locate` with only `doc_id` (or `filename`) to get a
-    navigation preview of likely目录/序言/开篇页，再据此继续定位正文。
+    navigation preview of likely目录/序言/开篇页，再据此继续按页定位正文。
 
     Args:
         doc_id: Optional document ID returned by `book_search` or `knowledge_search`.
         filename: Optional source filename if doc_id is unavailable.
-        page_no: Optional page number to inspect.
-        page_no_end: Optional inclusive ending page number when reading multiple original-book pages.
+        page_no: Optional original-book page number to inspect.
+        page_no_end: Optional inclusive ending original-book page number for contiguous reading.
         pdf_page_no: Optional physical PDF page number to inspect.
-        pdf_page_no_end: Optional inclusive ending PDF page number when reading multiple PDF pages.
-        paragraph_no: Optional paragraph number to inspect.
-        line_start: Optional starting line number to inspect.
-        line_end: Optional ending line number to inspect.
-        window: Number of nearby paragraphs to include on each side.
+        pdf_page_no_end: Optional inclusive ending PDF page number for contiguous reading.
     """
     if not doc_id and not filename:
         return "knowledge_locate requires either doc_id or filename."
@@ -1417,15 +1403,6 @@ def knowledge_locate_tool(
         and page_no_end is None
         and pdf_page_no is None
         and pdf_page_no_end is None
-        and paragraph_no is None
-        and line_start is None
-        and line_end is None
-    )
-    page_level_only = (
-        (page_no is not None or pdf_page_no is not None)
-        and paragraph_no is None
-        and line_start is None
-        and line_end is None
     )
     multi_page_mode = (
         (page_no is not None and page_no_end is not None and page_no_end != page_no)
@@ -1463,10 +1440,13 @@ def knowledge_locate_tool(
         lines.append("---")
         lines.append(
             "下一步：从这些目录词、章节名、时期划分、专题板块里挑最相关的一项，"
-            "再用对应页码继续调用 `knowledge_locate`，或回到 `knowledge_search` 改成更贴近该板块的句子型 query。"
+            "再用对应页码继续调用 `knowledge_locate` 读取整页正文，或回到 `knowledge_search` 改成更贴近该板块的句子型 query。"
         )
         lines.append(
             "如果这是人物生平、经历、制度沿革这类零散问题，优先沿目录里的阶段/专题板块继续定位，不要只反复改关键词。"
+        )
+        lines.append(
+            "为了减少反复调用，优先一次性读取更有代表性的连续页，不要机械地一页一页连续点开。"
         )
         return "\n".join(lines)
 
@@ -1477,16 +1457,12 @@ def knowledge_locate_tool(
             page_no_end=page_no_end,
             pdf_page_no=pdf_page_no,
             pdf_page_no_end=pdf_page_no_end,
-            paragraph_no=paragraph_no,
-            line_start=line_start,
-            line_end=line_end,
-            window=max(0, min(window, 5)),
         )
     except Exception as e:
         return f"Error extracting source context: {e}"
 
     if not excerpts:
-        return "No matching page/paragraph/line context found in the structured document."
+        return "No matching page context found in the structured document."
 
     _mark_runtime_covered_doc_ids(runtime, [str(document.doc_id)])
 
@@ -1504,13 +1480,9 @@ def knowledge_locate_tool(
         location_text = _build_location_text(
             page_no=excerpt.get("page_no"),
             pdf_page_no=excerpt.get("pdf_page_no"),
-            paragraph_no=excerpt.get("paragraph_no"),
+            paragraph_no=None,
         ) or "未标注页码"
-        lines.append(f"### 片段 {index}: {location_text}")
-        if excerpt.get("line_start") and excerpt.get("line_end"):
-            lines.append(f"行号: {excerpt['line_start']}-{excerpt['line_end']}")
-        elif excerpt.get("line_start"):
-            lines.append(f"行号: {excerpt['line_start']}")
+        lines.append(f"### 整页 {index}: {location_text}")
         citation = _build_locate_excerpt_citation(
             document=document,
             excerpt=excerpt,
@@ -1526,15 +1498,9 @@ def knowledge_locate_tool(
     if multi_page_mode:
         lines.append(
             "这次 `knowledge_locate` 已按连续页范围展开，适合快速通读多页正文。"
-            "如果你接下来要写精确引文或要锁定一句原文，再缩回到具体 `page_no` / `pdf_page_no` + `paragraph_no` 做一次更细定位。"
         )
-    elif page_level_only:
-        lines.append(
-            "如果当前这次 `knowledge_locate` 只定位到页级（只给了 `page_no` / `pdf_page_no`，还没给 `paragraph_no`），"
-            "把这一步当作缩小范围，不要直接据此结束。先从上面的片段里挑出最相关的 `paragraph_no`，"
-            "再追加一次 `knowledge_locate(doc_id=..., page_no=... 或 pdf_page_no=..., paragraph_no=...)`，"
-            "确认到段落级后再写最终答案。"
-        )
+    else:
+        lines.append("如果同一主题明显跨相邻多页，优先直接用 `page_no_end` / `pdf_page_no_end` 一次展开连续页。")
     lines.append("使用答案时，优先直接复制上面的 `citation:` 行，不要自己重写。")
     lines.append(
         "IMPORTANT: Use these excerpts as the follow-up source context. "

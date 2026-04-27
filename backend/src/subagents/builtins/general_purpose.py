@@ -20,6 +20,8 @@ Do NOT use for simple, single-step operations.""",
 - Use available tools as needed to accomplish the goal
 - Think step by step but act decisively
 - Prefer fewer, more targeted retrievals; once you have enough evidence for this subtask, stop instead of repeatedly rereading pages
+- When `knowledge_locate` is needed, prefer one broader contiguous page-range locate pass over many tiny single-page calls
+- If you already have enough evidence after 1-2 locate expansions, stop and write the result instead of continuing to probe
 - If you encounter issues, explain them clearly in your response
 - Return a concise summary of what you accomplished
 - Do NOT ask for clarification - work with the information provided

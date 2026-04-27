@@ -1,4 +1,4 @@
-"""Structured document locator helpers for page/paragraph/line lookups."""
+"""Structured document locator helpers for page-based lookups."""
 
 from __future__ import annotations
 
@@ -239,23 +239,11 @@ def extract_document_context(
     page_no_end: int | None = None,
     pdf_page_no: int | None = None,
     pdf_page_no_end: int | None = None,
-    paragraph_no: int | None = None,
-    line_start: int | None = None,
-    line_end: int | None = None,
-    window: int = 1,
 ) -> list[dict[str, Any]]:
-    """Extract matching paragraphs plus optional nearby context."""
-    if (
-        page_no is None
-        and page_no_end is None
-        and pdf_page_no is None
-        and pdf_page_no_end is None
-        and paragraph_no is None
-        and line_start is None
-        and line_end is None
-    ):
+    """Extract full-page text blocks for the requested page range."""
+    if page_no is None and page_no_end is None and pdf_page_no is None and pdf_page_no_end is None:
         raise ValueError(
-            "At least one of page_no, page_no_end, pdf_page_no, pdf_page_no_end, paragraph_no, line_start, or line_end is required"
+            "At least one of page_no, page_no_end, pdf_page_no, or pdf_page_no_end is required"
         )
     if page_no_end is not None and page_no is None:
         raise ValueError("page_no_end requires page_no")
@@ -267,72 +255,90 @@ def extract_document_context(
         raise ValueError("pdf_page_no_end must be greater than or equal to pdf_page_no")
 
     pages = payload.get("pages") or []
-    selected: dict[tuple[int, int], dict[str, Any]] = {}
+    selected: list[dict[str, Any]] = []
     for page in pages:
         current_page_no = int(page.get("page_no") or 0)
         current_pdf_page_no = int(page.get("pdf_page_no") or current_page_no)
-        current_book_page_no = page.get("book_page_no")
-        current_page_number_source = str(page.get("page_number_source") or "pdf")
-        paragraphs = page.get("paragraphs") or []
+
+        matches = True
+        if page_no is not None:
+            page_no_upper = page_no_end if page_no_end is not None else page_no
+            if not (page_no <= current_page_no <= page_no_upper):
+                matches = False
+        if pdf_page_no is not None:
+            pdf_page_upper = pdf_page_no_end if pdf_page_no_end is not None else pdf_page_no
+            if not (pdf_page_no <= current_pdf_page_no <= pdf_page_upper):
+                matches = False
+        if not matches:
+            continue
+
+        page_text = str(page.get("text") or "").strip()
+        if not page_text:
+            paragraphs = page.get("paragraphs") or []
+            page_text = "\n\n".join(
+                str(paragraph.get("text") or "").strip()
+                for paragraph in paragraphs
+                if str(paragraph.get("text") or "").strip()
+            ).strip()
+
+        selected.append(
+            {
+                "page_no": current_page_no,
+                "pdf_page_no": current_pdf_page_no,
+                "book_page_no": page.get("book_page_no"),
+                "page_number_source": str(page.get("page_number_source") or "pdf"),
+                "page_meta": page.get("meta") or {},
+                "text": page_text,
+            }
+        )
+
+    return selected
+
+
+def extract_paragraph_location(
+    *,
+    payload: dict[str, Any],
+    page_no: int | None = None,
+    pdf_page_no: int | None = None,
+    paragraph_no: int | None = None,
+) -> dict[str, Any] | None:
+    """Extract one paragraph payload for citation/highlight routes."""
+    if page_no is None and pdf_page_no is None and paragraph_no is None:
+        raise ValueError("At least one of page_no, pdf_page_no, or paragraph_no is required")
+
+    pages = payload.get("pages") or []
+    first_match_on_page: dict[str, Any] | None = None
+
+    for page in pages:
+        current_page_no = int(page.get("page_no") or 0)
+        current_pdf_page_no = int(page.get("pdf_page_no") or current_page_no)
+
+        if page_no is not None and current_page_no != page_no:
+            continue
+        if pdf_page_no is not None and current_pdf_page_no != pdf_page_no:
+            continue
+
         page_context = {
             "page_no": current_page_no,
             "pdf_page_no": current_pdf_page_no,
-            "book_page_no": current_book_page_no,
-            "page_number_source": current_page_number_source,
+            "book_page_no": page.get("book_page_no"),
+            "page_number_source": str(page.get("page_number_source") or "pdf"),
             "page_meta": page.get("meta") or {},
         }
-
-        if page_no is not None and paragraph_no is None and line_start is None and line_end is None:
-            page_no_upper = page_no_end if page_no_end is not None else page_no
-            if page_no <= current_page_no <= page_no_upper:
-                for para in paragraphs:
-                    selected[(current_pdf_page_no, int(para.get("paragraph_no") or 0))] = {
-                        **page_context,
-                        **para,
-                    }
+        paragraphs = page.get("paragraphs") or []
+        for paragraph in paragraphs:
+            candidate = {
+                **page_context,
+                **paragraph,
+            }
+            if first_match_on_page is None:
+                first_match_on_page = candidate
+            if paragraph_no is None:
                 continue
+            if int(paragraph.get("paragraph_no") or 0) == paragraph_no:
+                return candidate
 
-        if pdf_page_no is not None and paragraph_no is None and line_start is None and line_end is None:
-            pdf_page_upper = pdf_page_no_end if pdf_page_no_end is not None else pdf_page_no
-            if pdf_page_no <= current_pdf_page_no <= pdf_page_upper:
-                for para in paragraphs:
-                    selected[(current_pdf_page_no, int(para.get("paragraph_no") or 0))] = {
-                        **page_context,
-                        **para,
-                    }
-                continue
+        if paragraph_no is None and first_match_on_page is not None:
+            return first_match_on_page
 
-        for index, para in enumerate(paragraphs):
-            current_paragraph_no = int(para.get("paragraph_no") or 0)
-            para_line_start = para.get("line_start")
-            para_line_end = para.get("line_end")
-
-            matches = True
-            if page_no is not None:
-                page_no_upper = page_no_end if page_no_end is not None else page_no
-                if not (page_no <= current_page_no <= page_no_upper):
-                    matches = False
-            if pdf_page_no is not None:
-                pdf_page_upper = pdf_page_no_end if pdf_page_no_end is not None else pdf_page_no
-                if not (pdf_page_no <= current_pdf_page_no <= pdf_page_upper):
-                    matches = False
-            if paragraph_no is not None and current_paragraph_no != paragraph_no:
-                matches = False
-            if (line_start is not None or line_end is not None) and para_line_start is not None and para_line_end is not None:
-                query_start = line_start if line_start is not None else para_line_start
-                query_end = line_end if line_end is not None else para_line_end
-                if para_line_end < query_start or para_line_start > query_end:
-                    matches = False
-
-            if not matches:
-                continue
-
-            left = max(0, index - window)
-            right = min(len(paragraphs), index + window + 1)
-            for nearby in paragraphs[left:right]:
-                selected[(current_pdf_page_no, int(nearby.get("paragraph_no") or 0))] = {
-                    **page_context,
-                    **nearby,
-                }
-
-    return [selected[key] for key in sorted(selected.keys())]
+    return first_match_on_page if paragraph_no is None else None

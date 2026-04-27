@@ -20,7 +20,7 @@ from src.community.knowledge_base.indexer import (
     delete_user_knowledge_records,
     upsert_user_knowledge_records,
 )
-from src.community.knowledge_base.locator import extract_document_context, locate_document
+from src.community.knowledge_base.locator import extract_paragraph_location, locate_document
 from src.community.knowledge_base.mineru_grpc import build_structured_document_from_mineru_grpc
 from src.community.knowledge_base.retriever import get_qdrant_client
 from src.community.knowledge_base.structured_document import build_bbox_from_position, build_structured_document
@@ -1341,17 +1341,14 @@ def get_user_knowledge_paragraph_location(
     if not document:
         raise HTTPException(status_code=404, detail="Structured document not found")
 
-    excerpts = extract_document_context(
+    excerpt = extract_paragraph_location(
         payload=document.payload,
         page_no=page_no,
         pdf_page_no=pdf_page_no,
         paragraph_no=paragraph_no,
-        window=0,
     )
-    if not excerpts:
+    if not excerpt:
         raise HTTPException(status_code=404, detail="Paragraph location not found")
-
-    excerpt = excerpts[0]
     return {
         "doc_id": document.doc_id,
         "scope": document.scope,

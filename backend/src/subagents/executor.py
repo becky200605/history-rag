@@ -69,9 +69,11 @@ class SubagentResult:
 
 
 _SECTION_ALIASES: dict[str, str] = {
-    "摘要": "summary",
-    "总结": "summary",
-    "summary": "summary",
+    "任务结果": "summary",
+    "结果": "summary",
+    "结论": "summary",
+    "taskresult": "summary",
+    "result": "summary",
     "关键发现": "findings",
     "发现": "findings",
     "findings": "findings",

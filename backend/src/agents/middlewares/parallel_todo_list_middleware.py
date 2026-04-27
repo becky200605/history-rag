@@ -68,6 +68,27 @@ def _clip_text(text: str, *, limit: int = 240) -> str:
     return normalized[: limit - 1].rstrip() + "…"
 
 
+def _build_result_digest(
+    task_result: str,
+    findings: list[str],
+    *,
+    limit: int = 320,
+) -> str:
+    normalized_result = " ".join(task_result.split()).strip()
+    cleaned_findings = [" ".join(item.split()).strip() for item in findings if " ".join(item.split()).strip()]
+
+    parts: list[str] = []
+    if normalized_result:
+        parts.append(normalized_result)
+    if cleaned_findings:
+        parts.extend(cleaned_findings[:2])
+
+    if not parts:
+        return "已完成"
+
+    return _clip_text(" | ".join(parts), limit=limit)
+
+
 def _is_synthesis_todo(todo: Todo) -> bool:
     content = str(todo.get("content", "")).strip().lower()
     if not content:
@@ -122,16 +143,18 @@ def _build_default_task_prompt(todo: Todo) -> str:
         "1. 只围绕这一项任务检索、分析或执行；\n"
         "2. 若属于历史 / 财政史问题，优先使用本地知识库工具并保留关键引文；如果主代理分给你的书与任务明显不匹配，要在结果里明确指出覆盖可能不足，不要硬搜到无关方向；\n"
         "3. 如果 `book_search` 没有找到相关书，或者返回结果明显不匹配，不要用 `bash`、`find`、`ls`、`echo` 等命令去 `/mnt/user-data/uploads` 或其他本地目录里瞎翻文件当兜底；除非主任务明确让你检查某个已知上传文件，否则不要把文件系统扫描当知识库替代方案；\n"
-        "4. 先用更大的检索块拿上下文：能一次传多本书就不要拆太细；需要 `knowledge_locate` 时，优先一次读取连续页范围，而不是连续很多次单页定位；\n"
-        "5. 不要陷入反复 `knowledge_search`。如果在同一批书/同一问题上，换了 2-3 种明显不同的检索词还是只有弱结果、空结果、标题碎片、目录碎片或页码线索，就不要继续改检索词了，必须切换到 `knowledge_locate`，去看目录、章节页、命中页上下文或连续页原文；\n"
-        "6. 如果 `knowledge_search` 已经给出章节名、目录项、页码提示、短片段或疑似标题，应该立刻把它当导航线索交给 `knowledge_locate`，而不是继续连发很多相似 search；\n"
-        "7. 如果 1-2 次 `knowledge_locate` 扩展后已经够写结论，就停止继续探测；\n"
-        "8. 最终输出必须使用固定小节：`## 摘要`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
-        "9. 如果证据不足，不要硬答；在 `## 摘要` 里用 `【证据不足】` 或 `【无法确认】` 明确拒答原因；\n"
-        "10. `## 关键发现` 里的每一条，只要有证据，就直接在该条后面附上最相关的原始 `[citation:标题](URL)`；不要把引用只堆到 `## 关键引文` 里；证据不足时写 `- 无充分证据支持结论`；\n"
-        "11. `## 关键引文`里优先保留原始 `[citation:标题](URL)` 行；没有时明确写 `- 无`；\n"
-        "12. `## 未解决缺口`里写仍需补查的点；没有时明确写 `- 无`；\n"
-        "13. 不要接管其他 todo。"
+        "4. `knowledge_search` 当前已临时下线。检索路径固定为：先 `book_search` 选书，再用 `knowledge_locate` 读目录、章节页、命中页上下文或连续页原文；\n"
+        "5. 先用更大的检索块拿上下文：能一次传多本书就不要拆太细；需要 `knowledge_locate` 时，优先一次读取连续页范围，而不是连续很多次单页定位；\n"
+        "6. 如果在同一批书/同一问题上，做了 1-2 次有针对性的 `knowledge_locate` 还是只有弱结果、空结果、标题碎片、目录碎片或无关页面，就停止盲目扩展，在结果里明确说明证据缺口；\n"
+        "7. 如果 `book_search` 返回了章节名、目录项、页码提示、短片段或疑似标题，应该立刻把它当导航线索交给 `knowledge_locate`；\n"
+        "8. 如果 1-2 次 `knowledge_locate` 扩展后已经够写结论，就停止继续探测；\n"
+        "9. 最终输出必须使用固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
+        "10. `## 任务结果` 是最重要的主结果块，不要写成 1-2 句导语式摘要；先直接回答本任务最后证成了什么，再按证据充分展开所有重要结果要点，而且这些要点后面必须直接带最相关的原始 `[citation:标题](URL)`；\n"
+        "11. 如果证据不足，不要硬答；在 `## 任务结果` 里用 `【证据不足】` 或 `【无法确认】` 明确拒答原因，并说明目前最多只能确认到哪里；\n"
+        "12. `## 关键发现` 里的每一条，只要有证据，就直接在该条后面附上最相关的原始 `[citation:标题](URL)`；不要把引用只堆到 `## 关键引文` 里；证据不足时写 `- 无充分证据支持结论`；\n"
+        "13. `## 关键引文`里优先保留原始 `[citation:标题](URL)` 行；没有时明确写 `- 无`；\n"
+        "14. `## 未解决缺口`里写仍需补查的点；没有时明确写 `- 无`；\n"
+        "15. 不要接管其他 todo。"
     )
 
 
@@ -152,7 +175,7 @@ def _render_todo_evidence_block(todo: Todo) -> str:
     error = str(todo.get("error") or "").strip()
 
     if summary:
-        lines.append("摘要:")
+        lines.append("任务结果:")
         lines.append(summary)
 
     if findings:
@@ -542,8 +565,9 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                             todo["structured_citations"] = citations
                         if gaps:
                             todo["structured_gaps"] = gaps
-                        todo["result_summary"] = _clip_text(
-                            summary or result.result or "已完成",
+                        todo["result_summary"] = _build_result_digest(
+                            summary,
+                            findings,
                             limit=320,
                         )
                     elif result.result:

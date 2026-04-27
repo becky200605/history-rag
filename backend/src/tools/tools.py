@@ -18,6 +18,12 @@ BUILTIN_TOOLS = [
     knowledge_checkpoint_tool,
 ]
 
+# Temporary kill switch for tools that should remain implemented in the codebase
+# but must not be exposed to the model right now.
+TEMPORARILY_DISABLED_TOOL_NAMES = {
+    "knowledge_search",
+}
+
 LEAD_ORCHESTRATOR_TOOL_NAMES = {
     "book_search",
 }
@@ -54,7 +60,11 @@ def get_available_tools(
         List of available tools.
     """
     config = get_app_config()
-    loaded_tools = [resolve_variable(tool.use, BaseTool) for tool in config.tools if groups is None or tool.group in groups]
+    loaded_tools = [
+        resolve_variable(tool.use, BaseTool)
+        for tool in config.tools
+        if (groups is None or tool.group in groups) and tool.name not in TEMPORARILY_DISABLED_TOOL_NAMES
+    ]
     if allowed_tool_names is not None:
         loaded_tools = [tool for tool in loaded_tools if tool.name in allowed_tool_names]
 
@@ -72,6 +82,7 @@ def get_available_tools(
             extensions_config = ExtensionsConfig.from_file()
             if extensions_config.get_enabled_mcp_servers():
                 mcp_tools = get_cached_mcp_tools()
+                mcp_tools = [tool for tool in mcp_tools if tool.name not in TEMPORARILY_DISABLED_TOOL_NAMES]
                 if allowed_tool_names is not None:
                     mcp_tools = [tool for tool in mcp_tools if tool.name in allowed_tool_names]
                 if mcp_tools:
@@ -104,5 +115,11 @@ def get_available_tools(
 
     if allowed_tool_names is not None:
         builtin_tools = [tool for tool in builtin_tools if tool.name in allowed_tool_names]
+
+    if TEMPORARILY_DISABLED_TOOL_NAMES:
+        logger.info(
+            "Temporarily disabled tools are hidden from the runtime registry: %s",
+            ", ".join(sorted(TEMPORARILY_DISABLED_TOOL_NAMES)),
+        )
 
     return loaded_tools + builtin_tools + mcp_tools

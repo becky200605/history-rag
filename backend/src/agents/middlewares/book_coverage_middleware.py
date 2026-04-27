@@ -26,10 +26,10 @@ REMINDER_SOURCE_TOOL_NAMES = {
 RETRY_APPENDICES = (
     "系统插入提示（不是用户的新问题）：当前阅读集仍有未覆盖书目。"
     "你刚才试图在未读完阅读集前直接起草答案。"
-    "现在不要直接回答；下一步优先对未覆盖书目调用 `knowledge_search` 或 `knowledge_locate`，"
+    "现在不要直接回答；`knowledge_search` 当前已临时下线，下一步优先对未覆盖书目调用 `knowledge_locate`，"
     "并且尽量不要再次只围绕已覆盖书继续展开。",
     "系统再次插入提示（不是用户的新问题）：当前阅读集仍未覆盖完整。"
-    "请把下一步改成且仅改成针对未覆盖书目的检索或定位，"
+    "请把下一步改成且仅改成针对未覆盖书目的 `knowledge_locate` 定位阅读，"
     "不要直接回答，不要跳过这些书。",
 )
 
@@ -91,7 +91,7 @@ class BookCoverageMiddleware(AgentMiddleware[AgentState]):
             title = titles.get(doc_id) or doc_id
             lines.append(f"- {title} (`{doc_id}`)")
         lines.append(
-            "下一步优先对这些未覆盖书目做至少一次针对性的 `knowledge_search` 或 `knowledge_locate`，"
+            "下一步优先对这些未覆盖书目做至少一次针对性的 `knowledge_locate`，"
             "确认它们各自能提供什么证据，再继续综合。"
         )
         return HumanMessage(content="\n".join(lines))

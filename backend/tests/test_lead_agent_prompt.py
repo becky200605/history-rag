@@ -21,6 +21,8 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "knowledge_folders" in prompt
     assert "Knowledge Folder Semantics Rule" in prompt
     assert "Scope Label Rule" in prompt
+    assert "Temporary Retrieval Mode Rule" in prompt
+    assert "knowledge_search` is temporarily disabled" in prompt
     assert "pass `knowledge_folders` copied from that tree into `book_search`" in prompt
     assert "<knowledge_directory_tree>" not in prompt
     assert "Book Group Label Rule" in prompt

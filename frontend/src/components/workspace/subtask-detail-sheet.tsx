@@ -97,7 +97,7 @@ export function SubtaskDetailSheet({
   const structuredResultContent = useMemo(() => {
     const sections: string[] = [];
     if (fallbackSummary) {
-      sections.push(`## 摘要\n${fallbackSummary}`);
+      sections.push(`## 任务结果\n${fallbackSummary}`);
     }
     if (fallbackFindings.length > 0) {
       sections.push(

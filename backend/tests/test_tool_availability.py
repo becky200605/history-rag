@@ -28,3 +28,27 @@ def test_runtime_tool_registry_excludes_present_files(monkeypatch) -> None:
 
     assert "present_file_tool" not in tools_module
     assert "present_files" not in tools_module
+
+
+def test_runtime_tool_registry_temporarily_hides_knowledge_search() -> None:
+    tools_module = (
+        Path(__file__).resolve().parents[1] / "src" / "tools" / "tools.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'TEMPORARILY_DISABLED_TOOL_NAMES = {' in tools_module
+    assert '"knowledge_search"' in tools_module
+    assert "tool.name not in TEMPORARILY_DISABLED_TOOL_NAMES" in tools_module
+
+
+def test_subtask_result_format_fully_replaces_summary_with_task_result() -> None:
+    general_purpose = (
+        Path(__file__).resolve().parents[1] / "src" / "subagents" / "builtins" / "general_purpose.py"
+    ).read_text(encoding="utf-8")
+    executor_source = (
+        Path(__file__).resolve().parents[1] / "src" / "subagents" / "executor.py"
+    ).read_text(encoding="utf-8")
+
+    assert "## 任务结果" in general_purpose
+    assert "## 摘要" not in general_purpose
+    assert '"任务结果": "summary"' in executor_source
+    assert '"摘要": "summary"' not in executor_source

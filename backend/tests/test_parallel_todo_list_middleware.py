@@ -281,3 +281,80 @@ def test_write_todos_can_redispatch_completed_todo_with_same_content(monkeypatch
     assert todos[0]["task_id"] == "call-new:todo-same"
     assert todos[0]["status"] == "completed"
     assert todos[0]["result"] == "rerun: call-new:todo-same"
+
+
+def test_write_todos_marks_matching_reading_set_book_as_covered_on_completion(monkeypatch):
+    monkeypatch.setattr(todo_module, "get_stream_writer", lambda: lambda event: None)
+    monkeypatch.setattr(todo_module, "get_skills_prompt_section", lambda: "")
+    monkeypatch.setattr(tools_module, "get_available_tools", lambda **kwargs: [])
+    monkeypatch.setattr(
+        todo_module,
+        "get_subagent_config",
+        lambda name: SubagentConfig(
+            name=name,
+            description="test",
+            system_prompt="test",
+            timeout_seconds=5,
+        ),
+    )
+
+    class FakeExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def execute_async(self, prompt: str, task_id: str):
+            return task_id
+
+    class FakeStatus:
+        COMPLETED = "completed"
+        FAILED = "failed"
+        TIMED_OUT = "timed_out"
+
+    monkeypatch.setattr(todo_module, "SubagentExecutor", FakeExecutor)
+    monkeypatch.setattr(todo_module, "SubagentStatus", FakeStatus)
+    monkeypatch.setattr(
+        todo_module,
+        "get_background_task_result",
+        lambda task_id: SimpleNamespace(
+            status=FakeStatus.COMPLETED,
+            result="## 任务结果\n已核对《甲书》的相关证据。\n\n## 关键发现\n- 《甲书》提供了这一问题的关键证据。",
+            error=None,
+            ai_messages=[],
+            structured_result={
+                "summary": "已核对《甲书》的相关证据。",
+                "findings": ["《甲书》提供了这一问题的关键证据。"],
+                "citations": [],
+                "open_questions": [],
+            },
+        ),
+    )
+
+    middleware = todo_module.TodoListMiddleware(
+        system_prompt="test",
+        tool_description="test",
+        subagent_enabled=True,
+        max_concurrent_subagents=2,
+    )
+    runtime = SimpleNamespace(
+        state={
+            "todos": [],
+            "sandbox": None,
+            "thread_data": None,
+            "messages": [SimpleNamespace(type="human")],
+            "knowledge_reading_set_doc_ids": ["doc-a", "doc-b"],
+            "knowledge_reading_set_titles": {"doc-a": "甲书", "doc-b": "乙书"},
+            "knowledge_covered_doc_ids": [],
+            "knowledge_reading_set_query": "请综合两本书回答",
+            "knowledge_reading_set_human_index": 0,
+        },
+        context={"thread_id": "thread-1"},
+        config={"metadata": {"model_name": "test-model", "trace_id": "trace-1"}},
+    )
+
+    middleware.tools[0].func(
+        runtime=runtime,
+        todos=[{"content": "读《甲书》：查税制", "status": "in_progress"}],
+        tool_call_id="call-cover",
+    )
+
+    assert runtime.state["knowledge_covered_doc_ids"] == ["doc-a"]

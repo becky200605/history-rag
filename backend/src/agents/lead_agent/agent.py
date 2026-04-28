@@ -4,6 +4,7 @@ from langchain.agents import create_agent
 from langchain_core.runnables import RunnableConfig
 
 from src.agents.lead_agent.prompt import apply_prompt_template
+from src.agents.middlewares.book_coverage_middleware import BookCoverageMiddleware
 from src.agents.middlewares.citation_enforcement_middleware import CitationEnforcementMiddleware
 from src.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from src.agents.middlewares.dangling_tool_call_middleware import DanglingToolCallMiddleware
@@ -288,6 +289,8 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
     )
     if todo_list_middleware is not None:
         middlewares.append(todo_list_middleware)
+
+    middlewares.append(BookCoverageMiddleware())
 
     # Add TitleMiddleware
     middlewares.append(TitleMiddleware())

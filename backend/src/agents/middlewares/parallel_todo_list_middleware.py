@@ -21,6 +21,10 @@ from typing_extensions import NotRequired, TypedDict, cast, override
 
 from src.agents.lead_agent.prompt import get_skills_prompt_section
 from src.agents.thread_state import ThreadState
+from src.community.knowledge_base.reading_state import (
+    COVERED_DOC_IDS_KEY,
+    get_active_reading_state,
+)
 from src.subagents import SubagentExecutor, get_subagent_config
 from src.subagents.executor import SubagentStatus, get_background_task_result
 from src.utils.error_logging import append_error_doc
@@ -89,6 +93,50 @@ def _build_result_digest(
     return _clip_text(" | ".join(parts), limit=limit)
 
 
+def _normalize_book_match_text(text: str) -> str:
+    return "".join(ch for ch in text.lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def _mark_completed_todo_coverage(runtime: Any, todo: Todo) -> None:
+    if runtime is None or not hasattr(runtime, "state") or not isinstance(runtime.state, dict):
+        return
+
+    reading_set, titles, covered, _query = get_active_reading_state(runtime.state)
+    if not reading_set or not titles:
+        return
+
+    haystacks = [
+        str(todo.get("content") or ""),
+        str(todo.get("task_prompt") or ""),
+        str(todo.get("result_summary") or ""),
+        str(todo.get("structured_summary") or ""),
+    ]
+    normalized_haystack = _normalize_book_match_text(" ".join(part for part in haystacks if part).strip())
+    if not normalized_haystack:
+        return
+
+    matched_doc_ids: list[str] = []
+    for doc_id in reading_set:
+        title = titles.get(doc_id)
+        if not title:
+            continue
+        normalized_title = _normalize_book_match_text(title)
+        if normalized_title and normalized_title in normalized_haystack:
+            matched_doc_ids.append(doc_id)
+
+    if not matched_doc_ids:
+        return
+
+    covered_ids = [str(item).strip() for item in runtime.state.get(COVERED_DOC_IDS_KEY) or [] if str(item).strip()]
+    seen = set(covered_ids)
+    for doc_id in matched_doc_ids:
+        if doc_id in seen:
+            continue
+        covered_ids.append(doc_id)
+        seen.add(doc_id)
+    runtime.state[COVERED_DOC_IDS_KEY] = covered_ids
+
+
 def _is_synthesis_todo(todo: Todo) -> bool:
     content = str(todo.get("content", "")).strip().lower()
     if not content:
@@ -149,7 +197,7 @@ def _build_default_task_prompt(todo: Todo) -> str:
         "7. 如果 `book_search` 返回了章节名、目录项、页码提示、短片段或疑似标题，应该立刻把它当导航线索交给 `knowledge_locate`；\n"
         "8. 如果 1-2 次 `knowledge_locate` 扩展后已经够写结论，就停止继续探测；\n"
         "9. 最终输出必须使用固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
-        "10. `## 任务结果` 是最重要的主结果块，不要写成 1-2 句导语式摘要；先直接回答本任务最后证成了什么，再按证据充分展开所有重要结果要点，而且这些要点后面必须直接带最相关的原始 `[citation:标题](URL)`；\n"
+        "10. `## 任务结果` 是最重要的主结果块，不要写成 1-2 句导语式摘要；先直接回答本任务最后证成了什么，再按证据充分展开所有重要结果要点，而且这些要点后面必须直接带最相关的原始 `[citation:标题](URL)`；如果这是围绕某一本书的任务，`## 任务结果` 开头要明确点名这本书；\n"
         "11. 如果证据不足，不要硬答；在 `## 任务结果` 里用 `【证据不足】` 或 `【无法确认】` 明确拒答原因，并说明目前最多只能确认到哪里；\n"
         "12. `## 关键发现` 里的每一条，只要有证据，就直接在该条后面附上最相关的原始 `[citation:标题](URL)`；不要把引用只堆到 `## 关键引文` 里；证据不足时写 `- 无充分证据支持结论`；\n"
         "13. `## 关键引文`里优先保留原始 `[citation:标题](URL)` 行；没有时明确写 `- 无`；\n"
@@ -572,6 +620,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                         )
                     elif result.result:
                         todo["result_summary"] = _clip_text(result.result, limit=320)
+                    _mark_completed_todo_coverage(runtime, todo)
                     todo.pop("error", None)
                     log_subtask_event(
                         "subtask_completed",

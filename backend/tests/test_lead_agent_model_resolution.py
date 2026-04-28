@@ -168,7 +168,7 @@ def test_build_middlewares_uses_resolved_model_name_for_vision(monkeypatch):
     assert any(isinstance(m, lead_agent_module.ViewImageMiddleware) for m in middlewares)
 
 
-def test_build_middlewares_does_not_include_book_coverage_middleware(monkeypatch):
+def test_build_middlewares_includes_book_coverage_middleware(monkeypatch):
     app_config = _make_app_config([_make_model("default-model", supports_thinking=False)])
 
     monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
@@ -180,7 +180,7 @@ def test_build_middlewares_does_not_include_book_coverage_middleware(monkeypatch
         model_name="default-model",
     )
 
-    assert not any(type(m).__name__ == "BookCoverageMiddleware" for m in middlewares)
+    assert any(type(m).__name__ == "BookCoverageMiddleware" for m in middlewares)
 
 
 def test_create_todo_list_middleware_uses_parallel_batch_language_when_subagents_enabled(monkeypatch):

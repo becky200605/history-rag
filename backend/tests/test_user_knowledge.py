@@ -324,36 +324,27 @@ def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) 
     )
     monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
     monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
-    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
 
-    retriever = retriever_module.KnowledgeBaseRetriever()
-
-    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
-        if "__user__" in collection_name:
-            return [
-                {
-                    "content": _long_text("用户知识"),
-                    "score": 1.0,
-                    "filename": "user.md",
-                    "source": "user",
-                    "page": None,
-                    "source_type": "structured",
-                    "metadata": {"scope": "user", "source_kind": "upload", "doc_id": "user-doc"},
-                }
-            ]
-        if "__thread__" in collection_name:
-            return [
-                {
-                    "content": _long_text("会话知识"),
-                    "score": 1.0,
-                    "filename": "thread.md",
-                    "source": "thread",
-                    "page": None,
-                    "source_type": "structured",
-                    "metadata": {"scope": "thread", "source_kind": "thread_upload", "doc_id": "thread-doc"},
-                }
-            ]
+    def fake_lexical_search(query, *, thread_id=None, user_id=None, doc_ids=None, scopes=None, top_k=5):
         return [
+            {
+                "content": _long_text("用户知识"),
+                "score": 1.0,
+                "filename": "user.md",
+                "source": "user",
+                "page": None,
+                "source_type": "structured",
+                "metadata": {"scope": "user", "source_kind": "upload", "doc_id": "user-doc"},
+            },
+            {
+                "content": _long_text("会话知识"),
+                "score": 1.0,
+                "filename": "thread.md",
+                "source": "thread",
+                "page": None,
+                "source_type": "structured",
+                "metadata": {"scope": "thread", "source_kind": "thread_upload", "doc_id": "thread-doc"},
+            },
             {
                 "content": _long_text("公共知识"),
                 "score": 1.0,
@@ -362,10 +353,12 @@ def test_retriever_prioritizes_user_results_over_thread_and_global(monkeypatch) 
                 "page": None,
                 "source_type": "structured",
                 "metadata": {"scope": "global", "source_kind": "global_document", "doc_id": "global-doc"},
-            }
+            },
         ]
 
-    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", fake_lexical_search)
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
 
     results = retriever.search("query", thread_id="thread-1", user_id="user-1")
 
@@ -383,43 +376,35 @@ def test_retriever_expands_broad_historical_query_and_merges_matched_queries(mon
     )
     monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
     monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
-    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
 
-    retriever = retriever_module.KnowledgeBaseRetriever()
-    seen_queries: list[tuple[str, str, list[str] | None, int | None]] = []
+    seen_queries: list[tuple[str, list[str] | None, list[str] | None, int | None]] = []
 
-    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
-        seen_queries.append((collection_name, query, doc_ids, top_k))
-        doc_id = "global-doc" if collection_name == "knowledge_base" else f"{collection_name}-doc"
-        scope = "global"
-        source_kind = "global_document"
-        filename = "global.md"
-        if "__user__" in collection_name:
-            scope = "user"
-            source_kind = "upload"
-            filename = "user.md"
+    def fake_lexical_search(query, *, thread_id=None, user_id=None, doc_ids=None, scopes=None, top_k=5):
+        seen_queries.append((query, doc_ids, scopes, top_k))
         return [
             {
-                "content": _long_text("重复片段" if scope == "global" else f"{scope}-独立片段"),
+                "content": _long_text("重复片段"),
                 "score": 1.0,
-                "filename": filename,
-                "source": filename,
+                "filename": "global.md",
+                "source": "global.md",
                 "page": None,
                 "source_type": "structured",
                 "metadata": {
-                    "scope": scope,
-                    "source_kind": source_kind,
-                    "doc_id": doc_id,
-                    "title": "民国财政史料" if scope == "global" else "个人笔记",
+                    "scope": "global",
+                    "source_kind": "global_document",
+                    "doc_id": "global-doc",
+                    "title": "民国财政史料",
                 },
             }
         ]
 
-    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", fake_lexical_search)
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
 
     results = retriever.search("民国时期财政有什么变化", thread_id="thread-1", user_id="user-1")
 
-    executed_queries = [query for _, query, _, _ in seen_queries]
+    executed_queries = [query for query, _, _, _ in seen_queries]
     assert "民国时期财政有什么变化" in executed_queries
     assert any("史料记载" in query for query in executed_queries)
     assert any("北洋政府" in query for query in executed_queries)
@@ -442,13 +427,11 @@ def test_retriever_keeps_doc_id_queries_anchored_but_adds_alias_and_facet_retrie
     )
     monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
     monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
-    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
 
-    retriever = retriever_module.KnowledgeBaseRetriever()
-    seen_calls: list[tuple[str, str, list[str] | None]] = []
+    seen_calls: list[tuple[str, list[str] | None]] = []
 
-    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
-        seen_calls.append((collection_name, query, doc_ids))
+    def fake_lexical_search(query, *, thread_id=None, user_id=None, doc_ids=None, scopes=None, top_k=5):
+        seen_calls.append((query, doc_ids))
         return [
             {
                 "content": "结果",
@@ -461,16 +444,18 @@ def test_retriever_keeps_doc_id_queries_anchored_but_adds_alias_and_facet_retrie
             }
         ]
 
-    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", fake_lexical_search)
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
 
     retriever.search("清代末期财政情况", user_id="user-1", doc_ids=["global-doc"], scopes=["global"])
 
-    executed_queries = [query for _, query, _ in seen_calls]
+    executed_queries = [query for query, _ in seen_calls]
     assert executed_queries[0] == "清代末期财政情况"
     assert "晚清财政情况" in executed_queries
     assert "晚清财政收入结构" in executed_queries
     assert "晚清财政支出结构" in executed_queries
-    assert all(doc_ids == ["global-doc"] for _, _, doc_ids in seen_calls)
+    assert all(doc_ids == ["global-doc"] for _, doc_ids in seen_calls)
     assert all("史料记载" not in query for query in executed_queries)
 
 
@@ -485,16 +470,16 @@ def test_retriever_applies_doc_ids_filter_to_each_collection(monkeypatch) -> Non
     )
     monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
     monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
-    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
 
-    retriever = retriever_module.KnowledgeBaseRetriever()
-    seen_calls: list[tuple[str, str, list[str] | None]] = []
+    seen_calls: list[tuple[str, list[str] | None, list[str] | None]] = []
 
-    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
-        seen_calls.append((collection_name, query, doc_ids))
+    def fake_lexical_search(query, *, thread_id=None, user_id=None, doc_ids=None, scopes=None, top_k=5):
+        seen_calls.append((query, doc_ids, scopes))
         return []
 
-    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", fake_lexical_search)
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
 
     retriever.search(
         "清代财政变迁",
@@ -504,12 +489,9 @@ def test_retriever_applies_doc_ids_filter_to_each_collection(monkeypatch) -> Non
         scopes=["user", "thread", "global"],
     )
 
-    assert {collection_name for collection_name, _, _ in seen_calls} == {
-        "knowledge_base__user__user-1",
-        "knowledge_base__thread__thread-1",
-        "knowledge_base",
-    }
-    assert all(doc_ids == ["uk-1", "thread-book.pdf", "global/book.md"] for _, _, doc_ids in seen_calls)
+    assert seen_calls
+    assert all(doc_ids == ["uk-1", "thread-book.pdf", "global/book.md"] for _, doc_ids, _ in seen_calls)
+    assert all(scopes == ["user", "thread", "global"] for _, _, scopes in seen_calls)
 
 
 def test_retriever_converts_folder_paths_to_doc_ids(monkeypatch) -> None:
@@ -523,7 +505,6 @@ def test_retriever_converts_folder_paths_to_doc_ids(monkeypatch) -> None:
     )
     monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
     monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
-    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         retriever_module,
         "list_book_catalog",
@@ -559,14 +540,15 @@ def test_retriever_converts_folder_paths_to_doc_ids(monkeypatch) -> None:
         ],
     )
 
-    retriever = retriever_module.KnowledgeBaseRetriever()
-    seen_calls: list[tuple[str, str, list[str] | None]] = []
+    seen_calls: list[list[str] | None] = []
 
-    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
-        seen_calls.append((collection_name, query, doc_ids))
+    def fake_lexical_search(query, *, thread_id=None, user_id=None, doc_ids=None, scopes=None, top_k=5):
+        seen_calls.append(doc_ids)
         return []
 
-    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", fake_lexical_search)
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
 
     retriever.search(
         "财政史",
@@ -576,7 +558,7 @@ def test_retriever_converts_folder_paths_to_doc_ids(monkeypatch) -> None:
     )
 
     assert seen_calls
-    assert all(doc_ids == ["uk_qing"] for _, _, doc_ids in seen_calls)
+    assert all(doc_ids == ["uk_qing"] for doc_ids in seen_calls)
 
 
 def test_retriever_returns_at_least_minimum_results_when_doc_ids_are_provided(monkeypatch) -> None:
@@ -590,42 +572,29 @@ def test_retriever_returns_at_least_minimum_results_when_doc_ids_are_provided(mo
     )
     monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
     monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
-    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
 
-    retriever = retriever_module.KnowledgeBaseRetriever()
-
-    def fake_search_collection(collection_name: str, query: str, doc_ids=None, top_k=None):
-        scope = "global"
-        filename = "global.md"
-        source_kind = "global_document"
-        if "__user__" in collection_name:
-            scope = "user"
-            filename = "user.md"
-            source_kind = "upload"
-        elif "__thread__" in collection_name:
-            scope = "thread"
-            filename = "thread.md"
-            source_kind = "thread_upload"
-
+    def fake_lexical_search(query, *, thread_id=None, user_id=None, doc_ids=None, scopes=None, top_k=5):
         return [
             {
-                "content": _long_text(f"{scope}-片段-{index}"),
+                "content": _long_text(f"片段-{index}"),
                 "score": 1.0 - index * 0.01,
-                "filename": filename,
-                "source": filename,
+                "filename": "global.md",
+                "source": "global.md",
                 "page": None,
                 "source_type": "structured",
                 "metadata": {
-                    "scope": scope,
-                    "source_kind": source_kind,
-                    "doc_id": f"{scope}-doc-{index}",
-                    "title": f"{scope}-title-{index}",
+                    "scope": "global",
+                    "source_kind": "global_document",
+                    "doc_id": f"global-doc-{index}",
+                    "title": f"global-title-{index}",
                 },
             }
             for index in range(3)
         ]
 
-    monkeypatch.setattr(retriever, "_search_collection", fake_search_collection)
+    monkeypatch.setattr(retriever_module, "lexical_search_documents", fake_lexical_search)
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
 
     results = retriever.search(
         "清代财政变迁",
@@ -635,7 +604,7 @@ def test_retriever_returns_at_least_minimum_results_when_doc_ids_are_provided(mo
         scopes=["user", "thread", "global"],
     )
 
-    assert len(results) == 6
+    assert len(results) == 3
 
 
 def test_retriever_filters_short_noise_for_broad_queries(monkeypatch) -> None:
@@ -649,13 +618,9 @@ def test_retriever_filters_short_noise_for_broad_queries(monkeypatch) -> None:
     )
     monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
     monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
-    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
-
-    retriever = retriever_module.KnowledgeBaseRetriever()
-
     monkeypatch.setattr(
-        retriever,
-        "_search_collection",
+        retriever_module,
+        "lexical_search_documents",
         lambda *args, **kwargs: [
             {
                 "content": "[盛宣怀]",
@@ -668,6 +633,8 @@ def test_retriever_filters_short_noise_for_broad_queries(monkeypatch) -> None:
             }
         ],
     )
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
 
     results = retriever.search("盛宣怀 生平", scopes=["global"])
 
@@ -685,13 +652,9 @@ def test_retriever_keeps_short_results_for_exact_lookup_queries(monkeypatch) -> 
     )
     monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
     monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
-    monkeypatch.setattr(retriever_module, "lexical_search_documents", lambda *args, **kwargs: [])
-
-    retriever = retriever_module.KnowledgeBaseRetriever()
-
     monkeypatch.setattr(
-        retriever,
-        "_search_collection",
+        retriever_module,
+        "lexical_search_documents",
         lambda *args, **kwargs: [
             {
                 "content": "[盛宣怀]",
@@ -704,6 +667,8 @@ def test_retriever_keeps_short_results_for_exact_lookup_queries(monkeypatch) -> 
             }
         ],
     )
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
 
     results = retriever.search("盛宣怀 第300页原文", scopes=["global"])
 
@@ -834,9 +799,71 @@ def test_lexical_search_documents_surfaces_exact_keywords_from_structured_payloa
     )
 
     assert len(results) == 1
-    assert results[0]["match_type"] == "exact_keyword"
+    assert results[0]["match_type"] == "exact_keyword_bm25"
     assert "统税清册" in results[0]["matched_keywords"]
     assert results[0]["metadata"]["page_no"] == 8
+
+
+def test_lexical_search_documents_filters_short_paragraphs_and_prefers_bm25_dense_hit(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        lexical_search_module,
+        "_iter_candidate_documents",
+        lambda thread_id, user_id, doc_ids=None, scopes=None: iter(
+            [
+                {
+                    "doc_id": "global-hit",
+                    "title": "财政史",
+                    "filename": "finance.md",
+                    "scope": "global",
+                    "source": "/tmp/finance.structured.json",
+                    "payload": {
+                        "pages": [
+                            {
+                                "page_no": 12,
+                                "pdf_page_no": 14,
+                                "paragraphs": [
+                                    {
+                                        "paragraph_no": 1,
+                                        "paragraph_no_in_doc": 31,
+                                        "line_start": 1,
+                                        "line_end": 1,
+                                        "text": "汉冶萍。",
+                                    },
+                                    {
+                                        "paragraph_no": 2,
+                                        "paragraph_no_in_doc": 32,
+                                        "line_start": 2,
+                                        "line_end": 7,
+                                        "text": "汉冶萍公司与日本横滨正金银行签订合同，借款与矿砂抵押安排直接牵连大冶矿山和公司产业，后续控制权也因此发生变化。",
+                                    },
+                                    {
+                                        "paragraph_no": 3,
+                                        "paragraph_no_in_doc": 33,
+                                        "line_start": 8,
+                                        "line_end": 12,
+                                        "text": "该页还概述了大冶矿山、借款、抵押与控制权转移之间的关系，但没有上一段集中。",
+                                    },
+                                ],
+                            }
+                        ]
+                    },
+                }
+            ]
+        ),
+    )
+
+    results = lexical_search_module.lexical_search_documents(
+        "汉冶萍 横滨正金银行 大冶矿山",
+        scopes=["global"],
+        top_k=3,
+    )
+
+    assert len(results) == 1
+    assert all(len(item["content"]) >= lexical_search_module.MIN_PARAGRAPH_CHARS for item in results)
+    assert results[0]["metadata"]["paragraph_no"] == 2
+    assert results[0]["match_type"] in {"exact_keyword_bm25", "lexical_bm25"}
 
 
 def test_retriever_preserves_matched_keywords_from_lexical_results(monkeypatch) -> None:
@@ -1197,6 +1224,78 @@ def test_user_knowledge_router_creates_plain_note_and_returns_text_editor(tmp_pa
 
     saved_content = (paths.user_knowledge_docs_dir("user_1") / f"{record_id}.md").read_text(encoding="utf-8")
     assert saved_content == "# 会议记录\n"
+
+
+def test_user_knowledge_router_appends_excerpt_to_existing_note(tmp_path, monkeypatch) -> None:
+    paths = Paths(tmp_path)
+    monkeypatch.setattr(paths_module, "_paths", paths)
+    paths.ensure_user_knowledge_dirs("user_1")
+
+    record = user_store_module.build_user_derived_record(
+        user_id="user_1",
+        source_kind="note",
+        title="读书笔记",
+        source_filename="uk_note.md",
+        size=0,
+        origin_scope=None,
+        origin_doc_id=None,
+        origin_filename=None,
+    )
+    user_store_module.persist_user_text_document(
+        "user_1",
+        "uk_note.md",
+        "# 读书笔记\n\n已有内容\n",
+    )
+    structured_path = paths.user_knowledge_ingestion_dir("user_1") / "uk_note.md.structured.json"
+    structured_path.write_text("{}", encoding="utf-8")
+    record["parse_status"] = "indexed"
+    record["structured_filename"] = structured_path.name
+    record["structured_path"] = str(structured_path)
+    record["index_target_filename"] = structured_path.name
+    record["index_target_path"] = str(structured_path)
+    user_store_module.save_user_record("user_1", record)
+
+    upsert_calls: list[tuple[str, list[str]]] = []
+    indexed_calls: list[str] = []
+
+    monkeypatch.setattr(
+        user_knowledge_router,
+        "upsert_user_knowledge_records",
+        lambda user_id, record_ids: upsert_calls.append((user_id, record_ids)) or 1,
+    )
+    monkeypatch.setattr(
+        user_knowledge_router,
+        "mark_user_records_indexed",
+        lambda user_id, record_ids=None: indexed_calls.append(user_id),
+    )
+
+    app = FastAPI()
+    app.include_router(user_knowledge_router.router)
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/users/user_1/knowledge/{record['id']}/append-excerpt",
+        json={
+            "excerpt_text": "这是新摘录\n第二行",
+            "origin_filename": "global-book.pdf",
+            "origin_anchor": {
+                "pdf_page_no": 12,
+                "paragraph_no": 3,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["record"]["id"] == record["id"]
+    assert upsert_calls == [("user_1", [str(record["id"])])]
+    assert indexed_calls == ["user_1"]
+
+    saved_content = (paths.user_knowledge_docs_dir("user_1") / "uk_note.md").read_text(encoding="utf-8")
+    assert saved_content.startswith("# 读书笔记\n\n已有内容\n\n## 原文摘录\n")
+    assert "来源：global-book.pdf" in saved_content
+    assert "定位：PDF 第 12 页 · 第 3 段" in saved_content
+    assert "> 这是新摘录\n> 第二行" in saved_content
 
 
 def test_user_knowledge_router_delete_tolerates_non_file_artifacts(tmp_path, monkeypatch) -> None:

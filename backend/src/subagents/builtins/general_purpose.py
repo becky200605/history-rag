@@ -20,7 +20,7 @@ Do NOT use for simple, single-step operations.""",
 - Use available tools as needed to accomplish the goal
 - Think step by step but act decisively
 - Prefer fewer, more targeted retrievals; once you have enough evidence for this subtask, stop instead of repeatedly rereading pages
-- `knowledge_search` is temporarily disabled. For knowledge-base tasks, use `book_search` to select books, then rely on `knowledge_locate` to read目录、章节、命中页和连续页正文
+- `knowledge_search` is available and currently runs in lexical/BM25 mode. For knowledge-base tasks, use `book_search` to select books, then query the returned `doc_ids` with strong lexical anchors before using `knowledge_locate` to read目录、章节、命中页和连续页正文
 - For knowledge-base tasks, do not replace `book_search` / `knowledge_locate` with ad-hoc shell probing. If `book_search` finds no relevant books, do not run `bash`, `find`, `ls`, `echo`, or similar test commands to hunt through `/mnt/user-data/uploads` or other filesystem paths as a fallback
 - Do not treat the local sandbox filesystem as a substitute knowledge catalog. Unless the parent task explicitly asks you to inspect a known uploaded file, do not scan uploads directories just because retrieval is weak
 - Do not get stuck in retrieval loops. After `book_search`, if 1-2 targeted `knowledge_locate` passes on the right books still only show weak目录碎片、标题碎片、无关页面或 insufficient context, stop broadening blindly and return the gap clearly

@@ -31,9 +31,9 @@ import {
   type KnowledgeStructuredPage,
   type KnowledgeStructuredParagraph,
 } from "@/core/knowledge/api";
-import { useCreateUserDerivedKnowledge } from "@/core/knowledge/user-hooks";
 import { cn } from "@/lib/utils";
 
+import { ExcerptToNoteDialog } from "./excerpt-to-note-dialog";
 import { KnowledgePageSurface } from "./knowledge-page-surface";
 import { KnowledgeSidePane } from "./knowledge-side-pane";
 
@@ -133,46 +133,6 @@ function buildContextParagraph(
     paragraphNo: paragraph.paragraph_no ?? null,
     text: paragraph.text,
   };
-}
-
-function buildExcerptTitle(originTitle: string, paragraph: ContextParagraph) {
-  const location = paragraph.paragraphNo
-    ? `第${paragraph.paragraphNo}段`
-    : "摘录";
-  return `${originTitle} ${location}摘录`;
-}
-
-function buildExcerptMarkdown(
-  originFilename: string,
-  title: string,
-  paragraph: ContextParagraph,
-) {
-  const locationParts: string[] = [];
-  if (paragraph.pdfPageNo) {
-    locationParts.push(`PDF 第 ${paragraph.pdfPageNo} 页`);
-  } else if (paragraph.pageNo) {
-    locationParts.push(`第 ${paragraph.pageNo} 页`);
-  }
-  if (paragraph.paragraphNo) {
-    locationParts.push(`第 ${paragraph.paragraphNo} 段`);
-  }
-
-  return [
-    `# ${title}`,
-    "",
-    `来源：${originFilename}`,
-    locationParts.length ? `定位：${locationParts.join(" · ")}` : null,
-    "",
-    "## 原文摘录",
-    "",
-    `> ${paragraph.text.replace(/\n/g, "\n> ")}`,
-    "",
-    "## 我的摘抄笔记",
-    "",
-    "",
-  ]
-    .filter((part): part is string => part !== null)
-    .join("\n");
 }
 
 function characterWidthWeight(character: string) {
@@ -393,7 +353,6 @@ export function KnowledgePdfReader({
   focusedParagraphText?: string | null;
 }) {
   const router = useRouter();
-  const createDerivedMutation = useCreateUserDerivedKnowledge();
   const pdfViewportRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -415,6 +374,9 @@ export function KnowledgePdfReader({
     useState<KnowledgeStructuredPage | null>(null);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [selectedExcerptParagraph, setSelectedExcerptParagraph] =
+    useState<ContextParagraph | null>(null);
+  const [isExcerptDialogOpen, setIsExcerptDialogOpen] = useState(false);
   const [translationCache, setTranslationCache] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -431,6 +393,10 @@ export function KnowledgePdfReader({
   >({});
   const [canvasWidth, setCanvasWidth] = useState(0);
   const [pageImageSize, setPageImageSize] = useState({ width: 0, height: 0 });
+  const resolvedDocument = useMemo(
+    () => resolveKnowledgeDocumentUrl(documentUrl),
+    [documentUrl],
+  );
 
   useEffect(() => {
     setCurrentPdfPageNo(Math.max(initialPdfPageNo, 1));
@@ -664,8 +630,9 @@ export function KnowledgePdfReader({
     if (focusedParagraphNo) {
       const paragraphMatch = renderParagraphItems.find(
         (item) =>
-          item.contextParagraph.paragraphNo === focusedParagraphNo
-          && (!focusedPdfPageNo || item.contextParagraph.pdfPageNo === focusedPdfPageNo),
+          item.contextParagraph.paragraphNo === focusedParagraphNo &&
+          (!focusedPdfPageNo ||
+            item.contextParagraph.pdfPageNo === focusedPdfPageNo),
       );
       if (paragraphMatch) {
         return paragraphMatch.contextParagraph.key;
@@ -680,8 +647,8 @@ export function KnowledgePdfReader({
     const textMatch = renderParagraphItems.find((item) => {
       const paragraphText = item.contextParagraph.text.trim();
       return (
-        paragraphText.includes(normalizedText)
-        || normalizedText.includes(paragraphText)
+        paragraphText.includes(normalizedText) ||
+        normalizedText.includes(paragraphText)
       );
     });
     return textMatch?.contextParagraph.key ?? null;
@@ -721,21 +688,24 @@ export function KnowledgePdfReader({
     [],
   );
 
-  const handleCopyParagraph = useCallback(async (paragraph: ContextParagraph) => {
-    try {
-      await navigator.clipboard.writeText(paragraph.text);
-      setCopiedParagraphKey(paragraph.key);
-      toast.success("已复制原文");
-      window.setTimeout(() => {
-        setCopiedParagraphKey((current) =>
-          current === paragraph.key ? null : current,
-        );
-      }, 1800);
-    } catch (error) {
-      console.error(error);
-      toast.error("复制失败");
-    }
-  }, []);
+  const handleCopyParagraph = useCallback(
+    async (paragraph: ContextParagraph) => {
+      try {
+        await navigator.clipboard.writeText(paragraph.text);
+        setCopiedParagraphKey(paragraph.key);
+        toast.success("已复制原文");
+        window.setTimeout(() => {
+          setCopiedParagraphKey((current) =>
+            current === paragraph.key ? null : current,
+          );
+        }, 1800);
+      } catch (error) {
+        console.error(error);
+        toast.error("复制失败");
+      }
+    },
+    [],
+  );
 
   const handleTranslateParagraph = useCallback(
     async (paragraph: ContextParagraph) => {
@@ -762,13 +732,14 @@ export function KnowledgePdfReader({
       }));
 
       try {
-        const [result] = await translateKnowledgeParagraphsToChineseForDocumentUrl(
-          documentUrl,
-          [{ key: paragraph.key, text: paragraph.text }],
-          {
-            sourceLanguageHint: sourceLanguage,
-          },
-        );
+        const [result] =
+          await translateKnowledgeParagraphsToChineseForDocumentUrl(
+            documentUrl,
+            [{ key: paragraph.key, text: paragraph.text }],
+            {
+              sourceLanguageHint: sourceLanguage,
+            },
+          );
         const translationText = result?.translation?.trim() ?? "";
         setContextMenuTranslations((current) => ({
           ...current,
@@ -793,51 +764,11 @@ export function KnowledgePdfReader({
     [documentUrl, sourceLanguage, translationMap],
   );
 
-  const handleCreateExcerpt = useCallback(
-    async (paragraph: ContextParagraph) => {
-      const title = buildExcerptTitle(originTitle, paragraph);
-      const content = buildExcerptMarkdown(originFilename, title, paragraph);
-      const resolvedDocument = resolveKnowledgeDocumentUrl(documentUrl);
-
-      try {
-        const result = await createDerivedMutation.mutateAsync({
-          title,
-          content,
-          sourceKind: "excerpt",
-          knowledgeSpaceId,
-          originScope: resolvedDocument?.scope ?? "global",
-          originDocId: resolvedDocument?.filename ?? pageData?.doc_id ?? null,
-          originFilename: pageData?.filename ?? originFilename,
-          originAnchor: {
-            pdf_page_no: paragraph.pdfPageNo,
-            page_no: paragraph.pageNo,
-            paragraph_no: paragraph.paragraphNo,
-            text: paragraph.text,
-          },
-        });
-        setContextMenu(null);
-        toast.success("已创建摘录，正在跳转笔记");
-        router.push(
-          `/workspace/notes?space=${encodeURIComponent(
-            knowledgeSpaceId ?? result.record.knowledge_space_id ?? "",
-          )}&record=${encodeURIComponent(result.record.id)}`,
-        );
-      } catch (error) {
-        console.error(error);
-        toast.error(error instanceof Error ? error.message : "创建摘录失败");
-      }
-    },
-    [
-      createDerivedMutation,
-      documentUrl,
-      knowledgeSpaceId,
-      originFilename,
-      originTitle,
-      pageData?.doc_id,
-      pageData?.filename,
-      router,
-    ],
-  );
+  const handleCreateExcerpt = useCallback((paragraph: ContextParagraph) => {
+    setSelectedExcerptParagraph(paragraph);
+    setContextMenu(null);
+    setIsExcerptDialogOpen(true);
+  }, []);
 
   const renderContextMenu = () => {
     if (!contextMenu) {
@@ -905,18 +836,15 @@ export function KnowledgePdfReader({
             variant="ghost"
             size="sm"
             className="h-9 justify-start rounded-xl px-3 text-stone-800 hover:bg-stone-100"
-            disabled={createDerivedMutation.isPending}
             onClick={() => void handleCreateExcerpt(paragraph)}
           >
-            {createDerivedMutation.isPending ? (
-              <Loader2Icon className="mr-1.5 size-4 animate-spin" />
-            ) : (
-              <FileTextIcon className="mr-1.5 size-4" />
-            )}
+            <FileTextIcon className="mr-1.5 size-4" />
             加入笔记
           </Button>
         </div>
-        {translationState.loading || translationState.error || displayedTranslation ? (
+        {translationState.loading ||
+        translationState.error ||
+        displayedTranslation ? (
           <div className="mt-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2.5">
             <div className="mb-1 text-[11px] font-semibold tracking-wide text-stone-500">
               翻译结果
@@ -1097,7 +1025,9 @@ export function KnowledgePdfReader({
       nextKeys.some((key) => {
         const current = translationBlockMetrics[key];
         const next = nextMetrics[key];
-        return current?.width !== next?.width || current?.height !== next?.height;
+        return (
+          current?.width !== next?.width || current?.height !== next?.height
+        );
       });
 
     if (changed) {
@@ -1107,6 +1037,23 @@ export function KnowledgePdfReader({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-zinc-50/50 shadow-sm">
+      <ExcerptToNoteDialog
+        open={isExcerptDialogOpen}
+        onOpenChange={setIsExcerptDialogOpen}
+        originTitle={originTitle}
+        originFilename={pageData?.filename ?? originFilename}
+        knowledgeSpaceId={knowledgeSpaceId}
+        originScope={resolvedDocument?.scope ?? "global"}
+        originDocId={resolvedDocument?.filename ?? pageData?.doc_id ?? null}
+        paragraph={selectedExcerptParagraph}
+        onSuccess={(record) => {
+          router.push(
+            `/workspace/notes?space=${encodeURIComponent(
+              knowledgeSpaceId ?? record.knowledge_space_id ?? "",
+            )}&record=${encodeURIComponent(record.id)}`,
+          );
+        }}
+      />
       <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/80 px-4 py-2.5 backdrop-blur-md">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex items-center gap-1">
@@ -1122,7 +1069,7 @@ export function KnowledgePdfReader({
             <div className="flex items-center gap-1.5 px-2 text-sm font-medium text-slate-600">
               <Input
                 type="text"
-                className="h-7 w-12 rounded-md border-slate-200 bg-white px-1 text-center text-xs shadow-sm focus-visible:ring-primary/30"
+                className="focus-visible:ring-primary/30 h-7 w-12 rounded-md border-slate-200 bg-white px-1 text-center text-xs shadow-sm"
                 value={
                   pageInputValue !== ""
                     ? pageInputValue
@@ -1175,7 +1122,7 @@ export function KnowledgePdfReader({
                   className={cn(
                     "h-7 rounded-lg px-2.5 text-[11px] font-bold transition-all",
                     sourceLanguage === option.value
-                      ? "bg-white text-primary shadow-sm ring-1 ring-slate-200/30"
+                      ? "text-primary bg-white shadow-sm ring-1 ring-slate-200/30"
                       : "text-slate-500 hover:text-slate-700",
                   )}
                   onClick={() => setSourceLanguage(option.value)}
@@ -1193,7 +1140,7 @@ export function KnowledgePdfReader({
               className={cn(
                 "h-7 rounded-lg px-3 text-[11px] font-bold transition-all",
                 showStructure
-                  ? "bg-white text-primary shadow-sm ring-1 ring-slate-200/30"
+                  ? "text-primary bg-white shadow-sm ring-1 ring-slate-200/30"
                   : "text-slate-500 hover:text-slate-700",
               )}
               onClick={() => setShowStructure((current) => !current)}
@@ -1207,7 +1154,7 @@ export function KnowledgePdfReader({
               className={cn(
                 "h-7 rounded-lg px-3 text-[11px] font-bold transition-all",
                 mode === "translation"
-                  ? "bg-white text-primary shadow-sm ring-1 ring-slate-200/30"
+                  ? "text-primary bg-white shadow-sm ring-1 ring-slate-200/30"
                   : "text-slate-500 hover:text-slate-700",
               )}
               onClick={() =>
@@ -1276,10 +1223,10 @@ export function KnowledgePdfReader({
                   <div className="absolute inset-0 overflow-hidden">
                     {renderParagraphItems.map((item) => {
                       if (
-                        pageWidth <= 0
-                        || pageHeight <= 0
-                        || pageImageSize.width <= 0
-                        || pageImageSize.height <= 0
+                        pageWidth <= 0 ||
+                        pageHeight <= 0 ||
+                        pageImageSize.width <= 0 ||
+                        pageImageSize.height <= 0
                       ) {
                         return null;
                       }
@@ -1292,7 +1239,7 @@ export function KnowledgePdfReader({
                             "absolute rounded-[4px] border-2 transition-all duration-200",
                             isActive
                               ? "border-primary bg-primary/10 shadow-[0_0_12px_rgba(126,51,46,0.15)]"
-                              : "border-transparent bg-transparent hover:border-primary/60 hover:bg-primary/5",
+                              : "hover:border-primary/60 hover:bg-primary/5 border-transparent bg-transparent",
                             item.source === "previous-spill" && "border-dashed",
                           )}
                           style={{
@@ -1360,7 +1307,7 @@ export function KnowledgePdfReader({
             {mode === "translation" && (
               <div
                 ref={viewportRef}
-                className="min-h-0 min-w-0 overflow-y-auto overflow-x-hidden border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l"
+                className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto border-t border-slate-200 bg-zinc-50/30 xl:border-t-0 xl:border-l"
               >
                 <div className="min-h-full p-6">
                   <div className="flex items-start justify-center">
@@ -1422,7 +1369,7 @@ export function KnowledgePdfReader({
                                 "absolute rounded-lg border text-left transition-all duration-200",
                                 isActive
                                   ? "border-primary/40 bg-primary/5 shadow-[0_4px_12px_-2px_rgba(126,51,46,0.1)]"
-                                  : "border-transparent hover:border-primary/30 hover:bg-stone-50/40",
+                                  : "hover:border-primary/30 border-transparent hover:bg-stone-50/40",
                               )}
                               style={{
                                 left: `${item.blockLeft - 4}px`,

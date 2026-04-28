@@ -26,9 +26,9 @@ import {
   type KnowledgeStructuredPage,
   type KnowledgeStructuredParagraph,
 } from "@/core/knowledge/api";
-import { useCreateUserDerivedKnowledge } from "@/core/knowledge/user-hooks";
 import { cn } from "@/lib/utils";
 
+import { ExcerptToNoteDialog } from "./excerpt-to-note-dialog";
 import { KNOWLEDGE_SIDE_PANE_WIDTH } from "./knowledge-layout";
 import { KnowledgePageSurface } from "./knowledge-page-surface";
 
@@ -97,46 +97,6 @@ function buildContextParagraph(
     paragraphNo: paragraph.paragraph_no ?? null,
     text: paragraph.text,
   };
-}
-
-function buildExcerptTitle(originTitle: string, paragraph: ContextParagraph) {
-  const location = paragraph.paragraphNo
-    ? `第${paragraph.paragraphNo}段`
-    : "摘录";
-  return `${originTitle} ${location}摘录`;
-}
-
-function buildExcerptMarkdown(
-  originFilename: string,
-  title: string,
-  paragraph: ContextParagraph,
-) {
-  const locationParts: string[] = [];
-  if (paragraph.pdfPageNo) {
-    locationParts.push(`PDF 第 ${paragraph.pdfPageNo} 页`);
-  } else if (paragraph.pageNo) {
-    locationParts.push(`第 ${paragraph.pageNo} 页`);
-  }
-  if (paragraph.paragraphNo) {
-    locationParts.push(`第 ${paragraph.paragraphNo} 段`);
-  }
-
-  return [
-    `# ${title}`,
-    "",
-    `来源：${originFilename}`,
-    locationParts.length ? `定位：${locationParts.join(" · ")}` : null,
-    "",
-    "## 原文摘录",
-    "",
-    `> ${paragraph.text.replace(/\n/g, "\n> ")}`,
-    "",
-    "## 我的摘抄笔记",
-    "",
-    "",
-  ]
-    .filter((part): part is string => part !== null)
-    .join("\n");
 }
 
 function characterWidthWeight(character: string) {
@@ -266,11 +226,7 @@ function buildCompareLayoutItems(
 
   const previousPageHeight = previousPage?.page_meta?.page_height ?? 0;
   const previousPageWidth = previousPage?.page_meta?.page_width ?? 0;
-  if (
-    previousPage &&
-    previousPageHeight > 0 &&
-    previousPageWidth > 0
-  ) {
+  if (previousPage && previousPageHeight > 0 && previousPageWidth > 0) {
     for (const paragraph of previousPage.paragraphs ?? []) {
       const bbox = paragraph.bbox;
       if (!bbox) {
@@ -370,12 +326,14 @@ export function KnowledgeSidePane({
   const router = useRouter();
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const createDerivedMutation = useCreateUserDerivedKnowledge();
   const [pageState, setPageState] = useState<PageState>({ status: "idle" });
   const [previousPageData, setPreviousPageData] =
     useState<KnowledgeStructuredPage | null>(null);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [selectedExcerptParagraph, setSelectedExcerptParagraph] =
+    useState<ContextParagraph | null>(null);
+  const [isExcerptDialogOpen, setIsExcerptDialogOpen] = useState(false);
   const [canvasMetrics, setCanvasMetrics] = useState({
     width: 0,
     height: 0,
@@ -395,6 +353,10 @@ export function KnowledgeSidePane({
   );
   const isHighlightable = highlightable ?? interactive;
   const isExcerptable = excerptable ?? interactive;
+  const resolvedDocument = useMemo(
+    () => resolveKnowledgeDocumentUrl(documentUrl),
+    [documentUrl],
+  );
 
   useEffect(() => {
     if (!currentPdfPageNo) {
@@ -453,12 +415,13 @@ export function KnowledgeSidePane({
   const layoutHint = pageData?.layout_hint ?? null;
   const isVerticalLayout =
     String(layoutHint ?? "").toLowerCase() === "vertical";
+  const useFlowCompareLayout = mode === "compare" && isVerticalLayout;
   const compareLayoutItems = useMemo(
     () =>
-      pageData
+      pageData && !useFlowCompareLayout
         ? buildCompareLayoutItems(pageData, previousPageData, layoutHint)
         : [],
-    [layoutHint, pageData, previousPageData],
+    [layoutHint, pageData, previousPageData, useFlowCompareLayout],
   );
 
   const paragraphs = useMemo(
@@ -666,7 +629,12 @@ export function KnowledgeSidePane({
     () =>
       contextMenu?.paragraph.key ??
       (isHighlightable ? (externalHoveredKey ?? hoveredKey) : null),
-    [contextMenu?.paragraph.key, externalHoveredKey, hoveredKey, isHighlightable],
+    [
+      contextMenu?.paragraph.key,
+      externalHoveredKey,
+      hoveredKey,
+      isHighlightable,
+    ],
   );
 
   const setEffectiveHoveredKey = useCallback(
@@ -695,21 +663,24 @@ export function KnowledgeSidePane({
     [],
   );
 
-  const handleCopyParagraph = useCallback(async (paragraph: ContextParagraph) => {
-    try {
-      await navigator.clipboard.writeText(paragraph.text);
-      setCopiedParagraphKey(paragraph.key);
-      toast.success("已复制原文");
-      window.setTimeout(() => {
-        setCopiedParagraphKey((current) =>
-          current === paragraph.key ? null : current,
-        );
-      }, 1800);
-    } catch (error) {
-      console.error(error);
-      toast.error("复制失败");
-    }
-  }, []);
+  const handleCopyParagraph = useCallback(
+    async (paragraph: ContextParagraph) => {
+      try {
+        await navigator.clipboard.writeText(paragraph.text);
+        setCopiedParagraphKey(paragraph.key);
+        toast.success("已复制原文");
+        window.setTimeout(() => {
+          setCopiedParagraphKey((current) =>
+            current === paragraph.key ? null : current,
+          );
+        }, 1800);
+      } catch (error) {
+        console.error(error);
+        toast.error("复制失败");
+      }
+    },
+    [],
+  );
 
   const handleTranslateParagraph = useCallback(
     async (paragraph: ContextParagraph) => {
@@ -736,13 +707,14 @@ export function KnowledgeSidePane({
       }));
 
       try {
-        const [result] = await translateKnowledgeParagraphsToChineseForDocumentUrl(
-          documentUrl,
-          [{ key: paragraph.key, text: paragraph.text }],
-          {
-            sourceLanguageHint: translationSourceLanguageHint,
-          },
-        );
+        const [result] =
+          await translateKnowledgeParagraphsToChineseForDocumentUrl(
+            documentUrl,
+            [{ key: paragraph.key, text: paragraph.text }],
+            {
+              sourceLanguageHint: translationSourceLanguageHint,
+            },
+          );
         const translationText = result?.translation?.trim() ?? "";
         setContextMenuTranslations((current) => ({
           ...current,
@@ -767,51 +739,11 @@ export function KnowledgeSidePane({
     [documentUrl, translationMap, translationSourceLanguageHint],
   );
 
-  const handleCreateExcerpt = useCallback(
-    async (paragraph: ContextParagraph) => {
-      const title = buildExcerptTitle(originTitle, paragraph);
-      const content = buildExcerptMarkdown(originFilename, title, paragraph);
-      const resolvedDocument = resolveKnowledgeDocumentUrl(documentUrl);
-
-      try {
-        const result = await createDerivedMutation.mutateAsync({
-          title,
-          content,
-          sourceKind: "excerpt",
-          knowledgeSpaceId,
-          originScope: resolvedDocument?.scope ?? "global",
-          originDocId: resolvedDocument?.filename ?? pageData?.doc_id ?? null,
-          originFilename: pageData?.filename ?? originFilename,
-          originAnchor: {
-            pdf_page_no: paragraph.pdfPageNo,
-            page_no: paragraph.pageNo,
-            paragraph_no: paragraph.paragraphNo,
-            text: paragraph.text,
-          },
-        });
-        setContextMenu(null);
-        toast.success("已创建摘录，正在跳转笔记");
-        router.push(
-          `/workspace/notes?space=${encodeURIComponent(
-            knowledgeSpaceId ?? result.record.knowledge_space_id ?? "",
-          )}&record=${encodeURIComponent(result.record.id)}`,
-        );
-      } catch (error) {
-        console.error(error);
-        toast.error(error instanceof Error ? error.message : "创建摘录失败");
-      }
-    },
-    [
-      createDerivedMutation,
-      documentUrl,
-      originFilename,
-      originTitle,
-      knowledgeSpaceId,
-      pageData?.doc_id,
-      pageData?.filename,
-      router,
-    ],
-  );
+  const handleCreateExcerpt = useCallback((paragraph: ContextParagraph) => {
+    setSelectedExcerptParagraph(paragraph);
+    setContextMenu(null);
+    setIsExcerptDialogOpen(true);
+  }, []);
 
   const renderContextMenu = () => {
     if (!isExcerptable || !contextMenu) {
@@ -879,18 +811,15 @@ export function KnowledgeSidePane({
             variant="ghost"
             size="sm"
             className="h-9 justify-start rounded-xl px-3 text-stone-800 hover:bg-stone-100"
-            disabled={createDerivedMutation.isPending}
             onClick={() => void handleCreateExcerpt(paragraph)}
           >
-            {createDerivedMutation.isPending ? (
-              <Loader2Icon className="mr-1.5 size-4 animate-spin" />
-            ) : (
-              <FileTextIcon className="mr-1.5 size-4" />
-            )}
+            <FileTextIcon className="mr-1.5 size-4" />
             加入笔记
           </Button>
         </div>
-        {translationState.loading || translationState.error || displayedTranslation ? (
+        {translationState.loading ||
+        translationState.error ||
+        displayedTranslation ? (
           <div className="mt-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2.5">
             <div className="mb-1 text-[11px] font-semibold tracking-wide text-stone-500">
               翻译结果
@@ -916,7 +845,102 @@ export function KnowledgeSidePane({
   };
 
   const renderCompareContent = () => {
-    if (!pageData || pageWidth <= 0 || pageHeight <= 0) {
+    if (!pageData) {
+      return null;
+    }
+
+    if (useFlowCompareLayout) {
+      const flowParagraphs = (pageData.paragraphs ?? []).map((paragraph) => ({
+        paragraph,
+        contextParagraph: buildContextParagraph(pageData, paragraph),
+      }));
+
+      return (
+        <div
+          ref={viewportRef}
+          className="min-h-0 flex-1 overflow-y-auto px-6 py-7"
+        >
+          <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
+            <div className="rounded-2xl border border-[rgba(57,130,152,0.14)] bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,251,250,0.98))] px-5 py-4 text-sm text-stone-600 shadow-sm">
+              <div className="font-serif text-[18px] font-semibold tracking-[0.08em] text-stone-800">
+                原文结构
+              </div>
+              <div className="mt-1 leading-7">
+                当前页按顺序转为横排阅读，不再使用段落定位信息。
+              </div>
+            </div>
+
+            {flowParagraphs.length === 0 ? (
+              <div className="flex min-h-[220px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/80 px-6 text-center text-sm text-slate-500">
+                当前页暂无结构化文本。
+              </div>
+            ) : (
+              flowParagraphs.map(({ paragraph, contextParagraph }) => {
+                const isActive = activeKey === contextParagraph.key;
+                return (
+                  <div
+                    key={contextParagraph.key}
+                    className={cn(
+                      "rounded-[24px] border bg-white px-6 py-5 text-left shadow-[0_14px_34px_-28px_rgba(28,25,23,0.28)] transition-all duration-200",
+                      "font-serif text-[18px] leading-[2.05] tracking-[0.01em] text-stone-800",
+                      isExcerptable && "cursor-context-menu",
+                      isActive
+                        ? "border-primary/40 bg-primary/5 ring-primary/25 ring-1"
+                        : isHighlightable
+                          ? "hover:border-primary/30 border-[rgba(57,130,152,0.12)] hover:shadow-[0_18px_40px_-28px_rgba(28,25,23,0.32)]"
+                          : "border-[rgba(57,130,152,0.12)]",
+                    )}
+                    onMouseEnter={
+                      isHighlightable
+                        ? () => setEffectiveHoveredKey(contextParagraph.key)
+                        : undefined
+                    }
+                    onMouseLeave={
+                      isHighlightable
+                        ? () => setEffectiveHoveredKey(null)
+                        : undefined
+                    }
+                    onPointerDownCapture={
+                      isExcerptable
+                        ? (event) => {
+                            if (event.button !== 2) {
+                              return;
+                            }
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openContextMenu(contextParagraph, {
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }
+                        : undefined
+                    }
+                    onContextMenuCapture={
+                      isExcerptable
+                        ? (event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openContextMenu(contextParagraph, {
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }
+                        : undefined
+                    }
+                  >
+                    <div className="break-words whitespace-pre-wrap">
+                      {paragraph.text}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (pageWidth <= 0 || pageHeight <= 0) {
       return null;
     }
 
@@ -951,7 +975,7 @@ export function KnowledgeSidePane({
                       isActive
                         ? "border-primary bg-primary/5 shadow-[0_4px_12px_-2px_rgba(126,51,46,0.1)]"
                         : isHighlightable
-                          ? "border-transparent bg-transparent hover:border-primary/30 hover:bg-stone-50/40"
+                          ? "hover:border-primary/30 border-transparent bg-transparent hover:bg-stone-50/40"
                           : "border-transparent bg-transparent",
                     )}
                     style={{
@@ -975,7 +999,8 @@ export function KnowledgeSidePane({
                     }}
                     onMouseEnter={
                       isHighlightable
-                        ? () => setEffectiveHoveredKey(item.contextParagraph.key)
+                        ? () =>
+                            setEffectiveHoveredKey(item.contextParagraph.key)
                         : undefined
                     }
                     onMouseLeave={
@@ -1065,15 +1090,12 @@ export function KnowledgeSidePane({
     });
 
     return (
-      <div
-        ref={viewportRef}
-        className="min-h-0 flex-1 overflow-y-auto p-6"
-      >
+      <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto p-6">
         <div className="mx-auto grid max-w-[1200px] min-w-0 gap-3 md:grid-cols-2">
-          <div className="sticky top-0 z-10 rounded-xl border border-slate-200 bg-white/90 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 backdrop-blur-sm">
+          <div className="sticky top-0 z-10 rounded-xl border border-slate-200 bg-white/90 px-4 py-2 text-[11px] font-bold tracking-wider text-slate-500 uppercase backdrop-blur-sm">
             原文结构
           </div>
-          <div className="sticky top-0 z-10 rounded-xl border border-primary/20 bg-white/90 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-primary backdrop-blur-sm">
+          <div className="border-primary/20 text-primary sticky top-0 z-10 rounded-xl border bg-white/90 px-4 py-2 text-[11px] font-bold tracking-wider uppercase backdrop-blur-sm">
             中文翻译
           </div>
 
@@ -1123,12 +1145,12 @@ export function KnowledgeSidePane({
                   <Fragment key={contextParagraph.key}>
                     <div
                       className={cn(
-                        "rounded-xl border bg-white p-4 text-left transition-all duration-200 shadow-sm",
+                        "rounded-xl border bg-white p-4 text-left shadow-sm transition-all duration-200",
                         isExcerptable && "cursor-context-menu",
                         isActive
-                          ? "border-primary/40 ring-1 ring-primary/40 bg-primary/5"
+                          ? "border-primary/40 ring-primary/40 bg-primary/5 ring-1"
                           : isHighlightable
-                            ? "border-slate-200 hover:border-primary/30 hover:shadow-md"
+                            ? "hover:border-primary/30 border-slate-200 hover:shadow-md"
                             : "border-slate-200",
                       )}
                       {...interactionProps}
@@ -1142,17 +1164,17 @@ export function KnowledgeSidePane({
                     </div>
                     <div
                       className={cn(
-                        "rounded-xl border p-4 text-left transition-all duration-200 shadow-sm",
+                        "rounded-xl border p-4 text-left shadow-sm transition-all duration-200",
                         isExcerptable && "cursor-context-menu",
                         isActive
-                          ? "border-primary/40 bg-primary/10 ring-1 ring-primary/20 shadow-md"
+                          ? "border-primary/40 bg-primary/10 ring-primary/20 shadow-md ring-1"
                           : isHighlightable
-                            ? "border-stone-100 bg-stone-50/30 hover:border-primary/30 hover:bg-stone-50/60"
+                            ? "hover:border-primary/30 border-stone-100 bg-stone-50/30 hover:bg-stone-50/60"
                             : "border-stone-100 bg-stone-50/30",
                       )}
                       {...interactionProps}
                     >
-                      <div className="mb-2 text-xs font-medium text-primary/80">
+                      <div className="text-primary/80 mb-2 text-xs font-medium">
                         第 {paragraph.paragraph_no ?? 1} 段译文
                       </div>
                       {translationError && !translationMap ? (
@@ -1160,7 +1182,7 @@ export function KnowledgeSidePane({
                           {translationError}
                         </div>
                       ) : translationLoading && !translationMap ? (
-                        <div className="flex min-h-[96px] items-center justify-center rounded-xl border border-primary/20 bg-white/70 text-sm text-primary">
+                        <div className="border-primary/20 text-primary flex min-h-[96px] items-center justify-center rounded-xl border bg-white/70 text-sm">
                           <Loader2Icon className="mr-2 size-4 animate-spin" />
                           正在翻译本页为中文...
                         </div>
@@ -1193,6 +1215,23 @@ export function KnowledgeSidePane({
       )}
       style={fluid ? undefined : { width: `${KNOWLEDGE_SIDE_PANE_WIDTH}px` }}
     >
+      <ExcerptToNoteDialog
+        open={isExcerptDialogOpen}
+        onOpenChange={setIsExcerptDialogOpen}
+        originTitle={originTitle}
+        originFilename={pageData?.filename ?? originFilename}
+        knowledgeSpaceId={knowledgeSpaceId}
+        originScope={resolvedDocument?.scope ?? "global"}
+        originDocId={resolvedDocument?.filename ?? pageData?.doc_id ?? null}
+        paragraph={selectedExcerptParagraph}
+        onSuccess={(record) => {
+          router.push(
+            `/workspace/notes?space=${encodeURIComponent(
+              knowledgeSpaceId ?? record.knowledge_space_id ?? "",
+            )}&record=${encodeURIComponent(record.id)}`,
+          );
+        }}
+      />
       <div className="flex h-full min-h-0 flex-col">
         {pageState.status === "loading" && (
           <div className="flex flex-1 items-center justify-center text-sm text-stone-500">

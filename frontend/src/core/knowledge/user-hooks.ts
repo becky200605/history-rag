@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  appendExcerptToUserNote,
   createUserKnowledgeFolder,
   createUserKnowledgeSpace,
   createUserDerivedKnowledge,
@@ -16,6 +17,7 @@ import {
   renameUserKnowledgeFolder,
   retryUserKnowledgeRecordIndexing,
   type CreateUserDerivedKnowledgeInput,
+  type AppendExcerptToUserNoteInput,
   type UserKnowledgeRecordContentResponse,
   type UserKnowledgeListResponse,
   type UserKnowledgeSpace,
@@ -75,10 +77,15 @@ export function useUploadUserKnowledgeFiles() {
       };
     }
   >({
-    mutationFn: ({ files, options }) => uploadUserKnowledgeFiles(files, options),
+    mutationFn: ({ files, options }) =>
+      uploadUserKnowledgeFiles(files, options),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
     },
   });
 }
@@ -86,11 +93,20 @@ export function useUploadUserKnowledgeFiles() {
 export function useImportGlobalKnowledgeToPersonal() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ filename, knowledgeSpaceId }: { filename: string; knowledgeSpaceId?: string | null }) =>
-      importGlobalKnowledgeToPersonal(filename, knowledgeSpaceId),
+    mutationFn: ({
+      filename,
+      knowledgeSpaceId,
+    }: {
+      filename: string;
+      knowledgeSpaceId?: string | null;
+    }) => importGlobalKnowledgeToPersonal(filename, knowledgeSpaceId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
     },
   });
 }
@@ -101,8 +117,12 @@ export function useCreateUserKnowledgeSpace() {
     mutationFn: (payload: { name: string; description?: string }) =>
       createUserKnowledgeSpace(payload),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
     },
   });
 }
@@ -112,7 +132,9 @@ export function useCreateUserKnowledgeFolder() {
   return useMutation({
     mutationFn: (path: string) => createUserKnowledgeFolder(path),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
     },
   });
 }
@@ -123,7 +145,9 @@ export function useRenameUserKnowledgeFolder() {
     mutationFn: (payload: { path: string; newPath: string }) =>
       renameUserKnowledgeFolder(payload.path, payload.newPath),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
     },
   });
 }
@@ -133,7 +157,9 @@ export function useDeleteUserKnowledgeFolder() {
   return useMutation({
     mutationFn: (path: string) => deleteUserKnowledgeFolder(path),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
     },
   });
 }
@@ -143,8 +169,12 @@ export function useDeleteUserKnowledgeSpace() {
   return useMutation({
     mutationFn: (spaceId: string) => deleteUserKnowledgeSpace(spaceId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
     },
   });
 }
@@ -155,8 +185,12 @@ export function useCreateUserDerivedKnowledge() {
     mutationFn: (payload: CreateUserDerivedKnowledgeInput) =>
       createUserDerivedKnowledge(payload),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
     },
   });
 }
@@ -166,8 +200,12 @@ export function useDeleteUserKnowledgeRecord() {
   return useMutation({
     mutationFn: (recordId: string) => deleteUserKnowledgeRecord(recordId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
     },
   });
 }
@@ -175,10 +213,15 @@ export function useDeleteUserKnowledgeRecord() {
 export function useRetryUserKnowledgeRecordIndexing() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (recordId: string) => retryUserKnowledgeRecordIndexing(recordId),
+    mutationFn: (recordId: string) =>
+      retryUserKnowledgeRecordIndexing(recordId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
     },
   });
 }
@@ -188,8 +231,12 @@ export function useReparseUserKnowledgeRecord() {
   return useMutation({
     mutationFn: (recordId: string) => reparseUserKnowledgeRecord(recordId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
     },
   });
 }
@@ -207,8 +254,12 @@ export function useMoveUserKnowledgeRecord() {
         folderPath: payload.folderPath,
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
     },
   });
 }
@@ -224,18 +275,44 @@ export function useUserKnowledgeRecordContent(recordId: string | null) {
 export function useUpdateUserKnowledgeRecordContent() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { recordId: string; title: string; content: string }) =>
+    mutationFn: (payload: {
+      recordId: string;
+      title: string;
+      content: string;
+    }) =>
       updateUserKnowledgeRecordContent(payload.recordId, {
         title: payload.title,
         content: payload.content,
       }),
     onSuccess: (data, variables) => {
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
       queryClient.setQueryData(
         [...USER_KNOWLEDGE_CONTENT_QUERY_KEY, variables.recordId],
         data,
       );
+    },
+  });
+}
+
+export function useAppendExcerptToUserNote() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: {
+      recordId: string;
+      excerpt: AppendExcerptToUserNoteInput;
+    }) => appendExcerptToUserNote(payload.recordId, payload.excerpt),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
     },
   });
 }

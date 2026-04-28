@@ -93,6 +93,14 @@ class UpdateUserKnowledgeContentRequest(BaseModel):
     content: str = ""
 
 
+class AppendExcerptToUserNoteRequest(BaseModel):
+    excerpt_text: str
+    origin_scope: str | None = None
+    origin_doc_id: str | None = None
+    origin_filename: str | None = None
+    origin_anchor: dict[str, Any] | None = None
+
+
 class MoveUserKnowledgeRecordRequest(BaseModel):
     knowledge_space_id: str | None = None
     folder_path: str | None = None
@@ -417,6 +425,30 @@ def _build_note_markdown(*, title: str, content: str) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
+def _build_note_excerpt_block(
+    *,
+    origin_filename: str | None,
+    origin_anchor: dict[str, Any] | None,
+    excerpt_text: str,
+) -> str:
+    location_label = _format_origin_location(origin_anchor)
+    quote_block = excerpt_text.strip("\n")
+    quoted_excerpt = (
+        "\n".join(f"> {line}" if line else ">" for line in quote_block.splitlines())
+        if quote_block
+        else "> "
+    )
+    parts = [
+        "## 原文摘录",
+        "",
+        f"来源：{origin_filename or '未知来源'}",
+        f"定位：{location_label}" if location_label else None,
+        "",
+        quoted_excerpt,
+    ]
+    return "\n".join(part for part in parts if part is not None).rstrip()
+
+
 def _record_is_text_editable(record: dict[str, Any]) -> bool:
     if record.get("source_kind") in {"excerpt", "annotation", "translation", "note"}:
         return True
@@ -469,6 +501,53 @@ def _build_record_editor_payload(user_id: str, record: dict[str, Any]) -> dict[s
         "origin_filename": record.get("origin_filename"),
         "location_label": _format_origin_location(origin_anchor),
     }
+
+
+def _persist_text_record_and_reindex(
+    user_id: str,
+    record_id: str,
+    record: dict[str, Any],
+    *,
+    title: str,
+    persisted_content: str,
+    hints: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    source_filename = record.get("source_filename")
+    if not source_filename:
+        raise HTTPException(status_code=400, detail="Missing source filename")
+
+    record["title"] = title
+    record["display_title"] = title
+    record["source_size"] = len(persisted_content.encode("utf-8"))
+
+    persist_user_text_document(user_id, str(source_filename), persisted_content)
+    structured_payload = build_structured_document(
+        source_filename=str(source_filename),
+        title=title,
+        text=persisted_content,
+        parser_name=str(record.get("parse_method") or "markdown"),
+        hints=hints if hints is not None else (record.get("hints") or {}),
+    )
+    structured_filename = persist_user_structured_document(
+        user_id,
+        str(source_filename),
+        structured_payload,
+    )
+    record = mark_user_record_parsed(
+        user_id,
+        record,
+        structured_filename=structured_filename,
+        preview_filename=str(source_filename),
+    )
+    save_user_record(user_id, record)
+    indexed_record_id = str(record.get("id") or record_id)
+    indexed_chunks = upsert_user_knowledge_records(user_id, [indexed_record_id])
+    if indexed_chunks <= 0:
+        error = "reindex failed: No chunks were indexed into Qdrant"
+        _mark_user_records_index_failed(user_id, [indexed_record_id], error)
+        raise HTTPException(status_code=500, detail=error)
+    mark_user_records_indexed(user_id, [indexed_record_id])
+    return load_user_record(user_id, record_id) or record
 
 
 def _mark_user_records_index_failed(user_id: str, record_ids: list[str], error: str) -> None:
@@ -1084,9 +1163,6 @@ def update_user_knowledge_record_content(
         raise HTTPException(status_code=400, detail="title is required")
 
     editable_content = payload.content.replace("\r\n", "\n")
-    source_filename = record.get("source_filename")
-    if not source_filename:
-        raise HTTPException(status_code=400, detail="Missing source filename")
 
     if record.get("source_kind") in {"excerpt", "annotation", "translation"}:
         origin_anchor = record.get("origin_anchor") if isinstance(record.get("origin_anchor"), dict) else None
@@ -1106,40 +1182,64 @@ def update_user_knowledge_record_content(
     else:
         persisted_content = editable_content
 
-    record["title"] = title
-    record["display_title"] = title
-    record["source_size"] = len(persisted_content.encode("utf-8"))
-
-    persist_user_text_document(user_id, str(source_filename), persisted_content)
-    structured_payload = build_structured_document(
-        source_filename=str(source_filename),
-        title=title,
-        text=persisted_content,
-        parser_name=str(record.get("parse_method") or "markdown"),
-        hints=record.get("hints") or {},
-    )
-    structured_filename = persist_user_structured_document(
+    latest = _persist_text_record_and_reindex(
         user_id,
-        str(source_filename),
-        structured_payload,
-    )
-    record = mark_user_record_parsed(
-        user_id,
+        record_id,
         record,
-        structured_filename=structured_filename,
-        preview_filename=str(source_filename),
+        title=title,
+        persisted_content=persisted_content,
     )
-    save_user_record(user_id, record)
-    indexed_record_id = str(record.get("id") or record_id)
-    indexed_chunks = upsert_user_knowledge_records(user_id, [indexed_record_id])
-    if indexed_chunks <= 0:
-        error = "reindex failed: No chunks were indexed into Qdrant"
-        _mark_user_records_index_failed(user_id, [indexed_record_id], error)
-        raise HTTPException(status_code=500, detail=error)
-    mark_user_records_indexed(user_id, [indexed_record_id])
-
-    latest = load_user_record(user_id, record_id) or record
     return _build_record_editor_payload(user_id, latest)
+
+
+@router.post("/{record_id}/append-excerpt", response_model=dict)
+def append_excerpt_to_user_note(
+    user_id: str,
+    record_id: str,
+    payload: AppendExcerptToUserNoteRequest,
+) -> dict:
+    record = load_user_record(user_id, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Personal knowledge record not found")
+    if str(record.get("source_kind") or "") != "note":
+        raise HTTPException(status_code=400, detail="Only plain note records can receive appended excerpts")
+    if not _record_is_text_editable(record):
+        raise HTTPException(status_code=400, detail="This record is not editable")
+
+    excerpt_text = payload.excerpt_text.replace("\r\n", "\n").strip("\n")
+    if not excerpt_text.strip():
+        raise HTTPException(status_code=400, detail="excerpt_text is required")
+
+    existing_content = _read_record_text_content(user_id, record) or ""
+    parsed_title, parsed_editable_content = _extract_note_sections(existing_content)
+    title = str(parsed_title or record.get("display_title") or record.get("title") or "未命名笔记").strip()
+    if not title:
+        title = "未命名笔记"
+
+    excerpt_block = _build_note_excerpt_block(
+        origin_filename=payload.origin_filename,
+        origin_anchor=payload.origin_anchor,
+        excerpt_text=excerpt_text,
+    )
+    next_body_parts = [parsed_editable_content.rstrip("\n"), excerpt_block]
+    next_body = "\n\n".join(part for part in next_body_parts if part)
+    persisted_content = _build_note_markdown(title=title, content=next_body)
+
+    latest = _persist_text_record_and_reindex(
+        user_id,
+        record_id,
+        record,
+        title=title,
+        persisted_content=persisted_content,
+    )
+    return {
+        "success": True,
+        "record": _serialize_record(
+            latest,
+            knowledge_space_map=get_user_knowledge_space_map(user_id),
+        ),
+        "message": "Appended excerpt to personal note",
+    }
 
 
 @router.post("/derived", response_model=dict)

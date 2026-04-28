@@ -3,7 +3,13 @@ const USER_KNOWLEDGE_API_BASE = "/api/secure-knowledge/users/me/knowledge";
 export interface UserKnowledgeRecord {
   id: string;
   user_id: string;
-  source_kind: "upload" | "import_ref" | "excerpt" | "annotation" | "translation" | "note";
+  source_kind:
+    | "upload"
+    | "import_ref"
+    | "excerpt"
+    | "annotation"
+    | "translation"
+    | "note";
   title: string;
   display_title?: string | null;
   origin_scope?: string | null;
@@ -89,6 +95,14 @@ export interface CreateUserDerivedKnowledgeInput {
   folderPath?: string | null;
 }
 
+export interface AppendExcerptToUserNoteInput {
+  excerptText: string;
+  originScope?: string | null;
+  originDocId?: string | null;
+  originFilename?: string | null;
+  originAnchor?: Record<string, unknown> | null;
+}
+
 export async function listUserKnowledgeRecords(
   knowledgeSpaceId?: string | null,
 ): Promise<UserKnowledgeListResponse> {
@@ -97,12 +111,19 @@ export async function listUserKnowledgeRecords(
     params.set("knowledge_space_id", knowledgeSpaceId);
   }
   const query = params.toString();
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/list${query ? `?${query}` : ""}`, {
-    cache: "no-store",
-  });
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/list${query ? `?${query}` : ""}`,
+    {
+      cache: "no-store",
+    },
+  );
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to list personal knowledge" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to list personal knowledge");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to list personal knowledge" }));
+    throw new Error(
+      error.message ?? error.detail ?? "Failed to list personal knowledge",
+    );
   }
   return (await response.json()) as UserKnowledgeListResponse;
 }
@@ -142,19 +163,27 @@ export async function uploadUserKnowledgeFiles(
     body: formData,
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Upload failed" }));
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Upload failed" }));
     throw new Error(error.message ?? error.detail ?? "Upload failed");
   }
   return (await response.json()) as UserKnowledgeUploadResponse;
 }
 
-export async function listUserKnowledgeSpaces(): Promise<{ spaces: UserKnowledgeSpace[] }> {
+export async function listUserKnowledgeSpaces(): Promise<{
+  spaces: UserKnowledgeSpace[];
+}> {
   const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/spaces`, {
     cache: "no-store",
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to list knowledge spaces" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to list knowledge spaces");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to list knowledge spaces" }));
+    throw new Error(
+      error.message ?? error.detail ?? "Failed to list knowledge spaces",
+    );
   }
   return (await response.json()) as { spaces: UserKnowledgeSpace[] };
 }
@@ -171,10 +200,18 @@ export async function createUserKnowledgeSpace(payload: {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to create knowledge space" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to create knowledge space");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to create knowledge space" }));
+    throw new Error(
+      error.message ?? error.detail ?? "Failed to create knowledge space",
+    );
   }
-  return (await response.json()) as { success: boolean; space: UserKnowledgeSpace; message: string };
+  return (await response.json()) as {
+    success: boolean;
+    space: UserKnowledgeSpace;
+    message: string;
+  };
 }
 
 export async function deleteUserKnowledgeSpace(spaceId: string): Promise<{
@@ -184,12 +221,19 @@ export async function deleteUserKnowledgeSpace(spaceId: string): Promise<{
   fallback_space_id: string;
   message: string;
 }> {
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/spaces/${encodeURIComponent(spaceId)}`, {
-    method: "DELETE",
-  });
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/spaces/${encodeURIComponent(spaceId)}`,
+    {
+      method: "DELETE",
+    },
+  );
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to delete knowledge space" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to delete knowledge space");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to delete knowledge space" }));
+    throw new Error(
+      error.message ?? error.detail ?? "Failed to delete knowledge space",
+    );
   }
   return (await response.json()) as {
     success: boolean;
@@ -212,16 +256,23 @@ export async function importGlobalKnowledgeToPersonal(
   if (knowledgeSpaceId) {
     params.set("knowledge_space_id", knowledgeSpaceId);
   }
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/import-from-global${params.toString() ? `?${params.toString()}` : ""}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/import-from-global${params.toString() ? `?${params.toString()}` : ""}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ filename }),
     },
-    body: JSON.stringify({ filename }),
-  });
+  );
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to import document" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to import document");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to import document" }));
+    throw new Error(
+      error.message ?? error.detail ?? "Failed to import document",
+    );
   }
   return (await response.json()) as {
     success: boolean;
@@ -259,8 +310,14 @@ export async function createUserDerivedKnowledge(
   if (!response.ok) {
     const error = await response
       .json()
-      .catch(() => ({ message: "Failed to create personal knowledge document" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to create personal knowledge document");
+      .catch(() => ({
+        message: "Failed to create personal knowledge document",
+      }));
+    throw new Error(
+      error.message ??
+        error.detail ??
+        "Failed to create personal knowledge document",
+    );
   }
   return (await response.json()) as {
     success: boolean;
@@ -273,26 +330,48 @@ export async function deleteUserKnowledgeRecord(recordId: string): Promise<{
   success: boolean;
   message: string;
 }> {
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}`, {
-    method: "DELETE",
-  });
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}`,
+    {
+      method: "DELETE",
+    },
+  );
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to delete personal knowledge record" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to delete personal knowledge record");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to delete personal knowledge record" }));
+    throw new Error(
+      error.message ??
+        error.detail ??
+        "Failed to delete personal knowledge record",
+    );
   }
   return (await response.json()) as { success: boolean; message: string };
 }
 
-export async function retryUserKnowledgeRecordIndexing(recordId: string): Promise<{
+export async function retryUserKnowledgeRecordIndexing(
+  recordId: string,
+): Promise<{
   success: boolean;
   message: string;
 }> {
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/reindex`, {
-    method: "POST",
-  });
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/reindex`,
+    {
+      method: "POST",
+    },
+  );
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to retry personal knowledge indexing" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to retry personal knowledge indexing");
+    const error = await response
+      .json()
+      .catch(() => ({
+        message: "Failed to retry personal knowledge indexing",
+      }));
+    throw new Error(
+      error.message ??
+        error.detail ??
+        "Failed to retry personal knowledge indexing",
+    );
   }
   return (await response.json()) as { success: boolean; message: string };
 }
@@ -301,16 +380,24 @@ export async function reparseUserKnowledgeRecord(recordId: string): Promise<{
   success: boolean;
   message: string;
 }> {
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/reparse`, {
-    method: "POST",
-  });
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/reparse`,
+    {
+      method: "POST",
+    },
+  );
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to reparse personal knowledge file" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to reparse personal knowledge file");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to reparse personal knowledge file" }));
+    throw new Error(
+      error.message ??
+        error.detail ??
+        "Failed to reparse personal knowledge file",
+    );
   }
   return (await response.json()) as { success: boolean; message: string };
 }
-
 
 export async function moveUserKnowledgeRecord(
   recordId: string,
@@ -320,19 +407,28 @@ export async function moveUserKnowledgeRecord(
   record: UserKnowledgeRecord;
   message: string;
 }> {
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/move`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/move`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        knowledge_space_id: payload.knowledgeSpaceId,
+        folder_path: payload.folderPath,
+      }),
     },
-    body: JSON.stringify({
-      knowledge_space_id: payload.knowledgeSpaceId,
-      folder_path: payload.folderPath,
-    }),
-  });
+  );
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to move personal knowledge record" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to move personal knowledge record");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to move personal knowledge record" }));
+    throw new Error(
+      error.message ??
+        error.detail ??
+        "Failed to move personal knowledge record",
+    );
   }
   return (await response.json()) as {
     success: boolean;
@@ -343,7 +439,12 @@ export async function moveUserKnowledgeRecord(
 
 export async function createUserKnowledgeFolder(
   path: string,
-): Promise<{ success: boolean; folders: string[]; path?: string; message: string }> {
+): Promise<{
+  success: boolean;
+  folders: string[];
+  path?: string;
+  message: string;
+}> {
   const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/folders`, {
     method: "POST",
     headers: {
@@ -352,16 +453,30 @@ export async function createUserKnowledgeFolder(
     body: JSON.stringify({ path }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to create personal folder" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to create personal folder");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to create personal folder" }));
+    throw new Error(
+      error.message ?? error.detail ?? "Failed to create personal folder",
+    );
   }
-  return (await response.json()) as { success: boolean; folders: string[]; path?: string; message: string };
+  return (await response.json()) as {
+    success: boolean;
+    folders: string[];
+    path?: string;
+    message: string;
+  };
 }
 
 export async function renameUserKnowledgeFolder(
   path: string,
   newPath: string,
-): Promise<{ success: boolean; folders: string[]; path?: string; message: string }> {
+): Promise<{
+  success: boolean;
+  folders: string[];
+  path?: string;
+  message: string;
+}> {
   const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/folders`, {
     method: "PATCH",
     headers: {
@@ -370,37 +485,70 @@ export async function renameUserKnowledgeFolder(
     body: JSON.stringify({ path, new_path: newPath }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to rename personal folder" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to rename personal folder");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to rename personal folder" }));
+    throw new Error(
+      error.message ?? error.detail ?? "Failed to rename personal folder",
+    );
   }
-  return (await response.json()) as { success: boolean; folders: string[]; path?: string; message: string };
+  return (await response.json()) as {
+    success: boolean;
+    folders: string[];
+    path?: string;
+    message: string;
+  };
 }
 
 export async function deleteUserKnowledgeFolder(
   path: string,
-): Promise<{ success: boolean; folders: string[]; deleted_path?: string; message: string }> {
+): Promise<{
+  success: boolean;
+  folders: string[];
+  deleted_path?: string;
+  message: string;
+}> {
   const params = new URLSearchParams({ path });
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/folders?${params.toString()}`, {
-    method: "DELETE",
-  });
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/folders?${params.toString()}`,
+    {
+      method: "DELETE",
+    },
+  );
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: "Failed to delete personal folder" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to delete personal folder");
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to delete personal folder" }));
+    throw new Error(
+      error.message ?? error.detail ?? "Failed to delete personal folder",
+    );
   }
-  return (await response.json()) as { success: boolean; folders: string[]; deleted_path?: string; message: string };
+  return (await response.json()) as {
+    success: boolean;
+    folders: string[];
+    deleted_path?: string;
+    message: string;
+  };
 }
 
 export async function getUserKnowledgeRecordContent(
   recordId: string,
 ): Promise<UserKnowledgeRecordContentResponse> {
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/content`, {
-    cache: "no-store",
-  });
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/content`,
+    {
+      cache: "no-store",
+    },
+  );
   if (!response.ok) {
     const error = await response
       .json()
       .catch(() => ({ message: "Failed to load personal knowledge content" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to load personal knowledge content");
+    throw new Error(
+      error.message ??
+        error.detail ??
+        "Failed to load personal knowledge content",
+    );
   }
   return (await response.json()) as UserKnowledgeRecordContentResponse;
 }
@@ -409,18 +557,66 @@ export async function updateUserKnowledgeRecordContent(
   recordId: string,
   payload: { title: string; content: string },
 ): Promise<UserKnowledgeRecordContentResponse> {
-  const response = await fetch(`${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/content`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/content`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  });
+  );
   if (!response.ok) {
     const error = await response
       .json()
       .catch(() => ({ message: "Failed to save personal knowledge content" }));
-    throw new Error(error.message ?? error.detail ?? "Failed to save personal knowledge content");
+    throw new Error(
+      error.message ??
+        error.detail ??
+        "Failed to save personal knowledge content",
+    );
   }
   return (await response.json()) as UserKnowledgeRecordContentResponse;
+}
+
+export async function appendExcerptToUserNote(
+  recordId: string,
+  payload: AppendExcerptToUserNoteInput,
+): Promise<{
+  success: boolean;
+  record: UserKnowledgeRecord;
+  message: string;
+}> {
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/append-excerpt`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        excerpt_text: payload.excerptText,
+        origin_scope: payload.originScope,
+        origin_doc_id: payload.originDocId,
+        origin_filename: payload.originFilename,
+        origin_anchor: payload.originAnchor,
+      }),
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to append excerpt to personal note" }));
+    throw new Error(
+      error.message ??
+        error.detail ??
+        "Failed to append excerpt to personal note",
+    );
+  }
+  return (await response.json()) as {
+    success: boolean;
+    record: UserKnowledgeRecord;
+    message: string;
+  };
 }

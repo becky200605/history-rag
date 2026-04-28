@@ -298,8 +298,10 @@ class KnowledgeBaseRetriever:
     def __init__(self):
         """Initialize the retriever."""
         self.config = get_knowledge_base_config()
-        self.client = get_qdrant_client()
-        self.embeddings = get_embedding_model()
+        # `knowledge_search` currently runs in lexical/BM25 mode. Keep vector
+        # dependencies lazy so lexical-only retrieval does not pay setup cost.
+        self.client = None
+        self.embeddings = None
 
     def _score_result(self, result: dict) -> float:
         metadata = result.get("metadata", {})
@@ -330,6 +332,10 @@ class KnowledgeBaseRetriever:
         doc_ids: list[str] | None = None,
         top_k: int | None = None,
     ) -> list[dict]:
+        if self.client is None:
+            self.client = get_qdrant_client()
+        if self.embeddings is None:
+            self.embeddings = get_embedding_model()
         vector_store = QdrantVectorStore(
             client=self.client,
             collection_name=collection_name,
@@ -546,103 +552,17 @@ class KnowledgeBaseRetriever:
             )
             return []
 
-        if _looks_like_exact_lookup(query):
-            lexical_started_at = time.perf_counter()
-            lexical_results = lexical_search_documents(
-                query,
-                thread_id=thread_id,
-                user_id=user_id,
-                doc_ids=effective_doc_ids,
-                scopes=enabled_scopes,
-                top_k=max(self.config.retrieval.top_k, MIN_RESULT_LIMIT),
-            )
-            logger.info(
-                "Knowledge exact fast-path lexical search: query=%r doc_ids=%s hits=%s elapsed_ms=%.1f",
-                query,
-                len(effective_doc_ids or []),
-                len(lexical_results),
-                (time.perf_counter() - lexical_started_at) * 1000,
-            )
-            if lexical_results:
-                for result in lexical_results:
-                    result["matched_query"] = "精确命中"
-                    result["query_variant"] = query
-                    result["query_variant_weight"] = 1.0
-                selected, deduped_count = self._prepare_ranked_results(
-                    lexical_results,
-                    limit=max(self.config.retrieval.top_k, MIN_RESULT_LIMIT),
-                )
-                logger.info(
-                    "Knowledge exact fast-path returned early: query=%r deduped=%s returned=%s elapsed_ms=%.1f",
-                    query,
-                    deduped_count,
-                    len(selected),
-                    (time.perf_counter() - started_at) * 1000,
-                )
-                return selected
-
         query_variants = _select_query_variants(query, doc_ids=effective_doc_ids)
         per_query_top_k = max(self.config.retrieval.top_k, MIN_PER_QUERY_TOP_K)
         final_limit = max(
             self.config.retrieval.top_k,
             MIN_RESULT_LIMIT if len(query_variants) > 1 or effective_doc_ids else self.config.retrieval.top_k,
         )
-        collections: list[str] = []
-        if user_id and "user" in enabled_scopes:
-            collections.append(
-                get_user_collection_name(
-                    self.config.qdrant.collection_name,
-                    user_id,
-                ),
-            )
-        if thread_id:
-            if "thread" in enabled_scopes:
-                collections.append(
-                    get_thread_collection_name(
-                        self.config.qdrant.collection_name,
-                        thread_id,
-                    ),
-                )
-        if "global" in enabled_scopes:
-            collections.append(self.config.qdrant.collection_name)
-
         merged_results: list[dict] = []
         for variant in query_variants:
             variant_query = str(variant["query"])
             variant_label = str(variant["label"])
             variant_weight = float(variant["weight"])
-
-            for collection_name in collections:
-                try:
-                    vector_started_at = time.perf_counter()
-                    results = self._search_collection(
-                        collection_name,
-                        variant_query,
-                        doc_ids=effective_doc_ids,
-                        top_k=per_query_top_k,
-                    )
-                    logger.info(
-                        "Knowledge vector search: query=%r variant=%r collection=%s doc_ids=%s hits=%s elapsed_ms=%.1f",
-                        query,
-                        variant_label,
-                        collection_name,
-                        len(effective_doc_ids or []),
-                        len(results),
-                        (time.perf_counter() - vector_started_at) * 1000,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Knowledge vector search failed: query=%r variant=%r collection=%s",
-                        query,
-                        variant_label,
-                        collection_name,
-                    )
-                    continue
-                for result in results:
-                    result["matched_query"] = variant_label
-                    result["query_variant"] = variant_query
-                    result["query_variant_weight"] = variant_weight
-                    merged_results.append(result)
 
             try:
                 lexical_started_at = time.perf_counter()
@@ -683,10 +603,9 @@ class KnowledgeBaseRetriever:
 
         selected, deduped_count = self._prepare_ranked_results(merged_results, limit=final_limit)
         logger.info(
-            "Knowledge search complete: query=%r variants=%s collections=%s doc_ids=%s merged=%s deduped=%s returned=%s elapsed_ms=%.1f",
+            "Knowledge search complete (lexical/BM25 mode): query=%r variants=%s doc_ids=%s merged=%s deduped=%s returned=%s elapsed_ms=%.1f",
             query,
             len(query_variants),
-            len(collections),
             len(effective_doc_ids or []),
             len(merged_results),
             deduped_count,

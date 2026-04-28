@@ -1,9 +1,10 @@
-"""Lexical fallback retrieval for quote-like knowledge queries."""
+"""Lexical retrieval with lightweight BM25 ranking for structured documents."""
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from pathlib import Path
 from typing import Any, Iterator
@@ -23,8 +24,12 @@ from src.community.knowledge_base.user_store import list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
 
-LEXICAL_SCORE_THRESHOLD = 0.18
+LEXICAL_SCORE_THRESHOLD = 0.2
 MAX_EXACT_KEYWORDS = 8
+MIN_PARAGRAPH_CHARS = 18
+MIN_PARAGRAPH_TOKENS = 3
+BM25_K1 = 1.2
+BM25_B = 0.75
 GENERIC_EXACT_KEYWORDS = {
     "什么",
     "如何",
@@ -75,6 +80,71 @@ def _extract_exact_keywords(query: str) -> list[str]:
         add_candidate(token)
 
     return candidates
+
+
+def _paragraph_is_substantive(text: str) -> bool:
+    stripped = text.strip()
+    if len(stripped) < MIN_PARAGRAPH_CHARS:
+        return False
+    return len(tokenize_search_text(stripped)) >= MIN_PARAGRAPH_TOKENS
+
+
+def _build_query_terms(query: str, exact_keywords: list[str]) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    for value in [query, *exact_keywords]:
+        for token in tokenize_search_text(value):
+            normalized = token.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            terms.append(normalized)
+
+    return terms
+
+
+def _compute_bm25_scores(
+    corpus_tokens: list[list[str]],
+    query_terms: list[str],
+) -> list[float]:
+    if not corpus_tokens or not query_terms:
+        return [0.0] * len(corpus_tokens)
+
+    avg_doc_len = sum(len(tokens) for tokens in corpus_tokens) / max(len(corpus_tokens), 1)
+    if avg_doc_len <= 0:
+        return [0.0] * len(corpus_tokens)
+
+    document_frequencies: dict[str, int] = {}
+    for term in query_terms:
+        document_frequencies[term] = sum(1 for tokens in corpus_tokens if term in set(tokens))
+
+    scores: list[float] = []
+    corpus_size = len(corpus_tokens)
+    for tokens in corpus_tokens:
+        if not tokens:
+            scores.append(0.0)
+            continue
+
+        token_counts: dict[str, int] = {}
+        for token in tokens:
+            token_counts[token] = token_counts.get(token, 0) + 1
+
+        score = 0.0
+        doc_len = len(tokens)
+        length_norm = 1 - BM25_B + BM25_B * (doc_len / avg_doc_len)
+        for term in query_terms:
+            term_frequency = token_counts.get(term, 0)
+            if term_frequency <= 0:
+                continue
+            document_frequency = document_frequencies.get(term, 0)
+            idf = math.log(1 + (corpus_size - document_frequency + 0.5) / (document_frequency + 0.5))
+            numerator = term_frequency * (BM25_K1 + 1)
+            denominator = term_frequency + BM25_K1 * length_norm
+            score += idf * (numerator / max(denominator, 1e-9))
+        scores.append(score)
+
+    return scores
 
 def _iter_global_documents(doc_ids: set[str] | None = None) -> Iterator[dict[str, Any]]:
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
@@ -195,14 +265,15 @@ def _score_paragraph(
     paragraph_text: str,
     *,
     exact_keywords: list[str] | None = None,
-) -> tuple[float, list[str]]:
+) -> tuple[float, list[str], float]:
     normalized_query = normalize_search_text(query)
     normalized_text = normalize_search_text(paragraph_text)
     if not normalized_text:
-        return 0.0, []
+        return 0.0, [], 0.0
 
     score = 0.0
     matched_keywords: list[str] = []
+    coverage_ratio = 0.0
     if normalized_query and len(normalized_query) >= 8 and normalized_query in normalized_text:
         score += 0.6
 
@@ -214,6 +285,7 @@ def _score_paragraph(
 
     if matched_keywords:
         coverage = len(matched_keywords) / max(len(exact_keywords or []), 1)
+        coverage_ratio = coverage
         longest_keyword = max(len(keyword) for keyword in matched_keywords)
         score += min(0.72, 0.42 + coverage * 0.18 + min(longest_keyword, 16) * 0.01)
 
@@ -225,7 +297,7 @@ def _score_paragraph(
             overlap_ratio = len(overlap) / max(len(query_tokens), 1)
             score += min(0.3, overlap_ratio * 0.3)
 
-    return min(score, 0.99), matched_keywords
+    return min(score, 0.99), matched_keywords, coverage_ratio
 
 
 def lexical_search_documents(
@@ -237,10 +309,12 @@ def lexical_search_documents(
     scopes: list[str] | None = None,
     top_k: int = 5,
 ) -> list[dict[str, Any]]:
-    """Scan structured documents lexically for quote-like or table-title queries."""
+    """Scan structured documents lexically and rank candidate paragraphs with BM25."""
     started_at = time.perf_counter()
     exact_keywords = _extract_exact_keywords(query)
+    query_terms = _build_query_terms(query, exact_keywords)
     results: list[dict[str, Any]] = []
+    candidate_entries: list[dict[str, Any]] = []
     document_count = 0
     page_count = 0
     paragraph_count = 0
@@ -261,13 +335,13 @@ def lexical_search_documents(
             for paragraph in page.get("paragraphs") or []:
                 paragraph_count += 1
                 content = str(paragraph.get("text") or "").strip()
-                score, matched_keywords = _score_paragraph(
+                if not _paragraph_is_substantive(content):
+                    continue
+                lexical_score, matched_keywords, coverage_ratio = _score_paragraph(
                     query,
                     content,
                     exact_keywords=exact_keywords,
                 )
-                if score < LEXICAL_SCORE_THRESHOLD:
-                    continue
                 metadata = {
                     "title": document["title"],
                     "doc_id": document["doc_id"],
@@ -291,29 +365,68 @@ def lexical_search_documents(
                     metadata["user_id"] = document.get("user_id")
                     metadata["source_kind"] = document.get("source_kind", "upload")
                     metadata["origin_doc_id"] = document.get("origin_doc_id")
-                results.append(
+                candidate_entries.append(
                     {
                         "content": content,
                         "metadata": metadata,
-                        "score": score,
                         "matched_keywords": matched_keywords,
-                        "match_type": "exact_keyword" if matched_keywords else "lexical",
+                        "lexical_score": lexical_score,
+                        "coverage_ratio": coverage_ratio,
                         "source": document["source"],
                         "filename": document["filename"],
-                        "collection_name": "lexical_fallback",
+                        "collection_name": "lexical_bm25",
+                        "content_tokens": tokenize_search_text(content),
                     }
                 )
 
-    results.sort(key=lambda item: item.get("score", 0), reverse=True)
+    bm25_scores = _compute_bm25_scores(
+        [entry["content_tokens"] for entry in candidate_entries],
+        query_terms,
+    )
+    max_bm25_score = max(bm25_scores, default=0.0)
+
+    for entry, bm25_score in zip(candidate_entries, bm25_scores, strict=False):
+        normalized_bm25 = bm25_score / max_bm25_score if max_bm25_score > 0 else 0.0
+        final_score = (
+            entry["lexical_score"] * 0.58
+            + normalized_bm25 * 0.34
+            + min(entry["coverage_ratio"] * 0.12, 0.08)
+        )
+        if final_score < LEXICAL_SCORE_THRESHOLD:
+            continue
+        results.append(
+            {
+                "content": entry["content"],
+                "metadata": entry["metadata"],
+                "score": min(final_score, 0.99),
+                "matched_keywords": entry["matched_keywords"],
+                "match_type": "exact_keyword_bm25" if entry["matched_keywords"] else "lexical_bm25",
+                "source": entry["source"],
+                "filename": entry["filename"],
+                "collection_name": entry["collection_name"],
+                "bm25_score": bm25_score,
+                "lexical_score": entry["lexical_score"],
+            }
+        )
+
+    results.sort(
+        key=lambda item: (
+            item.get("score", 0.0),
+            item.get("bm25_score", 0.0),
+            len(str(item.get("content") or "")),
+        ),
+        reverse=True,
+    )
     trimmed_results = results[:top_k]
     logger.info(
-        "Lexical search complete: query=%r doc_ids=%s scopes=%s documents=%s pages=%s paragraphs=%s hits=%s returned=%s elapsed_ms=%.1f",
+        "Lexical BM25 search complete: query=%r doc_ids=%s scopes=%s documents=%s pages=%s paragraphs=%s candidates=%s hits=%s returned=%s elapsed_ms=%.1f",
         query,
         len(doc_ids or []),
         ",".join(scopes or []),
         document_count,
         page_count,
         paragraph_count,
+        len(candidate_entries),
         len(results),
         len(trimmed_results),
         (time.perf_counter() - started_at) * 1000,

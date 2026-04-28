@@ -552,6 +552,7 @@ def test_book_search_tool_requires_knowledge_folders(monkeypatch) -> None:
 
     assert "Error: `book_search` 禁止整库全量搜索" in output
     assert "`knowledge_folders`" in output
+    assert "## 可见知识库目录树" in output
 
 
 def test_book_search_tool_rejects_local_filesystem_knowledge_folders(monkeypatch) -> None:
@@ -985,7 +986,8 @@ def test_knowledge_search_tool_requires_knowledge_folders(monkeypatch) -> None:
         knowledge_folders=None,
     )
 
-    assert "Error: `knowledge_search` 需要至少提供一种约束：`doc_ids` 或 `knowledge_folders`" in output
+    assert "Error: `knowledge_search` 必须传入 `knowledge_folders`" in output
+    assert "## 可见知识库目录树" in output
 
 
 def test_knowledge_search_tool_rejects_virtual_layer_labels_as_knowledge_folders(monkeypatch) -> None:
@@ -1023,7 +1025,7 @@ def test_knowledge_search_tool_rejects_virtual_layer_labels_as_knowledge_folders
 
 def test_tool_schema_marks_knowledge_folders_as_required() -> None:
     assert tools_module.book_search_tool.args_schema.model_fields["knowledge_folders"].is_required()
-    assert not tools_module.knowledge_search_tool.args_schema.model_fields["knowledge_folders"].is_required()
+    assert tools_module.knowledge_search_tool.args_schema.model_fields["knowledge_folders"].is_required()
 
 
 def test_knowledge_search_tool_allows_mixed_layer_doc_ids(monkeypatch) -> None:
@@ -1202,11 +1204,13 @@ def test_knowledge_search_tool_no_result_guides_grounded_retries_before_web(monk
         knowledge_folders=["财政史/清代"],
     )
 
-    assert "先在同一批 `doc_ids` 里最多 grounded 重试 2 次" in output
-    assert "如果 2 次后仍然没有结果，直接调用 `knowledge_locate(doc_id=...)` 做原文定位" in output
-    assert "建议下一轮 query：" in output
+    assert "不要因为这一轮空结果就直接换到别的书层" in output
+    assert "不要立刻放弃当前资料范围" in output
+    assert "句子型专业 query" in output
+    assert "关键词堆砌" in output
     assert "`晚清财政情况如何`" in output
-    assert "`清末财政情况如何`" in output
+    assert "`晚清财政收入结构发生了哪些变化`" in output
+    assert "只有在同一批最相关书里做过这些 grounded retries" in output
 
 
 def test_knowledge_locate_tool_emits_citations_and_page_level_followup_guidance(monkeypatch) -> None:
@@ -1270,7 +1274,8 @@ def test_knowledge_locate_tool_emits_citations_and_page_level_followup_guidance(
 
     assert "citation: [citation:财政史 原书第12页第3段]" in output
     assert "citation: [citation:财政史 原书第12页第4段]" in output
-    assert "如果同一主题明显跨相邻多页，优先直接用 `page_no_end` / `pdf_page_no_end` 一次展开连续页" in output
+    assert "如果当前这次 `knowledge_locate` 只定位到页级" in output
+    assert "再追加一次 `knowledge_locate(doc_id=..., page_no=... 或 pdf_page_no=..., paragraph_no=...)`" in output
 
 
 def test_knowledge_locate_tool_supports_multi_page_ranges(monkeypatch) -> None:

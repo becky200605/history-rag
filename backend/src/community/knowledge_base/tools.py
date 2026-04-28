@@ -207,19 +207,15 @@ def _parse_doc_ids(doc_ids: str | list[str] | tuple[str, ...] | set[str] | None)
         stripped = doc_ids.strip()
         matches = re.findall(r"\[([^\[\]]+)\]", stripped)
         remainder = re.sub(r"\[[^\[\]]+\]", "", stripped).strip()
-        if matches and not remainder:
-            parsed = [item.strip() for item in matches if item.strip()]
-            if not parsed:
-                raise ValueError("Invalid `doc_ids` format: no non-empty doc_id found.")
-            return parsed
-        parsed = _split_loose_delimited_values(stripped)
-        if parsed:
-            return parsed
-        raise ValueError(
-            "Invalid `doc_ids` format. Pass either bracket blocks like "
-            "`[doc_id_1][doc_id_2][doc_id_3]` or a delimited string such as "
-            "`doc_id_1, doc_id_2`."
-        )
+        if not matches or remainder:
+            raise ValueError(
+                "Invalid `doc_ids` format. When passing a string, use bracket blocks like "
+                "`[doc_id_1][doc_id_2][doc_id_3]`."
+            )
+        parsed = [item.strip() for item in matches if item.strip()]
+        if not parsed:
+            raise ValueError("Invalid `doc_ids` format: no non-empty doc_id found.")
+        return parsed
     return _split_loose_delimited_values(doc_ids)
 
 
@@ -1009,31 +1005,27 @@ def knowledge_search_tool(
 
     This tool should usually be used after `book_search`, so retrieval can
     focus on the right books in a layered order instead of jumping into the
-    whole corpus. It currently runs in lexical/BM25 mode: prioritize entity
-    names, institutions, years, places, and policy terms, and keep the query
-    in the same script/style as the target book whenever possible.
+    whole corpus. For broad history questions, it also expands the query into
+    multiple investigative facets so scattered records can be gathered and
+    synthesized together.
 
     Recommended use:
     1. First call `book_search(query=...)` to identify likely user/system books.
     2. Then call `knowledge_search` against the selected layer of books.
        Inside one layer, prefer passing multiple relevant `doc_ids` together for
        a first-pass batch search, instead of reading only one book first.
-    3. Before calling, rewrite the user's need into 2-6 strong lexical anchors:
-       people, institutions, place names, years, treaty/contract names, book
-       terminology, and other source-facing keywords. Preserve traditional vs.
-       simplified Chinese when the book clearly uses one form.
-    4. After the batch pass, continue with narrower per-book queries and
+    3. After the batch pass, continue with narrower per-book queries and
        `knowledge_locate` on the books/locations that look promising.
-    5. For exact quotation / page / paragraph lookups, you may use narrower
+    4. For exact quotation / page / paragraph lookups, you may use narrower
        scopes or doc filters and then call `knowledge_locate` for nearby context.
-    6. `scopes` is a hard filter. If you already pass `doc_ids` from
+    5. `scopes` is a hard filter. If you already pass `doc_ids` from
        `book_search`, do not also force an incompatible scope. When in doubt,
        omit `scopes` and let the `doc_ids` control the search.
-    7. If you already have `doc_ids` from `book_search`, let those book IDs
+    6. If you already have `doc_ids` from `book_search`, let those book IDs
        drive retrieval directly; do not add an unnecessary folder constraint.
-    8. You may pass `knowledge_folders` only when you intentionally want to
+    7. You may pass `knowledge_folders` only when you intentionally want to
        constrain a search that is not already narrowed by `doc_ids`.
-    9. Keep `query` close to the user's wording and key anchors. Preserve
+    8. Keep `query` close to the user's wording and key anchors. Preserve
        book names, people, periods, institutions, years, and policy terms.
        Prefer a sentence-like professional query over a keyword pile-up.
        Do not write a bag of terms like `清代末期财政情况 财政收支结构 财政政策 财政危机`.
@@ -1042,8 +1034,7 @@ def knowledge_search_tool(
        user's actual question.
 
     This tool searches through curated internal documents and returns relevant
-    paragraph-level snippets with page anchors and source references. Very
-    short paragraphs are filtered out so the returned hits are more reusable.
+    knowledge snippets with source document references.
 
     Args:
         query: Search terms describing what evidence you need. Prefer
@@ -1299,9 +1290,9 @@ def knowledge_search_tool(
         formatted_output += f"{content}\n\n"
 
     formatted_output += "---\n"
-    formatted_output += "这些结果已经做过词法/BM25 联合排序；回答前先归并不同来源里的分散证据，不要只摘取单个综述段落。\n"
+    formatted_output += "这些结果已经做过联合检索与分面扩展；回答前先归并不同来源里的分散证据，不要只摘取单个综述段落。\n"
     formatted_output += "如果你已经从 `book_search` 拿到了 `doc_ids`，优先继续围绕这些书换一个更贴近用户原问题的查询，不要随手改成更空泛的短词。\n"
-    formatted_output += "优先把 query 写成带锚点的实体/机构/年份/地名/制度名检索式；必要时保留书里原有的繁体或异体写法。\n"
+    formatted_output += "本库大多是长段正文，优先使用带锚点的句子型专业 query，不要把多个专题词机械并列成关键词串。\n"
     formatted_output += "只有在你明确想排除某个范围时才传 `scopes`；`scopes` 是硬过滤，和 `doc_ids` 会取交集，传错会把本该能搜到的书直接滤掉。\n"
     formatted_output += "如果某条结果看起来像目录、标题、页眉页脚、边栏、图表标题或过短片段，把它当作导航线索，不要直接拿来支撑最终结论。\n"
     formatted_output += "遇到这类线索时，继续搜索对应的目录词、章节名、阶段名、制度名，再调用 `knowledge_locate` 展开附近正文。\n"

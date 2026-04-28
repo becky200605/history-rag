@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  ChevronDownIcon,
   ExternalLinkIcon,
   FileTextIcon,
   FolderIcon,
@@ -292,7 +291,6 @@ export default function NotesPage() {
   const [titleDraft, setTitleDraft] = useState("");
   const [contentDraft, setContentDraft] = useState("");
   const [draftRecordId, setDraftRecordId] = useState<string | null>(null);
-  const [isExcerptOpen, setIsExcerptOpen] = useState(false);
   const [titleInputWidth, setTitleInputWidth] = useState<number>(320);
   const titleMeasureRef = useRef<HTMLSpanElement | null>(null);
   const selectedSpaceIdFromQuery = searchParams.get("space");
@@ -453,7 +451,6 @@ export default function NotesPage() {
     setDraftRecordId(selectedRecord.id);
     setTitleDraft(contentQuery.data.title);
     setContentDraft(contentQuery.data.editable_content);
-    setIsExcerptOpen(false);
   }, [contentQuery.data, selectedRecord?.id]);
 
   const isDraftDirty = useMemo(() => {
@@ -535,12 +532,13 @@ export default function NotesPage() {
 
   const selectedIsDeleting =
     deleteMutation.isPending && deletingRecordId === selectedRecord?.id;
-  const hasLockedExcerpt = Boolean(
+  const hasLegacyLockedExcerpt = Boolean(
     contentQuery.data?.mode === "derived" && contentQuery.data.locked_excerpt,
   );
-  const originalJumpHref = selectedRecord
-    ? buildOriginalJumpHref(selectedRecord, selectedRecord.id, activeSpaceId)
-    : null;
+  const originalJumpHref =
+    hasLegacyLockedExcerpt && selectedRecord
+      ? buildOriginalJumpHref(selectedRecord, selectedRecord.id, activeSpaceId)
+      : null;
 
   return (
     <WorkspaceContainer>
@@ -677,24 +675,6 @@ export default function NotesPage() {
                         >
                           {titleDraft || "未命名笔记"}
                         </span>
-                        {hasLockedExcerpt ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="text-accent hover:bg-accent/10 h-8 shrink-0 rounded-md px-2"
-                            onClick={() =>
-                              setIsExcerptOpen((current) => !current)
-                            }
-                          >
-                            <ChevronDownIcon
-                              className={cn(
-                                "size-4 transition-transform",
-                                isExcerptOpen && "rotate-180",
-                              )}
-                            />
-                          </Button>
-                        ) : null}
                       </div>
                       {selectedRecord ? (
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
@@ -704,28 +684,6 @@ export default function NotesPage() {
                               {normalizeFolderPath(selectedRecord.folder_path)}
                             </span>
                           </span>
-                          {selectedRecord.origin_filename ? (
-                            <span className="flex items-center gap-1.5 transition-colors hover:text-stone-700">
-                              <span className="opacity-60">来源：</span>
-                              <span className="font-medium">
-                                {selectedRecord.origin_filename}
-                              </span>
-                            </span>
-                          ) : null}
-                          {contentQuery.data?.location_label ? (
-                            <span className="opacity-60">
-                              {contentQuery.data.location_label}
-                            </span>
-                          ) : null}
-                          {originalJumpHref ? (
-                            <Link
-                              href={originalJumpHref}
-                              className="text-accent hover:text-accent/80 inline-flex items-center gap-1 font-medium transition-all hover:translate-x-0.5"
-                            >
-                              跳转原文
-                              <ExternalLinkIcon className="size-3.5" />
-                            </Link>
-                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -750,13 +708,6 @@ export default function NotesPage() {
                   ) : null}
                 </div>
               </div>
-              {hasLockedExcerpt && isExcerptOpen ? (
-                <div className="border-accent/10 mt-4 border-t pt-4">
-                  <div className="font-serif text-[15px] leading-relaxed whitespace-pre-wrap text-stone-500 italic">
-                    {contentQuery.data?.locked_excerpt}
-                  </div>
-                </div>
-              ) : null}
             </div>
 
             {!selectedRecord ? (
@@ -793,6 +744,35 @@ export default function NotesPage() {
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="w-full px-6 py-6 md:px-10">
                     <div className="pt-4 pb-32">
+                      {hasLegacyLockedExcerpt ? (
+                        <div className="mb-8 rounded-2xl border border-stone-200 bg-stone-50/80 p-5">
+                          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-stone-500">
+                            {selectedRecord?.origin_filename ? (
+                              <span className="flex items-center gap-1.5">
+                                <span className="opacity-60">来源：</span>
+                                <span className="font-medium text-stone-700">
+                                  {selectedRecord.origin_filename}
+                                </span>
+                              </span>
+                            ) : null}
+                            {contentQuery.data?.location_label ? (
+                              <span>{contentQuery.data.location_label}</span>
+                            ) : null}
+                            {originalJumpHref ? (
+                              <Link
+                                href={originalJumpHref}
+                                className="text-accent hover:text-accent/80 inline-flex items-center gap-1 font-medium transition-all hover:translate-x-0.5"
+                              >
+                                跳转原文
+                                <ExternalLinkIcon className="size-3.5" />
+                              </Link>
+                            ) : null}
+                          </div>
+                          <div className="border-l-2 border-stone-200 pl-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap text-stone-600 italic">
+                            {contentQuery.data?.locked_excerpt}
+                          </div>
+                        </div>
+                      ) : null}
                       {contentQuery.data?.editable ? (
                         <Textarea
                           value={contentDraft}

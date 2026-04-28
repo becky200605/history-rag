@@ -20,7 +20,9 @@ BUILTIN_TOOLS = [
 
 # Temporary kill switch for tools that should remain implemented in the codebase
 # but must not be exposed to the model right now.
-TEMPORARILY_DISABLED_TOOL_NAMES: set[str] = set()
+TEMPORARILY_DISABLED_TOOL_NAMES = {
+    "knowledge_search",
+}
 
 LEAD_ORCHESTRATOR_TOOL_NAMES = {
     "book_search",

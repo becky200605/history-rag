@@ -219,7 +219,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
                 f"{KNOWLEDGE_DIRECTORY_TAG}\n"
                 "下面是当前可见知识资料的目录树。它是导航线索，不是证据。"
                 "请先看目录树，并直接从这里复制目录名填写 `knowledge_folders`，优先用于 `book_search` 选定目录与书目。"
-                "`knowledge_search` 当前已恢复，且先以词法/BM25 模式运行。选定书目后，优先直接使用 `book_search` 返回的 `doc_ids` 去调用 `knowledge_search`；需要看上下文或连续页时，再调用 `knowledge_locate`。不要再额外强加 `knowledge_folders`，除非你明确要做 folder-only 范围约束。"
+                "`knowledge_search` 当前已临时下线。选定书目后，优先直接使用 `book_search` 返回的 `doc_ids` 去调用 `knowledge_locate`；不要再额外强加 `knowledge_folders`，除非你明确要做 folder-only 范围约束。"
                 "不要填写 `用户书籍`、`当前线程书籍`、`核心通用书`、`专题支撑书`、`补充材料`、`参考工具书` 这类层级标签。"
                 "`knowledge_folders` 是知识库逻辑目录，不是 sandbox / 容器 / 本地文件系统路径；不要用 `ls`、`read_file`、`bash` 等其他工具去推断。\n\n"
                 f"{directory_tree}\n"

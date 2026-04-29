@@ -24,6 +24,7 @@ TEMPORARILY_DISABLED_TOOL_NAMES = set()
 
 LEAD_ORCHESTRATOR_TOOL_NAMES = {
     "book_search",
+    "knowledge_search",
 }
 
 SUBAGENT_TOOLS = [

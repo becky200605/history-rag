@@ -4,7 +4,6 @@ from langchain.agents import create_agent
 from langchain_core.runnables import RunnableConfig
 
 from src.agents.lead_agent.prompt import apply_prompt_template
-from src.agents.middlewares.book_coverage_middleware import BookCoverageMiddleware
 from src.agents.middlewares.citation_enforcement_middleware import CitationEnforcementMiddleware
 from src.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from src.agents.middlewares.dangling_tool_call_middleware import DanglingToolCallMiddleware
@@ -14,6 +13,7 @@ from src.agents.middlewares.memory_middleware import MemoryMiddleware
 from src.agents.middlewares.output_aware_summarization_middleware import OutputAwareSummarizationMiddleware
 from src.agents.middlewares.parallel_todo_list_middleware import TodoListMiddleware
 from src.agents.middlewares.subagent_limit_middleware import SubagentLimitMiddleware
+from src.agents.middlewares.task_memory_middleware import TaskMemoryMiddleware
 from src.agents.middlewares.thread_data_middleware import ThreadDataMiddleware
 from src.agents.middlewares.title_middleware import TitleMiddleware
 from src.agents.middlewares.uploads_middleware import UploadsMiddleware
@@ -290,7 +290,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
     if todo_list_middleware is not None:
         middlewares.append(todo_list_middleware)
 
-    middlewares.append(BookCoverageMiddleware())
+    middlewares.append(TaskMemoryMiddleware())
 
     # Add TitleMiddleware
     middlewares.append(TitleMiddleware())

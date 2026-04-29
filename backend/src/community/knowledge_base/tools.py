@@ -75,17 +75,17 @@ class KnowledgeSearchArgs(BaseModel):
     doc_ids: list[str] | None = Field(
         default=None,
         description=(
-            'Candidate book IDs from `book_search`. Pass a native array value such as '
-            '["doc_id_1", "doc_id_2"] and do not wrap the whole array in quotes.'
+            "Deprecated compatibility field. Historical task-memory retrieval now ignores "
+            "`doc_ids`; write a clear query instead."
         ),
     )
     scopes: str | None = Field(
         default=None,
-        description="Optional comma-separated hard filters: user, thread, global.",
+        description="Deprecated compatibility field. Historical task-memory retrieval ignores scopes.",
     )
     knowledge_folders: list[str] | None = Field(
         default=None,
-        description="Optional logical knowledge-base folder list.",
+        description="Deprecated compatibility field. Historical task-memory retrieval ignores folders.",
     )
 
     @field_validator("doc_ids", mode="before")
@@ -1073,329 +1073,63 @@ def knowledge_search_tool(
     scopes: str | None = None,
     knowledge_folders: list[str] | None = None,
 ) -> str:
-    """Search the internal knowledge base for domain-specific information.
+    """Search historical main-task/subtask results in the task-memory vector store.
 
-    This tool should usually be used after `book_search`, so retrieval can
-    focus on the right books in a layered order instead of jumping into the
-    whole corpus. In the current conservative mode it only does keyword-based
-    paragraph retrieval over the selected books, and automatically skips very
-    short fragments.
-
-    Recommended use:
-    1. First call `book_search(query=...)` to identify likely user/system books.
-    2. Then call `knowledge_search` against the selected layer of books.
-       Inside one layer, prefer passing multiple relevant `doc_ids` together for
-       a first-pass batch search, instead of reading only one book first.
-    3. After the batch pass, continue with narrower per-book queries and
-       `knowledge_locate` on the books/locations that look promising.
-    4. For exact quotation / page / paragraph lookups, keep the same `doc_ids`
-       and then call `knowledge_locate` for nearby context.
-    5. `scopes` is a hard filter. If you already pass `doc_ids` from
-       `book_search`, do not also force an incompatible scope. When in doubt,
-       omit `scopes` and let the `doc_ids` control the search.
-    6. If you already have `doc_ids` from `book_search`, let those book IDs
-       drive retrieval directly; do not add an unnecessary folder constraint.
-    7. You may pass `knowledge_folders` only when you intentionally want to
-       constrain a search that is not already narrowed by `doc_ids`.
-    8. Before searching, inspect the selected books' metadata from
-       `book_search`, especially language/script hints such as `zh-Hans`
-       or `zh-Hant`, plus folder/summary signals.
-    9. Use query terms in the same script/language as the target book whenever
-       possible: for `zh-Hant` / 繁体书 use traditional-Chinese search terms;
-       for `zh-Hans` / 简体书 use simplified-Chinese search terms. If the
-       selected books mix scripts, prefer separate per-book or per-script
-       searches instead of one mixed-script query.
-    10. Keep `query` close to the user's wording and key anchors. Preserve
-       book names, people, periods, institutions, years, and policy terms.
-       Prefer a sentence-like professional query over a keyword pile-up.
-       Do not write a bag of terms like `清代末期财政情况 财政收支结构 财政政策 财政危机`.
-       Do not turn the query into a long meta sentence like “I need to search
-       for ...”, and do not over-shorten it into something vaguer than the
-       user's actual question.
-
-    This tool searches through curated internal documents and returns keyword-hit
-    paragraphs with source document references and page anchors.
-
-    Args:
-        query: Search terms describing what evidence you need. Prefer
-            sentence-like, source-anchored phrasing over keyword pile-ups or
-            meta narration. Match the target book's language/script from
-            `book_search` metadata whenever possible, for example use 繁体词
-            against `zh-Hant` books and 简体词 against `zh-Hans` books.
-        doc_ids: Optional candidate book IDs from `book_search`. Pass them as a native
-            array value, for example `["doc_id_1", "doc_id_2"]`, and do not wrap that
-            array in an extra string such as `"[\"doc_id_1\", \"doc_id_2\"]"`. Prefer
-            this for narrowing to known relevant books. If present, `knowledge_search`
-            should search these books directly.
-        scopes: Optional comma-separated hard filters: `user`, `thread`, `global`.
-            Only set this when you intentionally want to exclude other scopes.
-        knowledge_folders: Optional knowledge-base folder array. These are
-            logical folders from the injected knowledge directory tree, not
-            sandbox/local filesystem paths. Use this only when you want folder
-            scoping without explicit `doc_ids`.
+    `knowledge_search` now prioritizes the dedicated task-memory collection
+    instead of asking the model to pass book IDs. Write a clear query and let
+    the system retrieve prior main-task and subtask results by title + query
+    similarity. The deprecated compatibility fields (`doc_ids`, `scopes`,
+    `knowledge_folders`) are ignored.
     """
     started_at = time.perf_counter()
     try:
-        thread_id = runtime.context.get("thread_id")
-        user_id = runtime.context.get("user_id")
-        try:
-            parsed_doc_ids = _parse_doc_ids(doc_ids)
-        except ValueError as exc:
-            logger.info(
-                "Knowledge search rejected: query=%r reason=invalid_doc_ids_format elapsed_ms=%.1f",
-                query,
-                (time.perf_counter() - started_at) * 1000,
-            )
-            return f"Error: {exc}"
-        selected_doc_ids = _runtime_selected_doc_ids(runtime)
-        logger.info(
-            "Knowledge search start: query=%r thread_id=%s has_user=%s requested_doc_ids=%s selected_doc_ids=%s effective_doc_ids=%s scopes_arg=%r knowledge_folders=%s",
-            query,
-            thread_id,
-            bool(user_id),
-            len(parsed_doc_ids or []),
-            len(selected_doc_ids or []),
-            len(_intersect_doc_ids(parsed_doc_ids, selected_doc_ids) or []),
-            scopes,
-            _split_loose_delimited_values(knowledge_folders) or [],
-        )
-        parsed_scopes = _parse_scopes(scopes)
-        selected_scopes = _runtime_selected_scopes(runtime)
-        visible_entries = _visible_catalog_entries(
-            thread_id=thread_id,
-            user_id=user_id,
-            selected_doc_ids=selected_doc_ids,
-            selected_scopes=selected_scopes,
-        )
-        resolved_doc_ids, missing_doc_ids, ambiguous_doc_ids = _resolve_requested_doc_ids(
-            parsed_doc_ids,
-            visible_entries=visible_entries,
-        )
-        if ambiguous_doc_ids:
-            logger.info(
-                "Knowledge search rejected: query=%r reason=ambiguous_doc_ids ambiguous_doc_ids=%s elapsed_ms=%.1f",
-                query,
-                len(ambiguous_doc_ids),
-                (time.perf_counter() - started_at) * 1000,
-            )
-            return (
-                "Error: 以下 `doc_ids` 去除空格后匹配到多个候选，当前无法唯一确定："
-                f"{_format_doc_ids_json(ambiguous_doc_ids)}。"
-                "请改用 `book_search` 返回的原样 `doc_ids`。"
-            )
-        if missing_doc_ids:
-            logger.info(
-                "Knowledge search rejected: query=%r reason=unknown_doc_ids missing_doc_ids=%s elapsed_ms=%.1f",
-                query,
-                len(missing_doc_ids),
-                (time.perf_counter() - started_at) * 1000,
-            )
-            return (
-                "Error: 以下 `doc_ids` 在当前可见资料范围内不存在："
-                f"{_format_doc_ids_json(missing_doc_ids)}。"
-                "请使用 `book_search` 返回的原样 `doc_ids`，并保持 JSON 数组格式。"
-            )
-        effective_doc_ids = _intersect_doc_ids(resolved_doc_ids, selected_doc_ids)
-        raw_knowledge_folders = _split_loose_delimited_values(knowledge_folders) or []
-        parsed_knowledge_folders = _parse_knowledge_folders(knowledge_folders)
-        if not effective_doc_ids and not parsed_knowledge_folders:
-            logger.info(
-                "Knowledge search rejected: query=%r reason=missing_doc_ids_and_knowledge_folders elapsed_ms=%.1f",
-                query,
-                (time.perf_counter() - started_at) * 1000,
-            )
-            return (
-                "Error: `knowledge_search` 需要至少提供一种约束：`doc_ids` 或 `knowledge_folders`。"
-                "如果你已经有 `book_search` 返回的 `doc_ids`，直接传 `doc_ids` 即可。"
-            )
-        if not effective_doc_ids and any(_looks_like_virtual_knowledge_folder_label(folder) for folder in raw_knowledge_folders):
-            logger.info(
-                "Knowledge search rejected: query=%r reason=virtual_folder_labels elapsed_ms=%.1f",
-                query,
-                (time.perf_counter() - started_at) * 1000,
-            )
-            return _build_knowledge_folder_guidance(
-                visible_entries=visible_entries,
-                reason="Error: 你传入的 `knowledge_folders` 是层级标签（如 `用户书籍`、`核心通用书`），不是知识库逻辑目录。",
-            )
-        if not effective_doc_ids and any(_looks_like_local_filesystem_path(folder) for folder in raw_knowledge_folders):
-            logger.info(
-                "Knowledge search rejected: query=%r reason=local_filesystem_path elapsed_ms=%.1f",
-                query,
-                (time.perf_counter() - started_at) * 1000,
-            )
-            return _build_knowledge_folder_guidance(
-                visible_entries=visible_entries,
-                reason="Error: 你传入的 `knowledge_folders` 看起来像本地 sandbox 路径或文件名，不是知识库逻辑目录。",
-            )
-        if not effective_doc_ids and not any(
-            _entry_matches_any_knowledge_folder(entry, parsed_knowledge_folders)
-            for entry in visible_entries
-        ):
-            logger.info(
-                "Knowledge search rejected: query=%r reason=folder_not_visible visible_entries=%s parsed_knowledge_folders=%s elapsed_ms=%.1f",
-                query,
-                len(visible_entries),
-                ",".join(parsed_knowledge_folders),
-                (time.perf_counter() - started_at) * 1000,
-            )
-            return _build_knowledge_folder_guidance(
-                visible_entries=visible_entries,
-                reason="Error: 当前 `knowledge_folders` 在知识库目录树中没有匹配到任何可见目录。",
-            )
-        from src.community.knowledge_base.retriever import get_retriever
+        from src.community.knowledge_base.task_memory import render_task_memory_matches, search_task_memory
 
-        retriever = get_retriever()
-        inferred_scopes = _infer_scopes_from_doc_ids(
-            effective_doc_ids,
-            thread_id=thread_id,
-            user_id=user_id,
-        )
-        effective_scopes = _merge_scopes(selected_scopes, parsed_scopes, inferred_scopes)
-        applied_folder_paths = None if effective_doc_ids else parsed_knowledge_folders
-        if effective_doc_ids and parsed_knowledge_folders:
+        current_task_title = ""
+        if runtime is not None and getattr(runtime, "state", None):
+            current_task_title = str(runtime.state.get("current_task_title") or "").strip()
+
+        if doc_ids or scopes or knowledge_folders:
             logger.info(
-                "Knowledge search ignoring knowledge_folders because doc_ids are present: query=%r effective_doc_ids=%s raw_knowledge_folders=%s",
+                "Knowledge search ignoring deprecated routing args: query=%r doc_ids=%s scopes=%r knowledge_folders=%s",
                 query,
-                len(effective_doc_ids or []),
-                raw_knowledge_folders,
+                len(doc_ids or []),
+                scopes,
+                knowledge_folders or [],
             )
-        retrieval_started_at = time.perf_counter()
-        results = retriever.search(
+
+        logger.info(
+            "Knowledge task-memory search start: query=%r current_task_title=%r elapsed_ms=%.1f",
             query,
-            thread_id=thread_id,
-            user_id=user_id,
-            doc_ids=effective_doc_ids,
-            scopes=effective_scopes,
-            folder_paths=applied_folder_paths,
+            current_task_title,
+            (time.perf_counter() - started_at) * 1000,
+        )
+        results = search_task_memory(
+            query,
+            title=current_task_title or None,
+            top_k=KNOWLEDGE_SEARCH_TOP_K,
         )
         logger.info(
-            "Knowledge search retrieval phase complete: query=%r results=%s effective_doc_ids=%s effective_scopes=%s applied_folder_paths=%s elapsed_ms=%.1f",
+            "Knowledge task-memory search complete: query=%r results=%s elapsed_ms=%.1f",
             query,
             len(results),
-            len(effective_doc_ids or []),
-            ",".join(effective_scopes or []),
-            ",".join(applied_folder_paths or []),
-            (time.perf_counter() - retrieval_started_at) * 1000,
+            (time.perf_counter() - started_at) * 1000,
         )
+        output = render_task_memory_matches(results, heading="## 检索结果")
     except Exception as e:
         logger.exception(
-            "Knowledge search exception: query=%r elapsed_ms=%.1f",
+            "Knowledge task-memory search exception: query=%r elapsed_ms=%.1f",
             query,
             (time.perf_counter() - started_at) * 1000,
         )
-        return f"Error searching knowledge base: {e}"
+        return f"Error searching task memory: {e}"
 
-    results = [
-        result
-        for result in results
-        if _is_substantive_search_excerpt(str(result.get("content") or ""))
-    ]
-
-    if not results:
-        logger.info(
-            "Knowledge search no results: query=%r effective_doc_ids=%s elapsed_ms=%.1f",
-            query,
-            len(effective_doc_ids or []),
-            (time.perf_counter() - started_at) * 1000,
+    if "本轮没有命中" in output:
+        output += (
+            "\n\n---\n"
+            "下一步优先改写 query 或补充更清楚的任务标题；如果仍然没有可复用历史结果，再回到原始资料检索链路补证。"
         )
-        return _build_no_result_guidance(query, effective_doc_ids)
-
-    covered_doc_ids = []
-    seen_covered_doc_ids: set[str] = set()
-    for result in results:
-        metadata = result.get("metadata", {})
-        doc_id = str(metadata.get("origin_doc_id") or metadata.get("doc_id") or "").strip()
-        if not doc_id or doc_id in seen_covered_doc_ids:
-            continue
-        seen_covered_doc_ids.add(doc_id)
-        covered_doc_ids.append(doc_id)
-    _mark_runtime_covered_doc_ids(runtime, covered_doc_ids)
-
-    formatted_output = "## 检索结果\n\n"
-
-    for i, result in enumerate(results[:KNOWLEDGE_SEARCH_TOP_K], 1):
-        content = _truncate_text(
-            result["content"],
-            max_chars=KNOWLEDGE_RESULT_MAX_CHARS,
-            max_lines=KNOWLEDGE_RESULT_MAX_LINES,
-        )
-        filename = result.get("filename", "Unknown")
-        score = result.get("score", 0.0)
-        metadata = result.get("metadata", {})
-        title = metadata.get("title") or filename
-        doc_id = metadata.get("doc_id")
-        line_start = metadata.get("line_start")
-        line_end = metadata.get("line_end")
-        matched_queries = [str(item) for item in result.get("matched_queries") or [] if str(item).strip()]
-        matched_keywords = [str(item) for item in result.get("matched_keywords") or [] if str(item).strip()]
-        citation_context = resolve_result_citation_context(
-            result,
-            thread_id=runtime.context.get("thread_id"),
-            user_id=runtime.context.get("user_id"),
-        )
-        source_url = citation_context["source_url"]
-        citation_url = citation_context.get("citation_url")
-        citation_label = _build_citation_label(
-            str(citation_context["citation_title"] or title),
-            citation_context["citation_page_no"],
-            citation_context["citation_pdf_page_no"],
-            citation_context["citation_paragraph_no"],
-            page=citation_context["citation_page"],
-        )
-        citation = _build_citation(citation_label, citation_url or source_url)
-
-        formatted_output += f"### 来源 {i}: {title} - 相关度: {score:.2f}\n"
-        if doc_id:
-            formatted_output += f"doc_id: {doc_id}\n"
-        if matched_queries:
-            formatted_output += f"命中分面: {'、'.join(matched_queries)}\n"
-        if matched_keywords:
-            formatted_output += f"精确关键词命中: {'、'.join(matched_keywords)}\n"
-        if citation_context.get("source_label") and citation_context.get("source_scope") in {"user", "thread"}:
-            formatted_output += f"来源类型: {citation_context['source_label']}\n"
-        if (
-            citation_context.get("source_scope") == "user"
-            and citation_context.get("original_title")
-            and citation_context.get("original_title") != title
-        ):
-            formatted_output += f"原文来源: {citation_context['original_title']}\n"
-        if citation:
-            formatted_output += f"citation: {citation}\n"
-
-        location = _build_location_text(
-            page=citation_context["citation_page"],
-            page_no=citation_context["citation_page_no"],
-            pdf_page_no=citation_context["citation_pdf_page_no"],
-            paragraph_no=citation_context["citation_paragraph_no"],
-        )
-        if location:
-            formatted_output += f"定位: {location}\n"
-        if line_start and line_end:
-            formatted_output += f"定位: 第 {line_start}-{line_end} 行\n"
-        elif line_start:
-            formatted_output += f"定位: 第 {line_start} 行\n"
-        formatted_output += f"{content}\n\n"
-
-    formatted_output += "---\n"
-    formatted_output += "这些结果来自同一批书内的关键词段落检索，已自动过滤过短片段；回答前先归并不同来源里的分散证据，不要只摘取单个综述段落。\n"
-    formatted_output += "如果你已经从 `book_search` 拿到了 `doc_ids`，下一轮继续把同一批 `doc_ids` 作为原生数组值传入，不要把整个数组再包成字符串，优先围绕这些书换一个更贴近用户原问题的查询。\n"
-    formatted_output += "下一轮换 query 前，先看这些书在 `book_search` 里暴露出的 metadata；若目标书是 `zh-Hant` / 繁体中文，就改用繁体检索词，若是 `zh-Hans` / 简体中文，就改用简体检索词。混合不同字形的书时，优先拆成分书检索。\n"
-    formatted_output += "本库当前优先返回较长正文段落，优先使用带锚点的句子型专业 query，不要把多个专题词机械并列成关键词串。\n"
-    formatted_output += "只有在你明确想排除某个范围时才传 `scopes`；`scopes` 是硬过滤，和 `doc_ids` 会取交集，传错会把本该能搜到的书直接滤掉。\n"
-    formatted_output += "如果某条结果看起来像目录、标题、页眉页脚、边栏、图表标题或过短片段，把它当作导航线索，不要直接拿来支撑最终结论。\n"
-    formatted_output += "遇到这类线索时，继续搜索对应的目录词、章节名、阶段名、制度名，再调用 `knowledge_locate` 展开附近正文。\n"
-    formatted_output += "使用答案时，直接复制上面的 `citation:` 行，不要自己重写。\n"
-    formatted_output += "如果需要更多上下文，调用 `knowledge_locate`；不要去读原始 PDF 或 `.structured.json`。\n"
-    formatted_output += "只有在你已经尝试了合理的换 query / 换书层 / `knowledge_locate` 展开后仍然没有足够证据时，才使用 `【无法回答】` 开头拒答。"
-
-    logger.info(
-        "Knowledge search complete: query=%r returned_results=%s elapsed_ms=%.1f",
-        query,
-        min(len(results), KNOWLEDGE_SEARCH_TOP_K),
-        (time.perf_counter() - started_at) * 1000,
-    )
-    return formatted_output
+    return output
 
 
 @tool("knowledge_locate", parse_docstring=True)

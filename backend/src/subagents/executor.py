@@ -21,6 +21,11 @@ from langchain_core.messages.utils import message_chunk_to_message
 from langchain_core.runnables import RunnableConfig
 
 from src.agents.thread_state import SandboxState, ThreadDataState, ThreadState
+from src.community.knowledge_base.task_memory import (
+    build_task_memory_injection_message,
+    search_task_memory,
+    upsert_task_memory_record,
+)
 from src.models import create_chat_model
 from src.subagents.config import SubagentConfig
 from src.utils.error_logging import append_error_doc
@@ -401,6 +406,7 @@ class SubagentExecutor:
         sandbox_state: SandboxState | None = None,
         thread_data: ThreadDataState | None = None,
         thread_id: str | None = None,
+        user_id: str | None = None,
         trace_id: str | None = None,
     ):
         """Initialize the executor.
@@ -412,6 +418,7 @@ class SubagentExecutor:
             sandbox_state: Sandbox state from parent agent.
             thread_data: Thread data from parent agent.
             thread_id: Thread ID for sandbox operations.
+            user_id: User ID for scoped task-memory persistence.
             trace_id: Trace ID from parent for distributed tracing.
         """
         self.config = config
@@ -419,6 +426,7 @@ class SubagentExecutor:
         self.sandbox_state = sandbox_state
         self.thread_data = thread_data
         self.thread_id = thread_id
+        self.user_id = user_id
         # Generate trace_id if not provided (for top-level calls)
         self.trace_id = trace_id or str(uuid.uuid4())[:8]
 
@@ -469,26 +477,82 @@ class SubagentExecutor:
             state_schema=ThreadState,
         )
 
-    def _build_initial_state(self, task: str) -> dict[str, Any]:
+    def _build_initial_state(self, task: str, *, task_title: str | None = None) -> dict[str, Any]:
         """Build the initial state for agent execution.
 
         Args:
             task: The task description.
+            task_title: Optional stable title used for historical task matching.
 
         Returns:
             Initial state dictionary.
         """
-        state: dict[str, Any] = {
-            "messages": [HumanMessage(content=task)],
-        }
+        messages: list[HumanMessage] = [HumanMessage(content=task)]
+        normalized_title = str(task_title or "").strip()
+        matches = search_task_memory(task, title=normalized_title or None, top_k=3)
+        if matches:
+            messages.append(
+                HumanMessage(
+                    content=build_task_memory_injection_message(
+                        title=normalized_title or task,
+                        query=task,
+                        results=matches,
+                    )
+                )
+            )
+
+        state: dict[str, Any] = {"messages": messages}
 
         # Pass through sandbox and thread data from parent
         if self.sandbox_state is not None:
             state["sandbox"] = self.sandbox_state
         if self.thread_data is not None:
             state["thread_data"] = self.thread_data
+        if normalized_title:
+            state["current_task_title"] = normalized_title
 
         return state
+
+    def _persist_completed_task_memory(
+        self,
+        *,
+        task: str,
+        task_title: str | None,
+        task_level: str,
+        result: SubagentResult,
+    ) -> None:
+        title = str(task_title or "").strip() or result.task_id
+        if not title or not result.result:
+            return
+
+        structured = result.structured_result or {}
+        summary = str(structured.get("summary") or result.result or "").strip()
+        findings = [str(item).strip() for item in structured.get("findings") or [] if str(item).strip()]
+        citations = [str(item).strip() for item in structured.get("citations") or [] if str(item).strip()]
+        open_questions = [str(item).strip() for item in structured.get("open_questions") or [] if str(item).strip()]
+        if not summary:
+            return
+
+        try:
+            upsert_task_memory_record(
+                title=title,
+                query=task,
+                summary=summary,
+                findings=findings,
+                citations=citations,
+                open_questions=open_questions,
+                task_level=task_level,
+                thread_id=self.thread_id,
+                user_id=self.user_id,
+                task_id=result.task_id,
+                raw_result=result.result,
+            )
+        except Exception:
+            logger.exception(
+                "[trace=%s] Failed to persist task memory for subtask %s",
+                self.trace_id,
+                result.task_id,
+            )
 
     def _raise_if_cancelled(
         self,
@@ -505,6 +569,9 @@ class SubagentExecutor:
         task: str,
         result_holder: SubagentResult | None = None,
         cancel_event: threading.Event | None = None,
+        *,
+        task_title: str | None = None,
+        task_level: str = "subtask",
     ) -> SubagentResult:
         """Execute a task synchronously.
 
@@ -532,7 +599,7 @@ class SubagentExecutor:
         try:
             self._raise_if_cancelled(result, cancel_event)
             agent = self._create_agent()
-            state = self._build_initial_state(task)
+            state = self._build_initial_state(task, task_title=task_title)
 
             # Build config with thread_id for sandbox access and recursion limit
             run_config: RunnableConfig = {
@@ -637,6 +704,12 @@ class SubagentExecutor:
             self._raise_if_cancelled(result, cancel_event)
             result.status = SubagentStatus.COMPLETED
             result.completed_at = datetime.now(UTC)
+            self._persist_completed_task_memory(
+                task=task,
+                task_title=task_title,
+                task_level=task_level,
+                result=result,
+            )
 
         except SubagentCancelledError as e:
             logger.info(
@@ -678,7 +751,14 @@ class SubagentExecutor:
 
         return result
 
-    def execute_async(self, task: str, task_id: str | None = None) -> str:
+    def execute_async(
+        self,
+        task: str,
+        task_id: str | None = None,
+        *,
+        task_title: str | None = None,
+        task_level: str = "subtask",
+    ) -> str:
         """Start a task execution in the background.
 
         Args:
@@ -736,6 +816,8 @@ class SubagentExecutor:
                     task,
                     result_holder,
                     cancel_event,
+                    task_title=task_title,
+                    task_level=task_level,
                 )
                 timeout_deadline_monotonic = time.monotonic() + self.config.timeout_seconds
 

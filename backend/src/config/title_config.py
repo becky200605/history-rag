@@ -28,11 +28,10 @@ class TitleConfig(BaseModel):
     )
     prompt_template: str = Field(
         default=(
-            "Generate a concise title (max {max_words} words) for this conversation.\n"
-            "User: {user_msg}\n"
-            "Assistant: {assistant_msg}\n\n"
-            "Return ONLY the title, with no quotes, no explanation, and no thinking process.\n"
-            "If you output anything except the title, it will be discarded."
+            "把这句话改写成一个简短标题，不要扩写，不要解释。\n"
+            "要求：最多 {max_words} 个词，不要引号，不要句号。\n"
+            "原话：{user_msg}\n"
+            "只返回标题。"
         ),
         description="Prompt template for title generation",
     )

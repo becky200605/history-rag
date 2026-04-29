@@ -191,9 +191,9 @@ def _build_default_task_prompt(todo: Todo) -> str:
         "1. 只围绕这一项任务检索、分析或执行；\n"
         "2. 若属于历史 / 财政史问题，优先使用本地知识库工具并保留关键引文；如果主代理分给你的书与任务明显不匹配，要在结果里明确指出覆盖可能不足，不要硬搜到无关方向；\n"
         "3. 如果 `book_search` 没有找到相关书，或者返回结果明显不匹配，不要用 `bash`、`find`、`ls`、`echo` 等命令去 `/mnt/user-data/uploads` 或其他本地目录里瞎翻文件当兜底；除非主任务明确让你检查某个已知上传文件，否则不要把文件系统扫描当知识库替代方案；\n"
-        "4. 检索路径固定为：先 `book_search` 选书，先看返回的 metadata，尤其 `语言` / `language_hint`、目录、摘要，再把返回的 `doc_ids` 作为原生数组值交给 `knowledge_search` 做关键词检索，不要把整个数组包成字符串；如果书是 `zh-Hant` / 繁体中文，就用繁体检索词；如果书是 `zh-Hans` / 简体中文，就用简体检索词；如果混合不同字形，优先拆成分书检索；如果需要更完整上下文，再用 `knowledge_locate` 读目录、章节页、命中页上下文或连续页原文；\n"
-        "5. 先用更大的检索块拿上下文：能一次传多本书就不要拆太细；需要 `knowledge_locate` 时，优先一次读取连续页范围，而不是连续很多次单页定位；\n"
-        "6. 如果在同一批书/同一问题上，做了 1-2 次有针对性的 `knowledge_locate` 还是只有弱结果、空结果、标题碎片、目录碎片或无关页面，就停止盲目扩展，在结果里明确说明证据缺口；\n"
+        "4. 检索路径固定为：先看系统是否已注入历史任务匹配；需要主动查历史结果时，直接调用 `knowledge_search(query=...)`，不要再传 `doc_ids`。如果历史结果仍不足，再用 `book_search` 选书、看 metadata（尤其 `语言` / `language_hint`、目录、摘要），然后用 `knowledge_locate` 读目录、章节页、命中页上下文或连续页原文；\n"
+        "5. 对原始资料的扩展优先走 `knowledge_locate` 的较大连续页范围，不要连续很多次单页定位；\n"
+        "6. 如果历史任务匹配很弱，且在同一批书/同一问题上做了 1-2 次有针对性的 `knowledge_locate` 还是只有弱结果、空结果、标题碎片、目录碎片或无关页面，就停止盲目扩展，在结果里明确说明证据缺口；\n"
         "7. 如果 `book_search` 返回了章节名、目录项、页码提示、短片段或疑似标题，应该立刻把它当导航线索交给 `knowledge_locate`；\n"
         "8. 如果 1-2 次 `knowledge_locate` 扩展后已经够写结论，就停止继续探测；\n"
         "9. 最终输出必须使用固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
@@ -497,6 +497,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                     sandbox_state=sandbox_state,
                     thread_data=thread_data,
                     thread_id=thread_id,
+                    user_id=runtime.context.get("user_id"),
                     trace_id=trace_id,
                 )
 
@@ -527,7 +528,12 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                     launched=len(launched),
                     timeout_seconds=config.timeout_seconds,
                 )
-                executor.execute_async(task_prompt, task_id=task_id)
+                executor.execute_async(
+                    task_prompt,
+                    task_id=task_id,
+                    task_title=todo["content"],
+                    task_level="subtask",
+                )
                 logger.info(
                     "[trace=%s] Dispatched todo subtask %s (active=%s queued=%s): %s",
                     trace_id,

@@ -594,6 +594,30 @@ class KnowledgeBaseRetriever:
         )
         return selected
 
+    def search_qdrant(
+        self,
+        query: str,
+        *,
+        doc_ids: list[str] | None = None,
+        top_k: int | None = None,
+    ) -> list[dict]:
+        """Run direct vector retrieval against the configured Qdrant collection."""
+        started_at = time.perf_counter()
+        results = self._search_collection(
+            self.config.qdrant.collection_name,
+            query,
+            doc_ids=doc_ids,
+            top_k=top_k or self.config.retrieval.top_k,
+        )
+        logger.info(
+            "Knowledge qdrant debug search: query=%r doc_ids=%s returned=%s elapsed_ms=%.1f",
+            query,
+            len(doc_ids or []),
+            len(results),
+            (time.perf_counter() - started_at) * 1000,
+        )
+        return results
+
 
 def get_retriever() -> KnowledgeBaseRetriever:
     """Get the singleton retriever instance."""

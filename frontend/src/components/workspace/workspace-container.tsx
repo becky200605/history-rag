@@ -119,5 +119,6 @@ function nameOfSegment(
   if (segment === "knowledge") return "知识库";
   if (segment === "notes") return "笔记";
   if (segment === "knowledge-manage") return "知识库管理";
+  if (segment === "knowledge-debug") return "检索实验台";
   return segment[0]?.toUpperCase() + segment.slice(1);
 }

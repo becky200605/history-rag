@@ -503,3 +503,127 @@ def test_load_global_book_metadata_falls_back_to_first_tag_for_legacy_records(mo
 
     assert result["tags"] == ["制度史", "明清"]
     assert result["folder"] == "制度史"
+
+
+def test_list_debug_search_books_returns_catalog_entries_with_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(
+        knowledge_router,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(enabled=True),
+    )
+    monkeypatch.setattr(
+        knowledge_router,
+        "list_global_knowledge_files",
+        lambda: {
+            "files": [
+                {
+                    "doc_id": "doc-1",
+                    "parse_status": "indexed",
+                    "indexable": True,
+                    "modified": 123.0,
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        knowledge_router,
+        "list_book_catalog",
+        lambda include_search_content=False, caller=None: [
+            SimpleNamespace(
+                doc_id="doc-1",
+                title="中國財政通史 第8卷（上）",
+                filename="中國財政通史 第8卷（上）.pdf",
+                scope="global",
+                folder_path="财政史/民国",
+                summary="测试摘要",
+                language_hint="zh-Hant",
+            )
+        ],
+    )
+
+    result = knowledge_router.list_debug_search_books()
+
+    assert result.count == 1
+    assert result.books[0].doc_id == "doc-1"
+    assert result.books[0].language_hint == "zh-Hant"
+    assert result.books[0].parse_status == "indexed"
+    assert result.books[0].indexable is True
+
+
+def test_debug_qdrant_search_returns_vector_results(monkeypatch) -> None:
+    monkeypatch.setattr(
+        knowledge_router,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(enabled=True),
+    )
+
+    class _DummyRetriever:
+        def search_qdrant(self, query, *, doc_ids=None, top_k=None):
+            assert query == "张之洞 洋务 实业"
+            assert doc_ids == ["doc-1"]
+            assert top_k == 5
+            return [
+                {
+                    "content": "这是一段足够长的向量检索命中正文。",
+                    "score": 0.87,
+                    "filename": "book.pdf",
+                    "source": "/api/knowledge/docs/book.pdf",
+                    "metadata": {
+                        "title": "测试书目",
+                        "doc_id": "doc-1",
+                        "scope": "global",
+                        "page_no": 12,
+                        "pdf_page_no": 12,
+                        "paragraph_no": 3,
+                        "source_kind": "global_document",
+                    },
+                }
+            ]
+
+    monkeypatch.setattr(knowledge_router, "get_retriever", lambda: _DummyRetriever())
+    monkeypatch.setattr(
+        knowledge_router,
+        "resolve_result_citation_context",
+        lambda result, thread_id=None, user_id=None: {
+            "source_url": "/api/knowledge/docs/book.pdf?page_no=12",
+            "original_url": None,
+        },
+    )
+
+    result = knowledge_router.debug_qdrant_search(
+        knowledge_router.KnowledgeDebugSearchRequest(
+            query="张之洞 洋务 实业",
+            doc_ids=["doc-1"],
+            top_k=5,
+        )
+    )
+
+    assert result.query == "张之洞 洋务 实业"
+    assert result.results[0].doc_id == "doc-1"
+    assert result.results[0].title == "测试书目"
+    assert result.results[0].page_no == 12
+
+
+def test_debug_knowledge_search_tool_returns_rendered_output(monkeypatch) -> None:
+    monkeypatch.setattr(
+        knowledge_router,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(enabled=True),
+    )
+    monkeypatch.setattr(
+        knowledge_router,
+        "knowledge_search_tool",
+        SimpleNamespace(func=lambda runtime, query, doc_ids=None: f"## 检索结果\n\nquery={query}\ndoc_ids={doc_ids}"),
+    )
+
+    result = knowledge_router.debug_knowledge_search_tool(
+        knowledge_router.KnowledgeDebugSearchRequest(
+            query="張之洞 生平 官職",
+            doc_ids=["doc-1", "doc-2"],
+            top_k=8,
+        )
+    )
+
+    assert "## 检索结果" in result.output
+    assert "張之洞 生平 官職" in result.output
+    assert "doc-1" in result.output

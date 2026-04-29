@@ -163,6 +163,65 @@ export interface KnowledgeDocumentListResponse {
   docs: KnowledgeDocumentInfo[];
 }
 
+export interface KnowledgeDebugBookInfo {
+  doc_id: string;
+  title: string;
+  filename: string;
+  scope: string;
+  folder?: string | null;
+  summary?: string | null;
+  language_hint?: string | null;
+  parse_status?: string | null;
+  indexable: boolean;
+  modified?: number | null;
+}
+
+export interface KnowledgeDebugBooksResponse {
+  books: KnowledgeDebugBookInfo[];
+  count: number;
+}
+
+export interface KnowledgeDebugSearchRequest {
+  query: string;
+  doc_ids: string[];
+  top_k?: number;
+}
+
+export interface KnowledgeDebugSearchResult {
+  content: string;
+  score: number;
+  filename: string;
+  title?: string | null;
+  doc_id?: string | null;
+  scope?: string | null;
+  source: string;
+  source_kind?: string | null;
+  line_start?: number | null;
+  line_end?: number | null;
+  page_no?: number | null;
+  pdf_page_no?: number | null;
+  book_page_no?: number | null;
+  paragraph_no?: number | null;
+  matched_keywords?: string[] | null;
+  source_url?: string | null;
+  original_url?: string | null;
+}
+
+export interface KnowledgeDebugQdrantResponse {
+  query: string;
+  doc_ids: string[];
+  top_k: number;
+  elapsed_ms: number;
+  results: KnowledgeDebugSearchResult[];
+}
+
+export interface KnowledgeDebugToolResponse {
+  query: string;
+  doc_ids: string[];
+  elapsed_ms: number;
+  output: string;
+}
+
 export type ResolvedKnowledgeDocument =
   | { scope: "global"; filename: string }
   | { scope: "user"; filename: string; basePath: string };
@@ -662,4 +721,47 @@ export async function deleteKnowledgeDocument(
     throw new Error(error.detail ?? "Failed to delete knowledge document");
   }
   return (await res.json()) as { success: boolean; message: string };
+}
+
+export async function listKnowledgeDebugBooks(): Promise<KnowledgeDebugBooksResponse> {
+  const res = await fetch(`${getBackendBaseURL()}/api/knowledge/debug/books`);
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail ?? "Failed to load debug books");
+  }
+  return (await res.json()) as KnowledgeDebugBooksResponse;
+}
+
+export async function runKnowledgeDebugQdrantSearch(
+  payload: KnowledgeDebugSearchRequest,
+): Promise<KnowledgeDebugQdrantResponse> {
+  const res = await fetch(`${getBackendBaseURL()}/api/knowledge/debug/qdrant-search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail ?? "Failed to run Qdrant debug search");
+  }
+  return (await res.json()) as KnowledgeDebugQdrantResponse;
+}
+
+export async function runKnowledgeDebugToolSearch(
+  payload: KnowledgeDebugSearchRequest,
+): Promise<KnowledgeDebugToolResponse> {
+  const res = await fetch(`${getBackendBaseURL()}/api/knowledge/debug/knowledge-search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail ?? "Failed to run knowledge_search debug call");
+  }
+  return (await res.json()) as KnowledgeDebugToolResponse;
 }

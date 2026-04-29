@@ -2,8 +2,10 @@ import json
 import logging
 import mimetypes
 import threading
+import time
 from collections import deque
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
@@ -24,6 +26,7 @@ from src.community.knowledge_base.book_metadata_runtime import (
     generate_book_metadata_record,
     maybe_generate_book_metadata,
 )
+from src.community.knowledge_base.catalog import list_book_catalog
 from src.community.knowledge_base.citations import (
     encode_source_url,
     resolve_result_citation_context,
@@ -54,6 +57,7 @@ from src.community.knowledge_base.structured_document import (
     load_structured_document,
     save_structured_document,
 )
+from src.community.knowledge_base.tools import knowledge_search_tool
 from src.community.knowledge_base.translation_grpc import translate_blocks_to_chinese_via_grpc
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.community.knowledge_base.common import derive_global_doc_id
@@ -203,6 +207,65 @@ class SearchResponse(BaseModel):
     """Response model for search operation."""
     query: str
     results: list[SearchResult]
+
+
+class KnowledgeDebugBookInfo(BaseModel):
+    doc_id: str
+    title: str
+    filename: str
+    scope: str
+    folder: str | None = None
+    summary: str | None = None
+    language_hint: str | None = None
+    parse_status: str | None = None
+    indexable: bool = False
+    modified: float | None = None
+
+
+class KnowledgeDebugBooksResponse(BaseModel):
+    books: list[KnowledgeDebugBookInfo]
+    count: int
+
+
+class KnowledgeDebugSearchRequest(BaseModel):
+    query: str
+    doc_ids: list[str]
+    top_k: int = 8
+
+
+class KnowledgeDebugSearchResult(BaseModel):
+    content: str
+    score: float
+    filename: str
+    title: str | None = None
+    doc_id: str | None = None
+    scope: str | None = None
+    source: str
+    source_kind: str | None = None
+    line_start: int | None = None
+    line_end: int | None = None
+    page_no: int | None = None
+    pdf_page_no: int | None = None
+    book_page_no: int | None = None
+    paragraph_no: int | None = None
+    matched_keywords: list[str] | None = None
+    source_url: str | None = None
+    original_url: str | None = None
+
+
+class KnowledgeDebugQdrantResponse(BaseModel):
+    query: str
+    doc_ids: list[str]
+    top_k: int
+    elapsed_ms: float
+    results: list[KnowledgeDebugSearchResult]
+
+
+class KnowledgeDebugToolResponse(BaseModel):
+    query: str
+    doc_ids: list[str]
+    elapsed_ms: float
+    output: str
 
 
 class KnowledgeParagraphLocationResponse(BaseModel):
@@ -527,6 +590,44 @@ def _load_structured_payload_for_metadata(filename: str) -> tuple[dict[str, Any]
         )
 
     return structured_payload, record, docs_dir
+
+
+def _build_debug_search_result(
+    result: dict[str, Any],
+    *,
+    thread_id: str | None = None,
+    user_id: str | None = None,
+) -> KnowledgeDebugSearchResult:
+    metadata = result.get("metadata", {})
+    citation_context = resolve_result_citation_context(
+        result,
+        thread_id=thread_id,
+        user_id=user_id,
+    )
+    return KnowledgeDebugSearchResult(
+        content=str(result.get("content") or ""),
+        score=float(result.get("score") or 0.0),
+        filename=str(result.get("filename") or metadata.get("filename") or "Unknown"),
+        title=metadata.get("title"),
+        doc_id=metadata.get("origin_doc_id") or metadata.get("doc_id"),
+        scope=metadata.get("scope"),
+        source=str(result.get("source") or metadata.get("source") or "Unknown"),
+        source_kind=metadata.get("source_kind"),
+        line_start=metadata.get("line_start"),
+        line_end=metadata.get("line_end"),
+        page_no=metadata.get("page_no"),
+        pdf_page_no=metadata.get("pdf_page_no"),
+        book_page_no=metadata.get("book_page_no"),
+        paragraph_no=metadata.get("paragraph_no"),
+        matched_keywords=[
+            str(item)
+            for item in result.get("matched_keywords") or []
+            if str(item).strip()
+        ]
+        or None,
+        source_url=citation_context["source_url"],
+        original_url=citation_context["original_url"],
+    )
 
 
 def _cleanup_global_record_artifacts(record: dict[str, Any], *, remove_source_file: bool) -> None:
@@ -1553,6 +1654,109 @@ async def reparse_global_knowledge_file(filename: str) -> dict:
         "success": True,
         "message": f"已重新加入解析队列：{source_filename}",
     }
+
+
+@router.get("/debug/books", response_model=KnowledgeDebugBooksResponse, summary="List Debug Search Books")
+def list_debug_search_books() -> KnowledgeDebugBooksResponse:
+    """List searchable global books for retrieval debugging UI."""
+    config = get_knowledge_base_config()
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
+
+    uploads = list_global_knowledge_files().get("files", [])
+    upload_by_doc_id = {
+        str(item.get("doc_id") or ""): item
+        for item in uploads
+        if str(item.get("doc_id") or "").strip()
+    }
+    entries = list_book_catalog(
+        include_search_content=False,
+        caller="knowledge.debug_books",
+    )
+    books: list[KnowledgeDebugBookInfo] = []
+    for entry in entries:
+        upload = upload_by_doc_id.get(entry.doc_id, {})
+        books.append(
+            KnowledgeDebugBookInfo(
+                doc_id=entry.doc_id,
+                title=entry.title,
+                filename=entry.filename,
+                scope=entry.scope,
+                folder=entry.folder_path,
+                summary=entry.summary or None,
+                language_hint=entry.language_hint,
+                parse_status=upload.get("parse_status"),
+                indexable=bool(upload.get("indexable", False)),
+                modified=upload.get("modified"),
+            )
+        )
+
+    books.sort(key=lambda item: ((item.folder or ""), item.title, item.filename))
+    return KnowledgeDebugBooksResponse(books=books, count=len(books))
+
+
+@router.post(
+    "/debug/qdrant-search",
+    response_model=KnowledgeDebugQdrantResponse,
+    summary="Run Direct Qdrant Search",
+)
+def debug_qdrant_search(payload: KnowledgeDebugSearchRequest) -> KnowledgeDebugQdrantResponse:
+    """Run direct vector retrieval against Qdrant for the selected books."""
+    config = get_knowledge_base_config()
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
+    if not payload.doc_ids:
+        raise HTTPException(status_code=400, detail="At least one doc_id is required")
+
+    started_at = time.perf_counter()
+    try:
+        results = get_retriever().search_qdrant(
+            payload.query,
+            doc_ids=payload.doc_ids,
+            top_k=payload.top_k,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Qdrant debug search failed: {exc}") from exc
+
+    return KnowledgeDebugQdrantResponse(
+        query=payload.query,
+        doc_ids=payload.doc_ids,
+        top_k=payload.top_k,
+        elapsed_ms=(time.perf_counter() - started_at) * 1000,
+        results=[_build_debug_search_result(result) for result in results],
+    )
+
+
+@router.post(
+    "/debug/knowledge-search",
+    response_model=KnowledgeDebugToolResponse,
+    summary="Run knowledge_search Tool",
+)
+def debug_knowledge_search_tool(payload: KnowledgeDebugSearchRequest) -> KnowledgeDebugToolResponse:
+    """Run the knowledge_search tool in conservative keyword mode."""
+    config = get_knowledge_base_config()
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
+    if not payload.doc_ids:
+        raise HTTPException(status_code=400, detail="At least one doc_id is required")
+
+    runtime = SimpleNamespace(context={})
+    started_at = time.perf_counter()
+    try:
+        output = knowledge_search_tool.func(
+            runtime,
+            query=payload.query,
+            doc_ids=payload.doc_ids,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"knowledge_search debug call failed: {exc}") from exc
+
+    return KnowledgeDebugToolResponse(
+        query=payload.query,
+        doc_ids=payload.doc_ids,
+        elapsed_ms=(time.perf_counter() - started_at) * 1000,
+        output=str(output or ""),
+    )
 
 
 @router.get("/search", response_model=SearchResponse, summary="Search Knowledge Base")

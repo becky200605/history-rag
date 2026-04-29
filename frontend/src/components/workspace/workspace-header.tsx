@@ -69,6 +69,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
   const isNewChatActive = pathname === "/workspace/chats/new";
   const isNotesActive = pathname === "/workspace/notes";
   const isKnowledgeManageActive = pathname === "/workspace/knowledge-manage";
+  const isKnowledgeDebugActive = pathname === "/workspace/knowledge-debug";
 
   if (isCollapsed) {
     return (
@@ -147,6 +148,30 @@ export function WorkspaceHeader({ className }: { className?: string }) {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            <SidebarMenuItem className="collapsed-stack-item group/menu-item">
+              <SidebarMenuButton
+                isActive={isKnowledgeDebugActive}
+                asChild
+                className="size-full rounded-none p-0! transition-colors group-data-[collapsible=icon]:size-full! hover:bg-transparent data-[active=true]:bg-transparent"
+              >
+                <Link
+                  className="group/item flex size-full flex-col items-center justify-center gap-2 px-1 py-3 font-serif transition-transform"
+                  href="/workspace/knowledge-debug"
+                >
+                  <span className="text-xl font-bold text-primary transition-all group-hover/menu-item:scale-105">
+                    伍
+                  </span>
+                  <span
+                    className={cn(
+                      "writing-vertical text-center text-xs font-medium tracking-[0.2em] text-sidebar-foreground transition-opacity duration-200 group-hover/menu-item:opacity-100",
+                      isKnowledgeDebugActive ? "opacity-100" : "opacity-0",
+                    )}
+                  >
+                    实验台
+                  </span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
           </>
         )}
       </>
@@ -210,6 +235,25 @@ export function WorkspaceHeader({ className }: { className?: string }) {
                 </div>
                 <span className="text-sm font-medium">
                   知识管理
+                </span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={isKnowledgeDebugActive}
+              asChild
+              className="h-auto py-2.5 transition-colors hover:bg-sidebar-accent data-[active=true]:bg-sidebar-accent"
+            >
+              <Link
+                className="flex w-full items-center gap-3 font-serif"
+                href="/workspace/knowledge-debug"
+              >
+                <div className="flex flex-col items-center">
+                  <span className="text-sidebar-foreground text-xs font-bold">伍</span>
+                </div>
+                <span className="text-sm font-medium">
+                  检索实验台
                 </span>
               </Link>
             </SidebarMenuButton>

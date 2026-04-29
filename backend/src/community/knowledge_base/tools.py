@@ -39,6 +39,7 @@ from src.community.knowledge_base.catalog import (
 )
 from src.community.knowledge_base.book_metadata import normalize_folder_path
 from src.community.knowledge_base.citations import resolve_result_citation_context
+from src.community.knowledge_base.common import tokenize_search_text
 from src.community.knowledge_base.locator import LocatedDocument, extract_document_context, locate_document
 from src.community.knowledge_base.reading_state import (
     COVERED_DOC_IDS_KEY,
@@ -200,19 +201,24 @@ def _split_loose_delimited_values(
     return parsed or None
 
 
-def _parse_doc_ids(doc_ids: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str] | None:
+def _parse_doc_ids(doc_ids: object) -> list[str] | None:
     if not doc_ids:
         return None
     if isinstance(doc_ids, str):
         stripped = doc_ids.strip()
-        matches = re.findall(r"\[([^\[\]]+)\]", stripped)
-        remainder = re.sub(r"\[[^\[\]]+\]", "", stripped).strip()
-        if not matches or remainder:
+        try:
+            decoded = json.loads(stripped)
+        except Exception as exc:
             raise ValueError(
-                "Invalid `doc_ids` format. When passing a string, use bracket blocks like "
-                "`[doc_id_1][doc_id_2][doc_id_3]`."
+                "Invalid `doc_ids` format. Pass a JSON array like "
+                '`["doc_id_1", "doc_id_2"]`.'
+            ) from exc
+        if not isinstance(decoded, list):
+            raise ValueError(
+                "Invalid `doc_ids` format. Pass a JSON array like "
+                '`["doc_id_1", "doc_id_2"]`.'
             )
-        parsed = [item.strip() for item in matches if item.strip()]
+        parsed = _split_loose_delimited_values(decoded)
         if not parsed:
             raise ValueError("Invalid `doc_ids` format: no non-empty doc_id found.")
         return parsed
@@ -388,8 +394,15 @@ def _intersect_doc_ids(
     return intersection or []
 
 
-def _format_doc_id_blocks(doc_ids: list[str]) -> str:
-    return "".join(f"[{doc_id}]" for doc_id in doc_ids)
+def _format_doc_ids_json(doc_ids: list[str]) -> str:
+    return json.dumps(doc_ids, ensure_ascii=False)
+
+
+def _is_substantive_search_excerpt(text: str) -> bool:
+    stripped = text.strip()
+    if len(stripped) < 18:
+        return False
+    return len(tokenize_search_text(stripped)) >= 3
 
 
 def _normalize_doc_id_match_key(value: str) -> str:
@@ -954,14 +967,14 @@ def book_search_tool(
             lines.append(f"- {_format_candidate_brief(candidate)}")
         if len(items) > 5:
             lines.append(f"- 其余 {len(items) - 5} 本已省略")
-        lines.append(f"doc_ids: {_format_doc_id_blocks([candidate.doc_id for candidate in items])}")
+        lines.append(f"doc_ids: {_format_doc_ids_json([candidate.doc_id for candidate in items])}")
         lines.append("")
 
-    user_doc_ids = _format_doc_id_blocks([candidate.doc_id for candidate in grouped["user"]]) if grouped["user"] else ""
-    thread_doc_ids = _format_doc_id_blocks([candidate.doc_id for candidate in grouped["thread"]]) if grouped["thread"] else ""
-    core_doc_ids = _format_doc_id_blocks([candidate.doc_id for candidate in grouped[CORE_TYPE]]) if grouped[CORE_TYPE] else ""
-    specialized_doc_ids = _format_doc_id_blocks([candidate.doc_id for candidate in grouped[SPECIALIZED_TYPE]]) if grouped[SPECIALIZED_TYPE] else ""
-    reference_doc_ids = _format_doc_id_blocks([candidate.doc_id for candidate in grouped[REFERENCE_TYPE]]) if grouped[REFERENCE_TYPE] else ""
+    user_doc_ids = _format_doc_ids_json([candidate.doc_id for candidate in grouped["user"]]) if grouped["user"] else ""
+    thread_doc_ids = _format_doc_ids_json([candidate.doc_id for candidate in grouped["thread"]]) if grouped["thread"] else ""
+    core_doc_ids = _format_doc_ids_json([candidate.doc_id for candidate in grouped[CORE_TYPE]]) if grouped[CORE_TYPE] else ""
+    specialized_doc_ids = _format_doc_ids_json([candidate.doc_id for candidate in grouped[SPECIALIZED_TYPE]]) if grouped[SPECIALIZED_TYPE] else ""
+    reference_doc_ids = _format_doc_ids_json([candidate.doc_id for candidate in grouped[REFERENCE_TYPE]]) if grouped[REFERENCE_TYPE] else ""
 
     lines.append("---")
     lines.append("检索规则:")
@@ -997,7 +1010,7 @@ def book_search_tool(
 def knowledge_search_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     query: str,
-    doc_ids: str | list[str] | tuple[str, ...] | set[str] | None = None,
+    doc_ids: list[str] | None = None,
     scopes: str | None = None,
     knowledge_folders: list[str] | None = None,
 ) -> str:
@@ -1005,9 +1018,9 @@ def knowledge_search_tool(
 
     This tool should usually be used after `book_search`, so retrieval can
     focus on the right books in a layered order instead of jumping into the
-    whole corpus. For broad history questions, it also expands the query into
-    multiple investigative facets so scattered records can be gathered and
-    synthesized together.
+    whole corpus. In the current conservative mode it only does keyword-based
+    paragraph retrieval over the selected books, and automatically skips very
+    short fragments.
 
     Recommended use:
     1. First call `book_search(query=...)` to identify likely user/system books.
@@ -1016,8 +1029,8 @@ def knowledge_search_tool(
        a first-pass batch search, instead of reading only one book first.
     3. After the batch pass, continue with narrower per-book queries and
        `knowledge_locate` on the books/locations that look promising.
-    4. For exact quotation / page / paragraph lookups, you may use narrower
-       scopes or doc filters and then call `knowledge_locate` for nearby context.
+    4. For exact quotation / page / paragraph lookups, keep the same `doc_ids`
+       and then call `knowledge_locate` for nearby context.
     5. `scopes` is a hard filter. If you already pass `doc_ids` from
        `book_search`, do not also force an incompatible scope. When in doubt,
        omit `scopes` and let the `doc_ids` control the search.
@@ -1033,18 +1046,17 @@ def knowledge_search_tool(
        for ...”, and do not over-shorten it into something vaguer than the
        user's actual question.
 
-    This tool searches through curated internal documents and returns relevant
-    knowledge snippets with source document references.
+    This tool searches through curated internal documents and returns keyword-hit
+    paragraphs with source document references and page anchors.
 
     Args:
         query: Search terms describing what evidence you need. Prefer
             sentence-like, source-anchored phrasing over keyword pile-ups or
             meta narration.
-        doc_ids: Optional candidate book IDs from `book_search`. Supports a
-            string or array input. When passing a string, use strict bracket
-            blocks like `[doc_id_1][doc_id_2][doc_id_3]`.
-            Prefer this for narrowing to known relevant books. If present,
-            `knowledge_search` should search these books directly.
+        doc_ids: Optional candidate book IDs from `book_search`. Pass them as a
+            JSON array, for example `["doc_id_1", "doc_id_2"]`. Prefer this for
+            narrowing to known relevant books. If present, `knowledge_search`
+            should search these books directly.
         scopes: Optional comma-separated hard filters: `user`, `thread`, `global`.
             Only set this when you intentionally want to exclude other scopes.
         knowledge_folders: Optional knowledge-base folder array. These are
@@ -1098,7 +1110,7 @@ def knowledge_search_tool(
             )
             return (
                 "Error: 以下 `doc_ids` 去除空格后匹配到多个候选，当前无法唯一确定："
-                f"{_format_doc_id_blocks(ambiguous_doc_ids)}。"
+                f"{_format_doc_ids_json(ambiguous_doc_ids)}。"
                 "请改用 `book_search` 返回的原样 `doc_ids`。"
             )
         if missing_doc_ids:
@@ -1110,8 +1122,8 @@ def knowledge_search_tool(
             )
             return (
                 "Error: 以下 `doc_ids` 在当前可见资料范围内不存在："
-                f"{_format_doc_id_blocks(missing_doc_ids)}。"
-                "请使用 `book_search` 返回的原样 `doc_ids`，并保持 `[doc_id_1][doc_id_2]` 这种格式。"
+                f"{_format_doc_ids_json(missing_doc_ids)}。"
+                "请使用 `book_search` 返回的原样 `doc_ids`，并保持 JSON 数组格式。"
             )
         effective_doc_ids = _intersect_doc_ids(resolved_doc_ids, selected_doc_ids)
         raw_knowledge_folders = _split_loose_delimited_values(knowledge_folders) or []
@@ -1204,6 +1216,12 @@ def knowledge_search_tool(
         )
         return f"Error searching knowledge base: {e}"
 
+    results = [
+        result
+        for result in results
+        if _is_substantive_search_excerpt(str(result.get("content") or ""))
+    ]
+
     if not results:
         logger.info(
             "Knowledge search no results: query=%r effective_doc_ids=%s elapsed_ms=%.1f",
@@ -1290,9 +1308,9 @@ def knowledge_search_tool(
         formatted_output += f"{content}\n\n"
 
     formatted_output += "---\n"
-    formatted_output += "这些结果已经做过联合检索与分面扩展；回答前先归并不同来源里的分散证据，不要只摘取单个综述段落。\n"
-    formatted_output += "如果你已经从 `book_search` 拿到了 `doc_ids`，优先继续围绕这些书换一个更贴近用户原问题的查询，不要随手改成更空泛的短词。\n"
-    formatted_output += "本库大多是长段正文，优先使用带锚点的句子型专业 query，不要把多个专题词机械并列成关键词串。\n"
+    formatted_output += "这些结果来自同一批书内的关键词段落检索，已自动过滤过短片段；回答前先归并不同来源里的分散证据，不要只摘取单个综述段落。\n"
+    formatted_output += "如果你已经从 `book_search` 拿到了 `doc_ids`，下一轮继续传 JSON 数组形式的同一批 `doc_ids`，优先围绕这些书换一个更贴近用户原问题的查询。\n"
+    formatted_output += "本库当前优先返回较长正文段落，优先使用带锚点的句子型专业 query，不要把多个专题词机械并列成关键词串。\n"
     formatted_output += "只有在你明确想排除某个范围时才传 `scopes`；`scopes` 是硬过滤，和 `doc_ids` 会取交集，传错会把本该能搜到的书直接滤掉。\n"
     formatted_output += "如果某条结果看起来像目录、标题、页眉页脚、边栏、图表标题或过短片段，把它当作导航线索，不要直接拿来支撑最终结论。\n"
     formatted_output += "遇到这类线索时，继续搜索对应的目录词、章节名、阶段名、制度名，再调用 `knowledge_locate` 展开附近正文。\n"
@@ -1358,13 +1376,13 @@ def knowledge_locate_tool(
         if ambiguous_doc_ids:
             return (
                 "Error: 当前 `knowledge_locate` 传入的 `doc_id` 去除空格后匹配到多个候选："
-                f"{_format_doc_id_blocks(ambiguous_doc_ids)}。"
+                f"{_format_doc_ids_json(ambiguous_doc_ids)}。"
                 "请改用 `book_search` / `knowledge_search` 返回的原样 `doc_id`。"
             )
         if missing_doc_ids:
             return (
                 "Error: 当前 `knowledge_locate` 传入的 `doc_id` 在可见资料范围内不存在："
-                f"{_format_doc_id_blocks(missing_doc_ids)}。"
+                f"{_format_doc_ids_json(missing_doc_ids)}。"
                 "请使用 `book_search` / `knowledge_search` 返回的原样 `doc_id`。"
             )
         resolved_doc_id = resolved_doc_ids[0] if resolved_doc_ids else doc_id

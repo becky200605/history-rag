@@ -433,10 +433,10 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "### 专题支撑书" in output
     assert "### 补充材料 / 参考工具书" in output
     assert "- User Book | doc_id=user-1 | 相关度=5.00" in output
-    assert "user doc_ids: [user-1]" in output
-    assert "core doc_ids: [core-1]" in output
-    assert "specialized doc_ids: [spec-1]" in output
-    assert "reference doc_ids: [ref-1]" in output
+    assert 'user doc_ids: ["user-1"]' in output
+    assert 'core doc_ids: ["core-1"]' in output
+    assert 'specialized doc_ids: ["spec-1"]' in output
+    assert 'reference doc_ids: ["ref-1"]' in output
     assert "允许混传不同层级的 `doc_ids`" in output
     assert "优先直接用这批 `doc_ids` 联合检索" in output
     assert "默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料" in output
@@ -773,7 +773,7 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
     tools_module.knowledge_search_tool.func(
         SimpleNamespace(context={"thread_id": "thread-1", "user_id": "user-1"}),
         "民国时期财政情况",
-        doc_ids="global-doc,global-doc-2",
+        doc_ids=["global-doc", "global-doc-2"],
         scopes="global",
         knowledge_folders=["财政史/清代"],
     )
@@ -782,7 +782,7 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
     assert captured["scopes"] == ["global"]
 
 
-def test_knowledge_search_tool_accepts_loose_doc_id_delimiters(monkeypatch) -> None:
+def test_knowledge_search_tool_accepts_json_doc_id_string(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class _DummyRetriever:
@@ -842,7 +842,7 @@ def test_knowledge_search_tool_accepts_loose_doc_id_delimiters(monkeypatch) -> N
     tools_module.knowledge_search_tool.func(
         SimpleNamespace(context={}),
         "任意问题",
-        doc_ids="global-doc-1，global-doc-2；\nglobal-doc-3",
+        doc_ids='["global-doc-1", "global-doc-2", "global-doc-3"]',
         knowledge_folders=["财政史/清代"],
     )
 
@@ -986,8 +986,7 @@ def test_knowledge_search_tool_requires_knowledge_folders(monkeypatch) -> None:
         knowledge_folders=None,
     )
 
-    assert "Error: `knowledge_search` 必须传入 `knowledge_folders`" in output
-    assert "## 可见知识库目录树" in output
+    assert "Error: `knowledge_search` 需要至少提供一种约束" in output
 
 
 def test_knowledge_search_tool_rejects_virtual_layer_labels_as_knowledge_folders(monkeypatch) -> None:
@@ -1025,7 +1024,7 @@ def test_knowledge_search_tool_rejects_virtual_layer_labels_as_knowledge_folders
 
 def test_tool_schema_marks_knowledge_folders_as_required() -> None:
     assert tools_module.book_search_tool.args_schema.model_fields["knowledge_folders"].is_required()
-    assert tools_module.knowledge_search_tool.args_schema.model_fields["knowledge_folders"].is_required()
+    assert not tools_module.knowledge_search_tool.args_schema.model_fields["knowledge_folders"].is_required()
 
 
 def test_knowledge_search_tool_allows_mixed_layer_doc_ids(monkeypatch) -> None:
@@ -1033,7 +1032,7 @@ def test_knowledge_search_tool_allows_mixed_layer_doc_ids(monkeypatch) -> None:
         def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None, folder_paths=None):
             return [
                 {
-                    "content": "混层检索命中结果。",
+                    "content": "混层检索命中结果，这是一段足够长的正文，用来验证跨层 doc_ids 联合检索仍然能够正常返回结果。",
                     "score": 0.91,
                     "filename": "ref.md",
                     "metadata": {
@@ -1086,7 +1085,7 @@ def test_knowledge_search_tool_allows_mixed_layer_doc_ids(monkeypatch) -> None:
     output = tools_module.knowledge_search_tool.func(
         SimpleNamespace(context={"thread_id": "thread-1", "user_id": "user-1"}),
         "任意问题",
-        doc_ids="[user-doc][reference-doc]",
+        doc_ids=["user-doc", "reference-doc"],
         knowledge_folders=["用户资料/人物", "参考资料/工具书"],
     )
 
@@ -1100,7 +1099,7 @@ def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) 
         def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None, folder_paths=None):
             return [
                 {
-                    "content": "民国财政以税收、公债与币制调整为主要线索。",
+                    "content": "民国财政以税收、公债与币制调整为主要线索，这段正文足够长，可用于验证工具尾部提示是否按新的关键词检索模式输出。",
                     "score": 0.91,
                     "filename": "finance.md",
                     "metadata": {
@@ -1157,12 +1156,13 @@ def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) 
     output = tools_module.knowledge_search_tool.func(
         SimpleNamespace(context={}),
         "民国时期财政情况",
-        doc_ids="global-doc",
+        doc_ids=["global-doc"],
         scopes="global",
         knowledge_folders=["财政史/民国"],
     )
 
-    assert "不要随手改成更空泛的短词" in output
+    assert "关键词段落检索" in output
+    assert "JSON 数组形式的同一批 `doc_ids`" in output
     assert "`scopes` 是硬过滤" in output
     assert "只有在你已经尝试了合理的换 query / 换书层 / `knowledge_locate` 展开后" in output
 
@@ -1199,18 +1199,16 @@ def test_knowledge_search_tool_no_result_guides_grounded_retries_before_web(monk
     output = tools_module.knowledge_search_tool.func(
         SimpleNamespace(context={}),
         "清代末期财政情况",
-        doc_ids="core-doc",
+        doc_ids=["core-doc"],
         scopes="global",
         knowledge_folders=["财政史/清代"],
     )
 
-    assert "不要因为这一轮空结果就直接换到别的书层" in output
-    assert "不要立刻放弃当前资料范围" in output
-    assert "句子型专业 query" in output
-    assert "关键词堆砌" in output
+    assert "先在同一批 `doc_ids` 里最多 grounded 重试 2 次" in output
+    assert "直接调用 `knowledge_locate(doc_id=...)` 做原文定位" in output
+    assert "建议下一轮 query" in output
     assert "`晚清财政情况如何`" in output
-    assert "`晚清财政收入结构发生了哪些变化`" in output
-    assert "只有在同一批最相关书里做过这些 grounded retries" in output
+    assert "`清末财政情况如何`" in output
 
 
 def test_knowledge_locate_tool_emits_citations_and_page_level_followup_guidance(monkeypatch) -> None:
@@ -1274,8 +1272,8 @@ def test_knowledge_locate_tool_emits_citations_and_page_level_followup_guidance(
 
     assert "citation: [citation:财政史 原书第12页第3段]" in output
     assert "citation: [citation:财政史 原书第12页第4段]" in output
-    assert "如果当前这次 `knowledge_locate` 只定位到页级" in output
-    assert "再追加一次 `knowledge_locate(doc_id=..., page_no=... 或 pdf_page_no=..., paragraph_no=...)`" in output
+    assert "如果同一主题明显跨相邻多页" in output
+    assert "`page_no_end` / `pdf_page_no_end`" in output
 
 
 def test_knowledge_locate_tool_supports_multi_page_ranges(monkeypatch) -> None:

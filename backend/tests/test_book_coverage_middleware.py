@@ -1,4 +1,15 @@
+import sys
 from types import SimpleNamespace
+from types import ModuleType
+
+if "langchain_core.memory" not in sys.modules:
+    langchain_core_memory = ModuleType("langchain_core.memory")
+
+    class _DummyBaseMemory:  # pragma: no cover - test import shim
+        pass
+
+    langchain_core_memory.BaseMemory = _DummyBaseMemory
+    sys.modules["langchain_core.memory"] = langchain_core_memory
 
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -44,7 +55,7 @@ def test_book_coverage_middleware_retries_when_model_keeps_searching_only_read_b
                             {
                                 "id": "call-1",
                                 "name": "knowledge_search",
-                                "args": {"query": "继续查", "doc_ids": "[read-doc]"},
+                                "args": {"query": "继续查", "doc_ids": ["read-doc"]},
                             }
                         ],
                     )
@@ -58,7 +69,7 @@ def test_book_coverage_middleware_retries_when_model_keeps_searching_only_read_b
                         {
                             "id": "call-2",
                             "name": "knowledge_search",
-                            "args": {"query": "去读未读书", "doc_ids": "[unread-doc]"},
+                            "args": {"query": "去读未读书", "doc_ids": ["unread-doc"]},
                         }
                     ],
                 )
@@ -69,4 +80,4 @@ def test_book_coverage_middleware_retries_when_model_keeps_searching_only_read_b
 
     assert len(seen_requests) == 2
     assert "未读书 (`unread-doc`)" in str(seen_requests[1].messages[-2].content)
-    assert final_response.result[-1].tool_calls[0]["args"]["doc_ids"] == "[unread-doc]"
+    assert final_response.result[-1].tool_calls[0]["args"]["doc_ids"] == ["unread-doc"]

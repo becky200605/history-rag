@@ -64,6 +64,10 @@ function sortNotes(records: UserKnowledgeRecord[]) {
   });
 }
 
+function isAppendableRecord(record: UserKnowledgeRecord) {
+  return !["upload", "import_ref"].includes(record.source_kind);
+}
+
 function buildDefaultNewNoteTitle(originTitle: string) {
   const trimmed = originTitle.trim();
   return trimmed ? `${trimmed} 摘录笔记` : "摘录笔记";
@@ -98,11 +102,7 @@ export function ExcerptToNoteDialog({
 
   const noteRecords = useMemo(
     () =>
-      sortNotes(
-        (recordsQuery.data?.records ?? []).filter(
-          (record) => record.source_kind === "note",
-        ),
-      ),
+      sortNotes((recordsQuery.data?.records ?? []).filter(isAppendableRecord)),
     [recordsQuery.data?.records],
   );
 

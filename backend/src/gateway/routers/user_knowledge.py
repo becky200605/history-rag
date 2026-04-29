@@ -1193,7 +1193,7 @@ def update_user_knowledge_record_content(
 
 
 @router.post("/{record_id}/append-excerpt", response_model=dict)
-def append_excerpt_to_user_note(
+def append_excerpt_to_user_record(
     user_id: str,
     record_id: str,
     payload: AppendExcerptToUserNoteRequest,
@@ -1201,8 +1201,9 @@ def append_excerpt_to_user_note(
     record = load_user_record(user_id, record_id)
     if not record:
         raise HTTPException(status_code=404, detail="Personal knowledge record not found")
-    if str(record.get("source_kind") or "") != "note":
-        raise HTTPException(status_code=400, detail="Only plain note records can receive appended excerpts")
+    source_kind = str(record.get("source_kind") or "")
+    if source_kind not in {"note", "excerpt", "annotation", "translation"}:
+        raise HTTPException(status_code=400, detail="This record type does not support appended excerpts")
     if not _record_is_text_editable(record):
         raise HTTPException(status_code=400, detail="This record is not editable")
 
@@ -1211,7 +1212,14 @@ def append_excerpt_to_user_note(
         raise HTTPException(status_code=400, detail="excerpt_text is required")
 
     existing_content = _read_record_text_content(user_id, record) or ""
-    parsed_title, parsed_editable_content = _extract_note_sections(existing_content)
+    if source_kind in {"excerpt", "annotation", "translation"}:
+        parsed_title, parsed_locked_excerpt, parsed_editable_content = _extract_derived_sections(existing_content)
+        origin_anchor = record.get("origin_anchor") if isinstance(record.get("origin_anchor"), dict) else None
+        locked_excerpt = str(origin_anchor.get("text") or parsed_locked_excerpt or "").strip("\n") if origin_anchor else parsed_locked_excerpt
+    else:
+        parsed_title, parsed_editable_content = _extract_note_sections(existing_content)
+        locked_excerpt = ""
+
     title = str(parsed_title or record.get("display_title") or record.get("title") or "未命名笔记").strip()
     if not title:
         title = "未命名笔记"
@@ -1223,7 +1231,17 @@ def append_excerpt_to_user_note(
     )
     next_body_parts = [parsed_editable_content.rstrip("\n"), excerpt_block]
     next_body = "\n\n".join(part for part in next_body_parts if part)
-    persisted_content = _build_note_markdown(title=title, content=next_body)
+    if source_kind in {"excerpt", "annotation", "translation"}:
+        persisted_content = _build_derived_markdown(
+            title=title,
+            source_kind=source_kind,
+            origin_filename=record.get("origin_filename"),
+            origin_anchor=record.get("origin_anchor") if isinstance(record.get("origin_anchor"), dict) else None,
+            locked_excerpt=locked_excerpt,
+            editable_content=next_body,
+        )
+    else:
+        persisted_content = _build_note_markdown(title=title, content=next_body)
 
     latest = _persist_text_record_and_reindex(
         user_id,

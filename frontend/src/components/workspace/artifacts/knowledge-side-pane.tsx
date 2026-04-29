@@ -858,18 +858,9 @@ export function KnowledgeSidePane({
       return (
         <div
           ref={viewportRef}
-          className="min-h-0 flex-1 overflow-y-auto px-6 py-7"
+          className="min-h-0 flex-1 overflow-y-auto px-8 py-8"
         >
-          <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
-            <div className="rounded-2xl border border-[rgba(57,130,152,0.14)] bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,251,250,0.98))] px-5 py-4 text-sm text-stone-600 shadow-sm">
-              <div className="font-serif text-[18px] font-semibold tracking-[0.08em] text-stone-800">
-                原文结构
-              </div>
-              <div className="mt-1 leading-7">
-                当前页按顺序转为横排阅读，不再使用段落定位信息。
-              </div>
-            </div>
-
+          <div className="mx-auto w-full max-w-5xl">
             {flowParagraphs.length === 0 ? (
               <div className="flex min-h-[220px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/80 px-6 text-center text-sm text-slate-500">
                 当前页暂无结构化文本。
@@ -878,17 +869,18 @@ export function KnowledgeSidePane({
               flowParagraphs.map(({ paragraph, contextParagraph }) => {
                 const isActive = activeKey === contextParagraph.key;
                 return (
-                  <div
+                  <p
                     key={contextParagraph.key}
                     className={cn(
-                      "rounded-[24px] border bg-white px-6 py-5 text-left shadow-[0_14px_34px_-28px_rgba(28,25,23,0.28)] transition-all duration-200",
-                      "font-serif text-[18px] leading-[2.05] tracking-[0.01em] text-stone-800",
+                      "px-0 py-0 text-left transition-colors duration-150",
+                      "font-serif text-[18px] leading-[2.15] tracking-[0.01em] text-stone-800",
+                      "[text-wrap:pretty] [&:not(:last-child)]:mb-6",
                       isExcerptable && "cursor-context-menu",
                       isActive
-                        ? "border-primary/40 bg-primary/5 ring-primary/25 ring-1"
+                        ? "bg-primary/6 text-stone-950"
                         : isHighlightable
-                          ? "hover:border-primary/30 border-[rgba(57,130,152,0.12)] hover:shadow-[0_18px_40px_-28px_rgba(28,25,23,0.32)]"
-                          : "border-[rgba(57,130,152,0.12)]",
+                          ? "hover:bg-stone-100/60"
+                          : "",
                     )}
                     onMouseEnter={
                       isHighlightable
@@ -928,10 +920,10 @@ export function KnowledgeSidePane({
                         : undefined
                     }
                   >
-                    <div className="break-words whitespace-pre-wrap">
+                    <span className="break-words whitespace-pre-wrap">
                       {paragraph.text}
-                    </div>
-                  </div>
+                    </span>
+                  </p>
                 );
               })
             )}

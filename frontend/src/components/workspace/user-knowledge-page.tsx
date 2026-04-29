@@ -1,10 +1,13 @@
 "use client";
 
 import {
+  ChevronDownIcon,
+  ChevronRightIcon,
   ExternalLinkIcon,
   FileTextIcon,
   FolderIcon,
   Loader2Icon,
+  FolderPlusIcon,
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -17,13 +20,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { CreateFolderDialog } from "@/components/workspace/knowledge-management-page.dialogs";
 import {
-  buildFolderBreadcrumbs,
-  buildScopedFolderTree,
-  findFolderNode,
   getFolderDisplayName,
   normalizeFolderPath,
-  type FolderTreeNode,
 } from "@/components/workspace/knowledge-management-page.utils";
 import {
   WorkspaceBody,
@@ -34,6 +34,7 @@ import { buildKnowledgeDocumentUrl } from "@/core/knowledge/api";
 import type { UserKnowledgeRecord } from "@/core/knowledge/user-api";
 import {
   useCreateUserDerivedKnowledge,
+  useCreateUserKnowledgeFolder,
   useDeleteUserKnowledgeRecord,
   useUpdateUserKnowledgeRecordContent,
   useUserKnowledgeRecordContent,
@@ -56,20 +57,6 @@ function formatTime(value?: string | null) {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  });
-}
-
-function formatListDate(value?: string | null) {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-  return date.toLocaleDateString("zh-CN", {
-    month: "numeric",
-    day: "numeric",
   });
 }
 
@@ -164,95 +151,277 @@ function sortRecords(records: UserKnowledgeRecord[]) {
   });
 }
 
-function SidebarRecordRow({
-  record,
-  isActive,
-  onClick,
-}: {
-  record: UserKnowledgeRecord;
-  isActive: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "group border-accent/10 relative flex min-h-[5.5rem] w-full min-w-0 flex-col justify-center gap-2 border-b px-6 py-4 text-left transition-all",
-        isActive
-          ? "bg-primary/5 text-primary"
-          : "text-stone-600 hover:bg-stone-50/50 hover:text-stone-900",
-      )}
-    >
-      <div
-        className={cn(
-          "bg-primary absolute top-0 bottom-0 left-0 w-1 transition-all",
-          isActive ? "opacity-100" : "opacity-0 group-hover:opacity-40",
-        )}
-      />
-
-      <span className="line-clamp-3 block min-w-0 flex-1 font-serif text-[15px] leading-[1.6] font-medium">
-        {getReadableRecordTitle(record)}
-      </span>
-      <div className="flex items-center justify-between gap-3">
-        <span className="truncate text-[11px] text-stone-400">
-          {normalizeFolderPath(record.folder_path)}
-        </span>
-        <span className="shrink-0 font-sans text-[10px] tracking-widest uppercase opacity-30">
-          {formatListDate(record.updated_at ?? record.created_at)}
-        </span>
-      </div>
-    </button>
-  );
-}
-
 function SidebarFolderNode({
   node,
   selectedFolderPath,
-  onSelect,
+  selectedRecordId,
+  expandedFolderPaths,
+  onToggleFolder,
+  onSelectFolder,
+  onSelectRecord,
+  onCreateNoteInFolder,
+  onCreateFolderInFolder,
+  registerRecordRef,
   depth = 0,
 }: {
-  node: FolderTreeNode;
+  node: NoteTreeFolderNode;
   selectedFolderPath: string;
-  onSelect: (path: string) => void;
+  selectedRecordId: string | null;
+  expandedFolderPaths: string[];
+  onToggleFolder: (path: string) => void;
+  onSelectFolder: (path: string) => void;
+  onSelectRecord: (record: UserKnowledgeRecord) => void;
+  onCreateNoteInFolder: (path: string) => void;
+  onCreateFolderInFolder: (path: string) => void;
+  registerRecordRef: (
+    recordId: string,
+  ) => (element: HTMLButtonElement | null) => void;
   depth?: number;
 }) {
   const isSelected = selectedFolderPath === node.path;
+  const isExpanded = expandedFolderPaths.includes(node.path);
+  const hasChildren = node.children.length > 0 || node.records.length > 0;
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => onSelect(node.path)}
+      <div
         className={cn(
-          "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-all",
+          "group flex items-center rounded-lg pr-2 transition-all",
           isSelected
             ? "bg-primary/8 text-primary"
             : "text-stone-600 hover:bg-stone-100 hover:text-stone-900",
         )}
-        style={{ paddingLeft: `${12 + depth * 14}px` }}
+        style={{ paddingLeft: `${8 + depth * 14}px` }}
       >
-        <FolderIcon className="size-4 shrink-0 opacity-70" />
-        <span className="min-w-0 flex-1 truncate">
-          {getFolderDisplayName(node.name)}
-        </span>
-        <span className="text-[10px] opacity-45">{node.fileCount}</span>
-      </button>
-      {node.children.length > 0 ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            if (hasChildren) {
+              onToggleFolder(node.path);
+            }
+          }}
+          className="flex size-8 shrink-0 items-center justify-center rounded-md opacity-70 hover:bg-black/5 hover:opacity-100"
+          aria-label={isExpanded ? "折叠文件夹" : "展开文件夹"}
+        >
+          {hasChildren ? (
+            isExpanded ? (
+              <ChevronDownIcon className="size-3.5" />
+            ) : (
+              <ChevronRightIcon className="size-3.5" />
+            )
+          ) : null}
+        </button>
+        <button
+          type="button"
+          onClick={() => onSelectFolder(node.path)}
+          className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-2 pl-0 text-left text-sm"
+        >
+          <FolderIcon className="size-4 shrink-0 opacity-70" />
+          <span className="min-w-0 flex-1 truncate">
+            {getFolderDisplayName(node.name)}
+          </span>
+          <span className="text-[10px] opacity-45">{node.fileCount}</span>
+        </button>
+        <div className="mr-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onCreateNoteInFolder(node.path);
+            }}
+            className="flex size-7 items-center justify-center rounded-md hover:bg-black/5"
+            title="在此文件夹新建笔记"
+          >
+            <PlusIcon className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onCreateFolderInFolder(node.path);
+            }}
+            className="flex size-7 items-center justify-center rounded-md hover:bg-black/5"
+            title="在此文件夹新建子文件夹"
+          >
+            <FolderPlusIcon className="size-3.5" />
+          </button>
+        </div>
+      </div>
+      {hasChildren && isExpanded ? (
         <div className="mt-0.5">
           {node.children.map((child) => (
             <SidebarFolderNode
               key={child.path}
               node={child}
               selectedFolderPath={selectedFolderPath}
-              onSelect={onSelect}
+              selectedRecordId={selectedRecordId}
+              expandedFolderPaths={expandedFolderPaths}
+              onToggleFolder={onToggleFolder}
+              onSelectFolder={onSelectFolder}
+              onSelectRecord={onSelectRecord}
+              onCreateNoteInFolder={onCreateNoteInFolder}
+              onCreateFolderInFolder={onCreateFolderInFolder}
+              registerRecordRef={registerRecordRef}
               depth={depth + 1}
             />
           ))}
+          {node.records.map((record) => {
+            const isActive = selectedRecordId === record.id;
+            return (
+              <button
+                key={record.id}
+                ref={registerRecordRef(record.id)}
+                type="button"
+                onClick={() => onSelectRecord(record)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-all",
+                  isActive
+                    ? "bg-primary/6 text-primary"
+                    : "text-stone-600 hover:bg-stone-50 hover:text-stone-900",
+                )}
+                style={{ paddingLeft: `${38 + depth * 14}px` }}
+              >
+                <FileTextIcon className="size-3.5 shrink-0 opacity-70" />
+                <span className="truncate">
+                  {getReadableRecordTitle(record)}
+                </span>
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>
   );
+}
+
+type NoteTreeFolderNode = {
+  name: string;
+  path: string;
+  fileCount: number;
+  children: NoteTreeFolderNode[];
+  records: UserKnowledgeRecord[];
+};
+
+function buildNoteFolderTree(
+  records: UserKnowledgeRecord[],
+  folderPaths: string[],
+): NoteTreeFolderNode[] {
+  type MutableNode = {
+    name: string;
+    path: string;
+    children: Map<string, MutableNode>;
+    records: UserKnowledgeRecord[];
+  };
+
+  const root = new Map<string, MutableNode>();
+
+  const ensureNode = (
+    map: Map<string, MutableNode>,
+    rawPath: string,
+    name: string,
+  ) => {
+    const existing = map.get(rawPath);
+    if (existing) {
+      return existing;
+    }
+    const next: MutableNode = {
+      name,
+      path: rawPath,
+      children: new Map(),
+      records: [],
+    };
+    map.set(rawPath, next);
+    return next;
+  };
+
+  const allFolderPaths = Array.from(
+    new Set([
+      ...folderPaths.map((folderPath) => normalizeFolderPath(folderPath)),
+      ...records.map((record) => normalizeFolderPath(record.folder_path)),
+    ]),
+  );
+
+  for (const folderPath of allFolderPaths) {
+    const segments = folderPath.split("/");
+    let current = root;
+    let currentPath = "";
+    for (const segment of segments) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      const node = ensureNode(current, `personal:${currentPath}`, segment);
+      current = node.children;
+    }
+  }
+
+  for (const record of records) {
+    const folderPath = normalizeFolderPath(record.folder_path);
+    const segments = folderPath.split("/");
+    let current = root;
+    let currentNode: MutableNode | null = null;
+    let currentPath = "";
+    for (const segment of segments) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      currentNode = ensureNode(current, `personal:${currentPath}`, segment);
+      current = currentNode.children;
+    }
+    currentNode?.records.push(record);
+  }
+
+  const toTree = (map: Map<string, MutableNode>): NoteTreeFolderNode[] =>
+    Array.from(map.values())
+      .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
+      .map((node) => {
+        const children = toTree(node.children);
+        const sortedRecords = sortRecords(node.records);
+        return {
+          name: node.name,
+          path: node.path,
+          fileCount:
+            sortedRecords.length +
+            children.reduce((sum, child) => sum + child.fileCount, 0),
+          children,
+          records: sortedRecords,
+        };
+      });
+
+  return toTree(root);
+}
+
+function buildAncestorFolderPaths(folderPath: string) {
+  const normalized = normalizeFolderPath(folderPath);
+  const segments = normalized.split("/");
+  const paths: string[] = [];
+  let current = "";
+  for (const segment of segments) {
+    current = current ? `${current}/${segment}` : segment;
+    paths.push(`personal:${current}`);
+  }
+  return paths;
+}
+
+function buildNoteTreeBreadcrumbs(
+  nodes: NoteTreeFolderNode[],
+  targetPath: string,
+) {
+  if (!targetPath) {
+    return [];
+  }
+  const path: Array<{ name: string; path: string }> = [];
+  const visit = (items: NoteTreeFolderNode[]): boolean => {
+    for (const node of items) {
+      path.push({ name: node.name, path: node.path });
+      if (node.path === targetPath) {
+        return true;
+      }
+      if (visit(node.children)) {
+        return true;
+      }
+      path.pop();
+    }
+    return false;
+  };
+  visit(nodes);
+  return path;
 }
 
 function ReadonlyRecordState({ record }: { record: UserKnowledgeRecord }) {
@@ -285,9 +454,14 @@ export default function NotesPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const recordElementRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
-  const [selectedFolderPath, setSelectedFolderPath] = useState("all");
+  const [selectedFolderPath, setSelectedFolderPath] = useState("");
+  const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([]);
+  const [isCreateFolderDialogOpen, setIsCreateFolderDialogOpen] =
+    useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
   const [titleDraft, setTitleDraft] = useState("");
   const [contentDraft, setContentDraft] = useState("");
   const [draftRecordId, setDraftRecordId] = useState<string | null>(null);
@@ -327,6 +501,7 @@ export default function NotesPage() {
 
   const { data, isLoading, error } = useUserKnowledgeRecords(activeSpaceId);
   const createMutation = useCreateUserDerivedKnowledge();
+  const createFolderMutation = useCreateUserKnowledgeFolder();
   const deleteMutation = useDeleteUserKnowledgeRecord();
   const updateMutation = useUpdateUserKnowledgeRecordContent();
 
@@ -339,20 +514,8 @@ export default function NotesPage() {
     [data?.folders],
   );
   const folderTree = useMemo(
-    () =>
-      buildScopedFolderTree({
-        filePaths: records.map((record) =>
-          normalizeFolderPath(record.folder_path),
-        ),
-        explicitPaths: personalFolderPaths,
-        prefix: "personal:",
-        source: "personal",
-      }),
+    () => buildNoteFolderTree(records, personalFolderPaths),
     [personalFolderPaths, records],
-  );
-  const selectedFolderNode = useMemo(
-    () => findFolderNode(folderTree, selectedFolderPath),
-    [folderTree, selectedFolderPath],
   );
   const selectedLogicalFolderPath = useMemo(() => {
     if (selectedFolderPath.startsWith("personal:")) {
@@ -360,25 +523,12 @@ export default function NotesPage() {
     }
     return "";
   }, [selectedFolderPath]);
-  const folderBreadcrumbs = useMemo(
-    () => buildFolderBreadcrumbs(folderTree, selectedFolderPath),
-    [folderTree, selectedFolderPath],
-  );
-  const visibleRecords = useMemo(() => {
-    if (
-      selectedFolderPath === "all" ||
-      selectedFolderPath === "personal-root"
-    ) {
-      return records;
+  const folderBreadcrumbs = useMemo(() => {
+    if (!selectedFolderPath) {
+      return [];
     }
-    return records.filter((record) => {
-      const recordFolderPath = `personal:${normalizeFolderPath(record.folder_path)}`;
-      return (
-        recordFolderPath === selectedFolderPath ||
-        recordFolderPath.startsWith(`${selectedFolderPath}/`)
-      );
-    });
-  }, [records, selectedFolderPath]);
+    return buildNoteTreeBreadcrumbs(folderTree, selectedFolderPath);
+  }, [folderTree, selectedFolderPath]);
   const requestedRecordId = searchParams.get("record");
 
   useEffect(() => {
@@ -395,49 +545,33 @@ export default function NotesPage() {
   }, [activeSpaceId, pathname, router, searchParams, selectedSpaceIdFromQuery]);
 
   useEffect(() => {
-    if (selectedFolderPath !== "all") {
-      const availablePaths = new Set<string>();
-      const collect = (nodes: FolderTreeNode[]) => {
-        for (const node of nodes) {
-          availablePaths.add(node.path);
-          collect(node.children);
-        }
-      };
-      collect(folderTree);
-      if (!availablePaths.has(selectedFolderPath)) {
-        setSelectedFolderPath("all");
-      }
-    }
-  }, [folderTree, selectedFolderPath]);
-
-  useEffect(() => {
-    if (visibleRecords.length === 0) {
+    if (records.length === 0) {
       setSelectedRecordId(null);
       return;
     }
     setSelectedRecordId((current) =>
-      current && visibleRecords.some((record) => record.id === current)
+      current && records.some((record) => record.id === current)
         ? current
-        : (visibleRecords[0]?.id ?? null),
+        : (records[0]?.id ?? null),
     );
-  }, [visibleRecords]);
+  }, [records]);
 
   useEffect(() => {
     if (!requestedRecordId) {
       return;
     }
-    const requestedRecord = visibleRecords.find(
+    const requestedRecord = records.find(
       (record) => record.id === requestedRecordId,
     );
     if (!requestedRecord) {
       return;
     }
     setSelectedRecordId(requestedRecordId);
-  }, [requestedRecordId, visibleRecords]);
+  }, [requestedRecordId, records]);
 
   const selectedRecord =
-    visibleRecords.find((record) => record.id === selectedRecordId) ??
-    visibleRecords[0] ??
+    records.find((record) => record.id === selectedRecordId) ??
+    records[0] ??
     null;
 
   const contentQuery = useUserKnowledgeRecordContent(
@@ -452,6 +586,43 @@ export default function NotesPage() {
     setTitleDraft(contentQuery.data.title);
     setContentDraft(contentQuery.data.editable_content);
   }, [contentQuery.data, selectedRecord?.id]);
+
+  useEffect(() => {
+    if (!selectedRecord) {
+      return;
+    }
+    const ancestorPaths = buildAncestorFolderPaths(
+      selectedRecord.folder_path ?? "",
+    );
+    setExpandedFolderPaths((current) =>
+      Array.from(new Set([...current, ...ancestorPaths])),
+    );
+    const folderPath = ancestorPaths[ancestorPaths.length - 1] ?? "";
+    if (folderPath) {
+      setSelectedFolderPath(folderPath);
+    }
+  }, [selectedRecord]);
+
+  useEffect(() => {
+    const topLevelPaths = folderTree.map((node) => node.path);
+    if (topLevelPaths.length === 0) {
+      return;
+    }
+    setExpandedFolderPaths((current) =>
+      Array.from(new Set([...topLevelPaths, ...current])),
+    );
+  }, [folderTree]);
+
+  useEffect(() => {
+    if (!selectedRecordId) {
+      return;
+    }
+    const element = recordElementRefs.current.get(selectedRecordId);
+    if (!element) {
+      return;
+    }
+    element.scrollIntoView({ block: "nearest" });
+  }, [selectedRecordId, expandedFolderPaths]);
 
   const isDraftDirty = useMemo(() => {
     if (!contentQuery.data || draftRecordId !== selectedRecord?.id) {
@@ -481,7 +652,40 @@ export default function NotesPage() {
     }
   };
 
-  const handleCreateNote = async () => {
+  const toggleFolderExpanded = (path: string) => {
+    setExpandedFolderPaths((current) =>
+      current.includes(path)
+        ? current.filter((item) => item !== path)
+        : [...current, path],
+    );
+  };
+
+  const handleSelectFolder = (path: string) => {
+    setSelectedFolderPath(path);
+  };
+
+  const handleSelectRecord = (record: UserKnowledgeRecord) => {
+    setSelectedRecordId(record.id);
+    const ancestors = buildAncestorFolderPaths(record.folder_path ?? "");
+    setExpandedFolderPaths((current) =>
+      Array.from(new Set([...current, ...ancestors])),
+    );
+    const leafPath = ancestors[ancestors.length - 1] ?? "";
+    if (leafPath) {
+      setSelectedFolderPath(leafPath);
+    }
+  };
+
+  const registerRecordRef =
+    (recordId: string) => (element: HTMLButtonElement | null) => {
+      if (element) {
+        recordElementRefs.current.set(recordId, element);
+        return;
+      }
+      recordElementRefs.current.delete(recordId);
+    };
+
+  const handleCreateNoteInFolderPath = async (folderPath: string | null) => {
     if (!activeSpaceId) {
       toast.error("当前没有可用的个人知识库文件夹");
       return;
@@ -492,12 +696,55 @@ export default function NotesPage() {
         content: "",
         sourceKind: "note",
         knowledgeSpaceId: activeSpaceId,
-        folderPath: selectedLogicalFolderPath || null,
+        folderPath,
       });
       setSelectedRecordId(created.record.id);
       toast.success("已新建笔记");
     } catch (createError) {
       toast.error((createError as Error).message ?? "新建笔记失败");
+    }
+  };
+
+  const handleCreateNote = async () => {
+    await handleCreateNoteInFolderPath(selectedLogicalFolderPath || null);
+  };
+
+  const handleCreateNoteInFolder = (path: string) => {
+    void handleCreateNoteInFolderPath(path.replace(/^personal:/, ""));
+  };
+
+  const handleOpenCreateFolderDialog = (path?: string) => {
+    if (path) {
+      setSelectedFolderPath(path);
+      setExpandedFolderPaths((current) =>
+        current.includes(path) ? current : [...current, path],
+      );
+    }
+    setIsCreateFolderDialogOpen(true);
+  };
+
+  const handleCreateFolder = async () => {
+    const trimmedName = newFolderName.trim();
+    if (!trimmedName) {
+      toast.error("请输入文件夹名称");
+      return;
+    }
+    const nextPath = selectedLogicalFolderPath
+      ? `${selectedLogicalFolderPath}/${trimmedName}`
+      : trimmedName;
+    try {
+      await createFolderMutation.mutateAsync(nextPath);
+      setExpandedFolderPaths((current) =>
+        Array.from(
+          new Set([...current, ...buildAncestorFolderPaths(nextPath)]),
+        ),
+      );
+      setSelectedFolderPath(`personal:${nextPath}`);
+      setNewFolderName("");
+      setIsCreateFolderDialogOpen(false);
+      toast.success("已新建文件夹");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "新建文件夹失败");
     }
   };
 
@@ -544,83 +791,69 @@ export default function NotesPage() {
     <WorkspaceContainer>
       <WorkspaceHeader className="border-primary/5 border-b" />
       <WorkspaceBody className="min-h-0 overflow-hidden bg-white">
+        <CreateFolderDialog
+          open={isCreateFolderDialogOpen}
+          onOpenChange={(open) => {
+            setIsCreateFolderDialogOpen(open);
+            if (!open) {
+              setNewFolderName("");
+            }
+          }}
+          title="新建笔记文件夹"
+          description={
+            selectedLogicalFolderPath
+              ? `新文件夹会创建在“${selectedLogicalFolderPath}”下。`
+              : "新文件夹会创建在个人笔记根目录下。"
+          }
+          value={newFolderName}
+          onValueChange={setNewFolderName}
+          onSubmit={() => void handleCreateFolder()}
+          isPending={createFolderMutation.isPending}
+        />
         <div className="flex h-full min-h-0 w-full overflow-hidden bg-transparent">
           <aside className="border-accent/20 flex min-h-0 w-full shrink-0 flex-col border-b bg-white lg:w-[280px] lg:border-r lg:border-b-0">
             <div className="p-4">
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-primary/30 bg-primary/5 text-primary hover:bg-primary group h-11 w-full justify-start gap-3 rounded-none font-serif transition-all hover:text-white"
-                disabled={createMutation.isPending}
-                onClick={() => void handleCreateNote()}
-              >
-                {createMutation.isPending ? (
-                  <Loader2Icon className="size-4 animate-spin" />
-                ) : (
-                  <PlusIcon className="size-4 transition-transform group-hover:rotate-90" />
-                )}
-                <span className="tracking-widest">
-                  起卷{" "}
-                  {selectedLogicalFolderPath
-                    ? `· ${selectedLogicalFolderPath}`
-                    : ""}
-                </span>
-              </Button>
-            </div>
-
-            <div className="border-accent/10 border-y px-4 py-2 font-sans text-[10px] tracking-[0.2em] text-stone-400 uppercase">
-              目录结构
-            </div>
-            <ScrollArea className="border-accent/10 max-h-[240px] border-b">
-              <div className="p-3">
-                <button
-                  type="button"
-                  onClick={() => setSelectedFolderPath("all")}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-all",
-                    selectedFolderPath === "all"
-                      ? "bg-primary/8 text-primary"
-                      : "text-stone-600 hover:bg-stone-100 hover:text-stone-900",
-                  )}
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-primary/30 bg-primary/5 text-primary hover:bg-primary group h-11 flex-1 justify-start gap-2 rounded-none font-serif transition-all hover:text-white"
+                  disabled={createMutation.isPending}
+                  onClick={() => void handleCreateNote()}
                 >
-                  <FolderIcon className="size-4 shrink-0 opacity-70" />
-                  <span className="flex-1">全部笔记</span>
-                  <span className="text-[10px] opacity-45">
-                    {records.length}
-                  </span>
-                </button>
-                <div className="mt-1">
-                  {folderTree.map((node) => (
-                    <SidebarFolderNode
-                      key={node.path}
-                      node={node}
-                      selectedFolderPath={selectedFolderPath}
-                      onSelect={setSelectedFolderPath}
-                    />
-                  ))}
-                </div>
+                  {createMutation.isPending ? (
+                    <Loader2Icon className="size-4 animate-spin" />
+                  ) : (
+                    <PlusIcon className="size-4 transition-transform group-hover:rotate-90" />
+                  )}
+                  <span className="tracking-widest">新建笔记</span>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-11 w-11 shrink-0 rounded-none border-stone-300 bg-white px-0"
+                  disabled={createFolderMutation.isPending}
+                  onClick={() => handleOpenCreateFolderDialog()}
+                  title={
+                    selectedLogicalFolderPath
+                      ? `在 ${selectedLogicalFolderPath} 下新建文件夹`
+                      : "新建文件夹"
+                  }
+                >
+                  {createFolderMutation.isPending ? (
+                    <Loader2Icon className="size-4 animate-spin" />
+                  ) : (
+                    <FolderPlusIcon className="size-4" />
+                  )}
+                </Button>
               </div>
-            </ScrollArea>
-
-            <div className="border-accent/10 border-b px-4 py-3">
-              <div className="font-sans text-[10px] tracking-[0.2em] text-stone-400 uppercase">
-                当前目录
+              <div className="mt-3 text-[11px] leading-5 text-stone-400">
+                {selectedFolderPath && folderBreadcrumbs.length > 0
+                  ? `当前位置：${folderBreadcrumbs
+                      .map((crumb) => getFolderDisplayName(crumb.name))
+                      .join(" / ")}`
+                  : "按文件夹展开和折叠笔记结构"}
               </div>
-              <div className="mt-2 min-h-[22px] text-sm text-stone-700">
-                {selectedFolderPath === "all"
-                  ? "全部笔记"
-                  : folderBreadcrumbs.length > 0
-                    ? folderBreadcrumbs
-                        .map((crumb) => getFolderDisplayName(crumb.name))
-                        .join(" / ")
-                    : getFolderDisplayName(
-                        selectedFolderNode?.name ?? "未分类",
-                      )}
-              </div>
-            </div>
-
-            <div className="border-accent/10 border-b px-4 py-2 font-sans text-[10px] tracking-[0.2em] text-stone-400 uppercase">
-              目次 · {visibleRecords.length} 卷
             </div>
 
             <ScrollArea className="min-h-0 flex-1">
@@ -633,18 +866,23 @@ export default function NotesPage() {
                 <div className="m-4 border border-red-500/20 bg-red-500/6 p-4 text-sm text-red-600">
                   {error.message}
                 </div>
-              ) : visibleRecords.length === 0 ? (
-                <div className="p-4 text-sm text-slate-500">
-                  当前目录下暂无笔记。
-                </div>
+              ) : records.length === 0 ? (
+                <div className="p-4 text-sm text-slate-500">暂无笔记。</div>
               ) : (
-                <div>
-                  {visibleRecords.map((record) => (
-                    <SidebarRecordRow
-                      key={record.id}
-                      record={record}
-                      isActive={selectedRecord?.id === record.id}
-                      onClick={() => setSelectedRecordId(record.id)}
+                <div className="px-2 py-3">
+                  {folderTree.map((node) => (
+                    <SidebarFolderNode
+                      key={node.path}
+                      node={node}
+                      selectedFolderPath={selectedFolderPath}
+                      selectedRecordId={selectedRecord?.id ?? null}
+                      expandedFolderPaths={expandedFolderPaths}
+                      onToggleFolder={toggleFolderExpanded}
+                      onSelectFolder={handleSelectFolder}
+                      onSelectRecord={handleSelectRecord}
+                      onCreateNoteInFolder={handleCreateNoteInFolder}
+                      onCreateFolderInFolder={handleOpenCreateFolderDialog}
+                      registerRecordRef={registerRecordRef}
                     />
                   ))}
                 </div>

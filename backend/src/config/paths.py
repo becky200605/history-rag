@@ -132,6 +132,14 @@ class Paths:
         """Host path for a user's knowledge metadata/catalog records."""
         return self.user_knowledge_dir(user_id) / ".catalog"
 
+    def knowledge_search_dir(self) -> Path:
+        """Host path for shared keyword-search derived artifacts."""
+        return self.base_dir / "knowledge-search"
+
+    def knowledge_search_db_path(self) -> Path:
+        """Host path for the shared SQLite keyword-search index."""
+        return self.knowledge_search_dir() / "paragraphs.sqlite3"
+
     def ensure_thread_dirs(self, thread_id: str) -> None:
         """Create all standard sandbox directories for a thread."""
         self.sandbox_work_dir(thread_id).mkdir(parents=True, exist_ok=True)
@@ -144,6 +152,10 @@ class Paths:
         self.user_knowledge_ingestion_dir(user_id).mkdir(parents=True, exist_ok=True)
         self.user_knowledge_derived_dir(user_id).mkdir(parents=True, exist_ok=True)
         self.user_knowledge_catalog_dir(user_id).mkdir(parents=True, exist_ok=True)
+
+    def ensure_knowledge_search_dirs(self) -> None:
+        """Create directories for shared keyword-search artifacts."""
+        self.knowledge_search_dir().mkdir(parents=True, exist_ok=True)
 
     def resolve_virtual_path(self, thread_id: str, virtual_path: str) -> Path:
         """Resolve a sandbox virtual path to the actual host filesystem path.

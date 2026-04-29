@@ -6,6 +6,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Generic, TYPE_CHECKING, TypeVar
+from pydantic import BaseModel, Field, field_validator
 try:
     from langchain.tools import ToolRuntime, tool
 except ImportError:  # pragma: no cover - compatibility with older LangChain layouts
@@ -67,6 +68,42 @@ HISTORICAL_PERIOD_ALIASES = {
 HISTORICAL_TOPIC_RETRY_HINTS = ("情况", "概况", "变化", "变迁", "问题", "状况")
 FINANCE_RETRY_FACETS = ("财政收入结构", "财政支出结构", "财政政策")
 logger = logging.getLogger(__name__)
+
+
+class KnowledgeSearchArgs(BaseModel):
+    query: str = Field(description="Search query anchored to the user's question.")
+    doc_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            'Candidate book IDs from `book_search`. Pass a native array value such as '
+            '["doc_id_1", "doc_id_2"] and do not wrap the whole array in quotes.'
+        ),
+    )
+    scopes: str | None = Field(
+        default=None,
+        description="Optional comma-separated hard filters: user, thread, global.",
+    )
+    knowledge_folders: list[str] | None = Field(
+        default=None,
+        description="Optional logical knowledge-base folder list.",
+    )
+
+    @field_validator("doc_ids", mode="before")
+    @classmethod
+    def _coerce_doc_ids(cls, value: object) -> object:
+        if value is None or isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            try:
+                decoded = json.loads(stripped)
+            except Exception:
+                return value
+            if isinstance(decoded, list):
+                return decoded
+        return value
 
 
 def _tool_runtime_state(runtime: ToolRuntime[ContextT, ThreadState]) -> dict[str, Any] | None:
@@ -813,12 +850,32 @@ def _candidate_layer_label(layer: str) -> str:
     return labels.get(layer, "其他候选书")
 
 
+def _format_language_hint(language_hint: str | None) -> str | None:
+    normalized = str(language_hint or "").strip()
+    if not normalized:
+        return None
+    labels = {
+        "zh-Hans": "简体中文",
+        "zh-CN": "简体中文",
+        "zh-Hant": "繁体中文",
+        "zh-TW": "繁体中文",
+        "zh-HK": "繁体中文",
+        "en": "英文",
+    }
+    label = labels.get(normalized)
+    if label:
+        return f"{label} ({normalized})"
+    return normalized
+
+
 def _format_candidate_brief(candidate: BookCatalogEntry) -> str:
     parts = [candidate.title, f"doc_id={candidate.doc_id}"]
     if candidate.score is not None:
         parts.append(f"相关度={candidate.score:.2f}")
     if candidate.folder_path:
         parts.append(f"目录={candidate.folder_path}")
+    if formatted_language := _format_language_hint(candidate.language_hint):
+        parts.append(f"语言={formatted_language}")
     return " | ".join(parts)
 
 
@@ -979,8 +1036,10 @@ def book_search_tool(
     lines.append("---")
     lines.append("检索规则:")
     lines.append("1. 可将多本相关书一起传给 `knowledge_search`，允许混传不同层级的 `doc_ids`。")
-    lines.append("2. 如果你已经确定一批书需要对读，优先直接用这批 `doc_ids` 联合检索。")
+    lines.append("2. 如果你已经确定一批书需要对读，优先直接用这批 `doc_ids` 联合检索；调用时把它作为原生数组值传入，不要再额外包一层引号。")
     lines.append("3. 默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料。")
+    lines.append("4. 检索前先看每本候选书的 metadata，尤其 `语言`、`目录`、`摘要` 等信号。")
+    lines.append("5. 如果某本书标记为 `zh-Hant` / 繁体中文，就用繁体检索词；如果标记为 `zh-Hans` / 简体中文，就用简体检索词。混合不同字形的书时，优先按书或按字形分开搜。")
     if user_doc_ids:
         lines.append(f"user doc_ids: {user_doc_ids}")
     if thread_doc_ids:
@@ -1006,7 +1065,7 @@ def book_search_tool(
     return "\n".join(lines)
 
 
-@tool("knowledge_search", parse_docstring=True)
+@tool("knowledge_search", args_schema=KnowledgeSearchArgs)
 def knowledge_search_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     query: str,
@@ -1038,7 +1097,15 @@ def knowledge_search_tool(
        drive retrieval directly; do not add an unnecessary folder constraint.
     7. You may pass `knowledge_folders` only when you intentionally want to
        constrain a search that is not already narrowed by `doc_ids`.
-    8. Keep `query` close to the user's wording and key anchors. Preserve
+    8. Before searching, inspect the selected books' metadata from
+       `book_search`, especially language/script hints such as `zh-Hans`
+       or `zh-Hant`, plus folder/summary signals.
+    9. Use query terms in the same script/language as the target book whenever
+       possible: for `zh-Hant` / 繁体书 use traditional-Chinese search terms;
+       for `zh-Hans` / 简体书 use simplified-Chinese search terms. If the
+       selected books mix scripts, prefer separate per-book or per-script
+       searches instead of one mixed-script query.
+    10. Keep `query` close to the user's wording and key anchors. Preserve
        book names, people, periods, institutions, years, and policy terms.
        Prefer a sentence-like professional query over a keyword pile-up.
        Do not write a bag of terms like `清代末期财政情况 财政收支结构 财政政策 财政危机`.
@@ -1052,10 +1119,13 @@ def knowledge_search_tool(
     Args:
         query: Search terms describing what evidence you need. Prefer
             sentence-like, source-anchored phrasing over keyword pile-ups or
-            meta narration.
-        doc_ids: Optional candidate book IDs from `book_search`. Pass them as a
-            JSON array, for example `["doc_id_1", "doc_id_2"]`. Prefer this for
-            narrowing to known relevant books. If present, `knowledge_search`
+            meta narration. Match the target book's language/script from
+            `book_search` metadata whenever possible, for example use 繁体词
+            against `zh-Hant` books and 简体词 against `zh-Hans` books.
+        doc_ids: Optional candidate book IDs from `book_search`. Pass them as a native
+            array value, for example `["doc_id_1", "doc_id_2"]`, and do not wrap that
+            array in an extra string such as `"[\"doc_id_1\", \"doc_id_2\"]"`. Prefer
+            this for narrowing to known relevant books. If present, `knowledge_search`
             should search these books directly.
         scopes: Optional comma-separated hard filters: `user`, `thread`, `global`.
             Only set this when you intentionally want to exclude other scopes.
@@ -1309,7 +1379,8 @@ def knowledge_search_tool(
 
     formatted_output += "---\n"
     formatted_output += "这些结果来自同一批书内的关键词段落检索，已自动过滤过短片段；回答前先归并不同来源里的分散证据，不要只摘取单个综述段落。\n"
-    formatted_output += "如果你已经从 `book_search` 拿到了 `doc_ids`，下一轮继续传 JSON 数组形式的同一批 `doc_ids`，优先围绕这些书换一个更贴近用户原问题的查询。\n"
+    formatted_output += "如果你已经从 `book_search` 拿到了 `doc_ids`，下一轮继续把同一批 `doc_ids` 作为原生数组值传入，不要把整个数组再包成字符串，优先围绕这些书换一个更贴近用户原问题的查询。\n"
+    formatted_output += "下一轮换 query 前，先看这些书在 `book_search` 里暴露出的 metadata；若目标书是 `zh-Hant` / 繁体中文，就改用繁体检索词，若是 `zh-Hans` / 简体中文，就改用简体检索词。混合不同字形的书时，优先拆成分书检索。\n"
     formatted_output += "本库当前优先返回较长正文段落，优先使用带锚点的句子型专业 query，不要把多个专题词机械并列成关键词串。\n"
     formatted_output += "只有在你明确想排除某个范围时才传 `scopes`；`scopes` 是硬过滤，和 `doc_ids` 会取交集，传错会把本该能搜到的书直接滤掉。\n"
     formatted_output += "如果某条结果看起来像目录、标题、页眉页脚、边栏、图表标题或过短片段，把它当作导航线索，不要直接拿来支撑最终结论。\n"

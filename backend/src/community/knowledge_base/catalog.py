@@ -96,6 +96,7 @@ class BookCatalogEntry:
     score: float | None = None
     metadata_source: str | None = None
     folder_path: str | None = None
+    language_hint: str | None = None
 
 
 @dataclass
@@ -113,6 +114,7 @@ class CatalogMetadataRecord:
     search_terms: list[str] = field(default_factory=list)
     source_path: str | None = None
     folder_path: str | None = None
+    language_hint: str | None = None
 
 
 TREE_FILE_KEY = "__files__"
@@ -255,6 +257,7 @@ def _coerce_catalog_metadata_record(payload: dict[str, object], source_path: str
         search_terms=_as_list(payload.get("search_terms")),
         source_path=source_path,
         folder_path=normalize_folder_path(payload.get("folder")),
+        language_hint=str(payload.get("language_hint") or "").strip() or None,
     )
 
 
@@ -286,6 +289,7 @@ def _merge_metadata_record(
         search_terms=record.search_terms or existing.search_terms,
         source_path=record.source_path or existing.source_path,
         folder_path=record.folder_path or existing.folder_path,
+        language_hint=record.language_hint or existing.language_hint,
     )
 
 
@@ -355,6 +359,7 @@ def _book_metadata_search_text(metadata: CatalogMetadataRecord) -> str:
         metadata.type,
         metadata.title or "",
         metadata.folder_path or "",
+        metadata.language_hint or "",
         metadata.summary,
         " ".join(metadata.categories),
         " ".join(metadata.eras),
@@ -390,6 +395,7 @@ def _apply_metadata_to_entry(
         search_tokens=tokenize_search_text(search_text),
         metadata_source=metadata.source_path,
         folder_path=resolved_folder_path,
+        language_hint=metadata.language_hint or entry.language_hint,
     )
 
 
@@ -399,6 +405,8 @@ def _format_metadata_text(entry: BookCatalogEntry) -> str:
         parts.append(f"类型: {entry.type}")
     if entry.folder_path:
         parts.append(f"目录: {entry.folder_path}")
+    if entry.language_hint:
+        parts.append(f"语言: {entry.language_hint}")
     if entry.categories:
         parts.append(f"分类: {'、'.join(entry.categories)}")
     if entry.eras:
@@ -570,6 +578,7 @@ def _build_global_entries(
                 search_text=normalize_search_text(f"{title} {extracted_title} {search_excerpt}"),
                 search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
                 folder_path=normalize_folder_path(payload.get("folder_path")),
+                language_hint=str((payload.get("hints") or {}).get("language_hint") or "").strip() or None,
             )
             entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
             seen_filenames.add(str(source_filename))
@@ -664,6 +673,7 @@ def _build_thread_entries(
             preview=preview[:240],
             search_text=normalize_search_text(f"{title} {extracted_title} {search_excerpt}"),
             search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
+            language_hint=str((record.get("hints") or {}).get("language_hint") or "").strip() or None,
         )
         entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
 
@@ -722,6 +732,7 @@ def _build_user_entries(
             search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
             type="user",
             folder_path=normalize_folder_path(record.get("folder_path")),
+            language_hint=str((record.get("hints") or {}).get("language_hint") or "").strip() or None,
         )
         entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
 

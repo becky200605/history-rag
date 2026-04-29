@@ -371,6 +371,7 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
             priority=1,
             score=4.0,
             folder_path="人物传记/晚清",
+            language_hint="zh-Hant",
         ),
         BookCatalogEntry(
             doc_id="spec-1",
@@ -433,6 +434,7 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "### 专题支撑书" in output
     assert "### 补充材料 / 参考工具书" in output
     assert "- User Book | doc_id=user-1 | 相关度=5.00" in output
+    assert "语言=繁体中文 (zh-Hant)" in output
     assert 'user doc_ids: ["user-1"]' in output
     assert 'core doc_ids: ["core-1"]' in output
     assert 'specialized doc_ids: ["spec-1"]' in output
@@ -440,6 +442,8 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "允许混传不同层级的 `doc_ids`" in output
     assert "优先直接用这批 `doc_ids` 联合检索" in output
     assert "默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料" in output
+    assert "检索前先看每本候选书的 metadata" in output
+    assert "就用繁体检索词" in output
 
 
 def test_book_search_tool_lists_catalog_once_and_reuses_entries(monkeypatch) -> None:
@@ -849,6 +853,15 @@ def test_knowledge_search_tool_accepts_json_doc_id_string(monkeypatch) -> None:
     assert captured["doc_ids"] == ["global-doc-1", "global-doc-2", "global-doc-3"]
 
 
+def test_knowledge_search_tool_schema_exposes_doc_ids_as_array() -> None:
+    schema = tools_module.knowledge_search_tool.args_schema.model_json_schema()
+    doc_ids_schema = schema["properties"]["doc_ids"]
+    assert "anyOf" in doc_ids_schema
+    array_schema = next(item for item in doc_ids_schema["anyOf"] if item.get("type") == "array")
+    assert array_schema["items"]["type"] == "string"
+    assert not any(item.get("type") == "string" for item in doc_ids_schema["anyOf"])
+
+
 def test_knowledge_search_tool_accepts_doc_id_arrays(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -1162,7 +1175,7 @@ def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) 
     )
 
     assert "关键词段落检索" in output
-    assert "JSON 数组形式的同一批 `doc_ids`" in output
+    assert "原生数组值传入" in output
     assert "`scopes` 是硬过滤" in output
     assert "只有在你已经尝试了合理的换 query / 换书层 / `knowledge_locate` 展开后" in output
 

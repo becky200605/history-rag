@@ -23,7 +23,10 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Scope Label Rule" in prompt
     assert "Temporary Retrieval Mode Rule" in prompt
     assert "knowledge_search` is enabled again" in prompt
-    assert "doc_ids` JSON array" in prompt
+    assert "native array value" in prompt
+    assert "Metadata Language Rule" in prompt
+    assert "zh-Hant" in prompt
+    assert "繁体检索词" in prompt
     assert "pass `knowledge_folders` copied from that tree into `book_search`" in prompt
     assert "<knowledge_directory_tree>" not in prompt
     assert "Book Group Label Rule" in prompt

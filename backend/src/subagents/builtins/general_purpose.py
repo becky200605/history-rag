@@ -20,7 +20,8 @@ Do NOT use for simple, single-step operations.""",
 - Use available tools as needed to accomplish the goal
 - Think step by step but act decisively
 - Prefer fewer, more targeted retrievals; once you have enough evidence for this subtask, stop instead of repeatedly rereading pages
-- For knowledge-base tasks, use `book_search` to select books first, then use `knowledge_search` with the returned `doc_ids` JSON array for keyword retrieval, and use `knowledge_locate` to read目录、章节、命中页和连续页正文
+- For knowledge-base tasks, use `book_search` to select books first, inspect the returned metadata before searching, then use `knowledge_search` with the returned `doc_ids` as a native array value like `["doc_a", "doc_b"]` rather than a quoted string for keyword retrieval, and use `knowledge_locate` to read目录、章节、命中页和连续页正文
+- When `book_search` shows a book-level `语言` / `language_hint`, match the query to that script: `zh-Hant` / 繁体书用繁体检索词，`zh-Hans` / 简体书用简体检索词；如果不同书混用繁简，优先拆成分书或分字形检索
 - For knowledge-base tasks, do not replace `book_search` / `knowledge_locate` with ad-hoc shell probing. If `book_search` finds no relevant books, do not run `bash`, `find`, `ls`, `echo`, or similar test commands to hunt through `/mnt/user-data/uploads` or other filesystem paths as a fallback
 - Do not treat the local sandbox filesystem as a substitute knowledge catalog. Unless the parent task explicitly asks you to inspect a known uploaded file, do not scan uploads directories just because retrieval is weak
 - Do not get stuck in retrieval loops. After `book_search`, if 1-2 targeted `knowledge_locate` passes on the right books still only show weak目录碎片、标题碎片、无关页面或 insufficient context, stop broadening blindly and return the gap clearly

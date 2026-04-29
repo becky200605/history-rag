@@ -399,6 +399,58 @@ def test_retriever_keeps_keyword_query_and_marks_matched_queries(monkeypatch) ->
     assert results[0]["matched_queries"] == ["关键词检索"]
 
 
+def test_retriever_search_qdrant_filters_short_fragments(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retriever_module,
+        "get_knowledge_base_config",
+        lambda: SimpleNamespace(
+            qdrant=SimpleNamespace(collection_name="knowledge_base"),
+            retrieval=SimpleNamespace(top_k=3, score_threshold=0.0),
+        ),
+    )
+    monkeypatch.setattr(retriever_module, "get_qdrant_client", lambda: object())
+    monkeypatch.setattr(retriever_module, "get_embedding_model", lambda: object())
+
+    retriever = retriever_module.KnowledgeBaseRetriever()
+    monkeypatch.setattr(
+        retriever,
+        "_search_collection",
+        lambda collection_name, query, doc_ids=None, top_k=None: [
+            {
+                "content": "張之洞全集+-",
+                "score": 0.91,
+                "filename": "bad.pdf",
+                "source": "bad",
+                "metadata": {
+                    "scope": "global",
+                    "doc_id": "bad-doc",
+                    "title": "坏结果",
+                    "line_start": 5,
+                    "line_end": 5,
+                },
+            },
+            {
+                "content": _long_text("张之洞曾任湖广总督，此段包含较完整的人物经历与官职信息。"),
+                "score": 0.75,
+                "filename": "good.pdf",
+                "source": "good",
+                "metadata": {
+                    "scope": "global",
+                    "doc_id": "good-doc",
+                    "title": "好结果",
+                    "line_start": 100,
+                    "line_end": 104,
+                },
+            },
+        ],
+    )
+
+    results = retriever.search_qdrant("张之洞 生平 官职 总督", doc_ids=["good-doc"], top_k=3)
+
+    assert len(results) == 1
+    assert results[0]["metadata"]["doc_id"] == "good-doc"
+
+
 def test_retriever_uses_keyword_search_with_doc_ids(monkeypatch) -> None:
     monkeypatch.setattr(
         retriever_module,

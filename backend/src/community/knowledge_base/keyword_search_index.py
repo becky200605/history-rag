@@ -438,6 +438,29 @@ def _extract_exact_keywords(query: str) -> list[str]:
     return candidates[:24]
 
 
+def _extract_primary_terms(query: str) -> list[str]:
+    normalized = normalize_search_text(query)
+    if not normalized:
+        return []
+    primary_terms: list[str] = []
+    seen: set[str] = set()
+    for term in [item.strip() for item in normalized.split(" ") if item.strip()]:
+        if term in seen:
+            continue
+        seen.add(term)
+        primary_terms.append(term)
+    return primary_terms[:12]
+
+
+def _minimum_primary_match_count(query: str) -> int:
+    primary_terms = _extract_primary_terms(query)
+    if len(primary_terms) >= 3:
+        return 2
+    if len(primary_terms) >= 1:
+        return 1
+    return 0
+
+
 def _match_expression(query: str) -> str | None:
     terms = _extract_exact_keywords(query)
     if not terms:
@@ -501,11 +524,19 @@ def _search_rows(
 def _score_row(query: str, row: sqlite3.Row) -> tuple[int, int, int, int]:
     text = str(row["text"] or "").strip()
     normalized_text = normalize_search_text(text)
+    normalized_text_compact = normalized_text.replace(" ", "")
+    primary_terms = _extract_primary_terms(query)
+    matched_primary_terms = [
+        term
+        for term in primary_terms
+        if term and term in normalized_text_compact
+    ]
     exact_keywords = _extract_exact_keywords(query)
-    matched_keywords = [
+    fallback_keywords = [keyword for keyword in exact_keywords if keyword not in primary_terms]
+    matched_fallback_keywords = [
         keyword
-        for keyword in exact_keywords
-        if keyword and keyword in normalized_text.replace(" ", "")
+        for keyword in fallback_keywords
+        if keyword and keyword in normalized_text_compact
     ]
     search_tokens = set(str(row["search_text"] or "").split())
     query_tokens = tokenize_search_text(query)
@@ -513,7 +544,8 @@ def _score_row(query: str, row: sqlite3.Row) -> tuple[int, int, int, int]:
     exact_query_hit = int(bool(normalize_search_text(query) and normalize_search_text(query) in normalized_text))
     return (
         exact_query_hit,
-        len(matched_keywords),
+        len(matched_primary_terms),
+        len(matched_fallback_keywords),
         len(matched_tokens),
         len(text),
     )
@@ -549,13 +581,23 @@ def search_keyword_documents(
     finally:
         connection.close()
 
+    minimum_primary_matches = _minimum_primary_match_count(query)
+    primary_terms = _extract_primary_terms(query)
+    if minimum_primary_matches > 0:
+        filtered_rows = [
+            row
+            for row in rows
+            if _score_row(query, row)[1] >= minimum_primary_matches
+        ]
+        if filtered_rows:
+            rows = filtered_rows
+
     scored_rows = sorted(rows, key=lambda row: _score_row(query, row), reverse=True)
-    exact_keywords = _extract_exact_keywords(query)
     results: list[dict[str, Any]] = []
     for row in scored_rows[:top_k]:
         text = str(row["text"] or "").strip()
         normalized_text = normalize_search_text(text).replace(" ", "")
-        matched_keywords = [keyword for keyword in exact_keywords if keyword in normalized_text]
+        matched_keywords = [keyword for keyword in primary_terms if keyword in normalized_text]
         metadata = {
             "title": row["title"],
             "doc_id": row["doc_id"],
@@ -581,7 +623,7 @@ def search_keyword_documents(
             {
                 "content": text,
                 "metadata": metadata,
-                "score": float(sum(_score_row(query, row)[:3])),
+                "score": float(sum(_score_row(query, row)[:4])),
                 "matched_keywords": matched_keywords,
                 "match_type": "keyword_fts",
                 "source": row["source_path"],

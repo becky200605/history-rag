@@ -115,6 +115,39 @@ def _is_substantive_result(result: dict, *, min_word_units: int = MIN_SUBSTANTIV
     return _count_word_units(content) >= min_word_units
 
 
+def _looks_like_fragmentary_result(result: dict, *, min_word_units: int) -> bool:
+    content = str(result.get("content") or "").strip()
+    if not content:
+        return True
+    if _count_word_units(content) < min_word_units:
+        return True
+
+    normalized = re.sub(r"\s+", " ", content)
+    if len(normalized) <= 24:
+        return True
+
+    punctuation_count = len(re.findall(r"[，。；：、“”‘’！？,.!?;:]", normalized))
+    alnum_or_cjk_count = len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", normalized))
+    if alnum_or_cjk_count <= 0:
+        return True
+
+    if punctuation_count == 0 and alnum_or_cjk_count < max(28, min_word_units):
+        return True
+
+    metadata = result.get("metadata", {}) or {}
+    line_start = metadata.get("line_start")
+    line_end = metadata.get("line_end")
+    if (
+        line_start is not None
+        and line_end is not None
+        and int(line_start) == int(line_end)
+        and alnum_or_cjk_count < max(40, min_word_units + 10)
+    ):
+        return True
+
+    return False
+
+
 def _looks_like_exact_lookup(query: str) -> bool:
     normalized = _normalize_query_text(query)
     if not normalized:
@@ -603,20 +636,30 @@ class KnowledgeBaseRetriever:
     ) -> list[dict]:
         """Run direct vector retrieval against the configured Qdrant collection."""
         started_at = time.perf_counter()
-        results = self._search_collection(
+        limit = top_k or self.config.retrieval.top_k
+        raw_results = self._search_collection(
             self.config.qdrant.collection_name,
             query,
             doc_ids=doc_ids,
-            top_k=top_k or self.config.retrieval.top_k,
+            top_k=max(limit * 6, limit),
         )
+        filtered_results = [
+            result
+            for result in raw_results
+            if not _looks_like_fragmentary_result(result, min_word_units=18)
+        ]
+        candidate_results = filtered_results or raw_results
+        selected, _ = self._prepare_ranked_results(candidate_results, limit=limit)
         logger.info(
-            "Knowledge qdrant debug search: query=%r doc_ids=%s returned=%s elapsed_ms=%.1f",
+            "Knowledge qdrant debug search: query=%r doc_ids=%s raw=%s filtered=%s returned=%s elapsed_ms=%.1f",
             query,
             len(doc_ids or []),
-            len(results),
+            len(raw_results),
+            len(filtered_results),
+            len(selected),
             (time.perf_counter() - started_at) * 1000,
         )
-        return results
+        return selected
 
 
 def get_retriever() -> KnowledgeBaseRetriever:

@@ -31,7 +31,7 @@ def test_write_todos_dispatches_parallel_batch_and_updates_todos(monkeypatch):
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def execute_async(self, prompt: str, task_id: str):
+        def execute_async(self, prompt: str, task_id: str, **kwargs):
             launched_prompts[task_id] = prompt
             return task_id
 
@@ -39,6 +39,7 @@ def test_write_todos_dispatches_parallel_batch_and_updates_todos(monkeypatch):
         COMPLETED = "completed"
         FAILED = "failed"
         TIMED_OUT = "timed_out"
+        CANCELLED = "cancelled"
 
     monkeypatch.setattr(todo_module, "SubagentExecutor", FakeExecutor)
     monkeypatch.setattr(todo_module, "SubagentStatus", FakeStatus)
@@ -113,7 +114,7 @@ def test_write_todos_auto_promotes_pending_queue_until_all_batches_finish(monkey
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def execute_async(self, prompt: str, task_id: str):
+        def execute_async(self, prompt: str, task_id: str, **kwargs):
             launched_order.append(task_id)
             return task_id
 
@@ -121,6 +122,7 @@ def test_write_todos_auto_promotes_pending_queue_until_all_batches_finish(monkey
         COMPLETED = "completed"
         FAILED = "failed"
         TIMED_OUT = "timed_out"
+        CANCELLED = "cancelled"
 
     monkeypatch.setattr(todo_module, "SubagentExecutor", FakeExecutor)
     monkeypatch.setattr(todo_module, "SubagentStatus", FakeStatus)
@@ -221,7 +223,7 @@ def test_write_todos_can_redispatch_completed_todo_with_same_content(monkeypatch
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def execute_async(self, prompt: str, task_id: str):
+        def execute_async(self, prompt: str, task_id: str, **kwargs):
             launched_task_ids.append(task_id)
             return task_id
 
@@ -229,6 +231,7 @@ def test_write_todos_can_redispatch_completed_todo_with_same_content(monkeypatch
         COMPLETED = "completed"
         FAILED = "failed"
         TIMED_OUT = "timed_out"
+        CANCELLED = "cancelled"
 
     monkeypatch.setattr(todo_module, "SubagentExecutor", FakeExecutor)
     monkeypatch.setattr(todo_module, "SubagentStatus", FakeStatus)
@@ -302,13 +305,14 @@ def test_write_todos_marks_matching_reading_set_book_as_covered_on_completion(mo
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def execute_async(self, prompt: str, task_id: str):
+        def execute_async(self, prompt: str, task_id: str, **kwargs):
             return task_id
 
     class FakeStatus:
         COMPLETED = "completed"
         FAILED = "failed"
         TIMED_OUT = "timed_out"
+        CANCELLED = "cancelled"
 
     monkeypatch.setattr(todo_module, "SubagentExecutor", FakeExecutor)
     monkeypatch.setattr(todo_module, "SubagentStatus", FakeStatus)

@@ -75,7 +75,7 @@ class KnowledgeSearchArgs(BaseModel):
     doc_ids: list[str] | None = Field(
         default=None,
         description=(
-            "Deprecated compatibility field. Do not pass book doc_ids here; use `knowledge_locate` for raw document reading."
+            "Deprecated compatibility field. Do not pass book doc_ids here; dispatch raw document reading to subtasks."
         ),
     )
     scopes: str | None = Field(
@@ -562,7 +562,7 @@ def _build_no_result_guidance(query: str, doc_ids: list[str] | None) -> str:
     lines = ["## 检索结果", "", "本轮没有命中到可直接使用的内部知识片段。", "", "---"]
     if doc_ids:
         lines.append("不要在同一批 `doc_ids` 上继续反复调用 `knowledge_search`。")
-        lines.append("直接调用 `knowledge_locate(doc_id=...)` 做原文定位；优先看目录、序言、章节开头，再顺着相关板块继续找正文。")
+        lines.append("若当前是主任务，直接派发子任务从零检索；子任务再用 `knowledge_locate(doc_id=...)` 做原文定位，优先看目录、序言、章节开头，再顺着相关板块继续找正文。")
     else:
         lines.append("先回到 `book_search` 找更匹配的书，再继续检索。")
 
@@ -1035,8 +1035,8 @@ def book_search_tool(
     lines.append("---")
     lines.append("检索规则:")
     lines.append("1. `knowledge_search` 只检索历史主任务/子任务结果，不检索这些书的正文；不要把这里的 `doc_ids` 传给 `knowledge_search`。")
-    lines.append("2. 如果你已经确定一批书需要对读，下一步用这些 `doc_ids` 调用 `knowledge_locate` 读目录、章节页、命中页或连续页正文。")
-    lines.append("3. 如果问题涉及多本书且已启用子任务，先按 `书 × 信息目标` 写 todo 并派发子任务，不要由主任务继续串行深挖。")
+    lines.append("2. 如果你已经确定一批书需要对读，主任务下一步应按 `书 × 信息目标` 写 todo 并派发子任务；子任务用这些 `doc_ids` 调用 `knowledge_locate` 读目录、章节页、命中页或连续页正文。")
+    lines.append("3. 如果问题涉及多本书且已启用子任务，不要由主任务继续串行深挖。")
     lines.append("4. 默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料。")
     lines.append("5. 检索前先看每本候选书的 metadata，尤其 `语言`、`目录`、`摘要` 等信号。")
     lines.append("6. 如果某本书标记为 `zh-Hant` / 繁体中文，就用繁体检索词；如果标记为 `zh-Hans` / 简体中文，就用简体检索词。混合不同字形的书时，优先按书或按字形分开读。")
@@ -1097,8 +1097,8 @@ def knowledge_search_tool(
                 "`doc_ids`、`scopes`、`knowledge_folders` 在这里都是误用参数。\n\n"
                 "---\n"
                 "不要继续改写 query 反复调用 `knowledge_search`。如果你已经有 `book_search` 返回的候选书，"
-                "下一步直接用 `knowledge_locate(doc_id=...)` 读原文目录、章节页、命中页或连续页正文；"
-                "若问题涉及多本书且子任务可用，请按 `书 × 信息目标` 派发子任务从零检索。"
+                "下一步由主任务按 `书 × 信息目标` 派发子任务从零检索；子任务再用 `knowledge_locate(doc_id=...)` "
+                "读原文目录、章节页、命中页或连续页正文。"
             )
 
         from src.community.knowledge_base.task_memory import render_task_memory_matches, search_task_memory
@@ -1137,8 +1137,8 @@ def knowledge_search_tool(
         output += (
             "\n\n---\n"
             "把这次未命中视为当前主题没有可复用历史结果。不要继续改写 query 反复调用 `knowledge_search`；"
-            "下一步直接从零走原始资料路线：先用 `book_search` 选书，再用 `knowledge_locate` 读目录、章节页、命中页或连续页正文；"
-            "若问题涉及多本书且子任务可用，请按 `书 × 信息目标` 派发子任务。"
+            "下一步直接从零走原始资料路线：主任务先用 `book_search` 选书并按 `书 × 信息目标` 派发子任务；"
+            "子任务再用 `knowledge_locate` 读目录、章节页、命中页或连续页正文。"
         )
     return output
 

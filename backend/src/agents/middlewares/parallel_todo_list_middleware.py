@@ -467,6 +467,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
 
         queue: list[Todo] = list(queued_todos)
         launched: dict[str, dict[str, Any]] = {}
+        runtime_context = getattr(runtime, "context", {}) if runtime is not None else {}
 
         while queue or launched:
             while queue and len(launched) < self.max_concurrent_subagents:
@@ -497,7 +498,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                     sandbox_state=sandbox_state,
                     thread_data=thread_data,
                     thread_id=thread_id,
-                    user_id=runtime.context.get("user_id"),
+                    user_id=runtime_context.get("user_id"),
                     trace_id=trace_id,
                 )
 
@@ -746,6 +747,14 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
             if todo.get("error"):
                 line += f" | error: {todo['error']}"
             lines.append(line)
+
+        running_todos = [todo for todo in todos if todo.get("status") == "in_progress" and todo.get("task_id")]
+        if running_todos:
+            lines.append("")
+            lines.append(
+                "Running subtask instructions: these todos have only been dispatched. "
+                "Do not mark them completed or synthesize their evidence until actual subtask results are available."
+            )
 
         detailed_completed = [todo for todo in todos if todo.get("status") == "completed"]
         if detailed_completed:

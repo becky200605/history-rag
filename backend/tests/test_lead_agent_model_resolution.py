@@ -138,6 +138,42 @@ def test_make_lead_agent_hides_raw_task_tool_in_plan_mode(monkeypatch):
 
     assert captured_tool_kwargs["subagent_enabled"] is True
     assert captured_tool_kwargs["include_task_tool"] is False
+    assert captured_tool_kwargs["allowed_tool_names"] == {"book_search", "knowledge_search"}
+    assert "knowledge_locate" not in captured_tool_kwargs["allowed_tool_names"]
+
+
+def test_make_lead_agent_hides_knowledge_locate_when_subagents_enabled_outside_plan_mode(monkeypatch):
+    app_config = _make_app_config([_make_model("safe-model", supports_thinking=False)])
+
+    import src.tools as tools_module
+
+    captured_tool_kwargs: dict[str, object] = {}
+
+    def _fake_get_available_tools(**kwargs):
+        captured_tool_kwargs.update(kwargs)
+        return []
+
+    monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
+    monkeypatch.setattr(tools_module, "get_available_tools", _fake_get_available_tools)
+    monkeypatch.setattr(lead_agent_module, "_build_middlewares", lambda config, model_name: [])
+    monkeypatch.setattr(lead_agent_module, "create_chat_model", lambda **kwargs: object())
+    monkeypatch.setattr(lead_agent_module, "create_agent", lambda **kwargs: kwargs)
+
+    lead_agent_module.make_lead_agent(
+        {
+            "configurable": {
+                "model_name": "safe-model",
+                "thinking_enabled": False,
+                "is_plan_mode": False,
+                "subagent_enabled": True,
+            }
+        }
+    )
+
+    assert captured_tool_kwargs["subagent_enabled"] is True
+    assert captured_tool_kwargs["include_task_tool"] is True
+    assert captured_tool_kwargs["allowed_tool_names"] == {"book_search", "knowledge_search", "task"}
+    assert "knowledge_locate" not in captured_tool_kwargs["allowed_tool_names"]
 
 
 def test_build_middlewares_uses_resolved_model_name_for_vision(monkeypatch):
@@ -203,6 +239,7 @@ def test_create_todo_list_middleware_uses_parallel_batch_language_when_subagents
     assert "execution board" in captured["system_prompt"]
     assert "parallel batch" in captured["system_prompt"]
     assert "up to 3" in captured["system_prompt"]
+    assert "will drain the queued todos" in captured["system_prompt"]
     assert "After `book_search`, if multiple books are materially relevant" in captured["system_prompt"]
     assert "Only skip that todo step when one dominant book is clearly sufficient" in captured["system_prompt"]
     assert "`write_todos` is the dispatch point" in captured["system_prompt"]
@@ -211,3 +248,4 @@ def test_create_todo_list_middleware_uses_parallel_batch_language_when_subagents
     assert "Multi-book retrieval after `book_search`" in captured["tool_description"]
     assert "if multiple books remain in scope, do not continue deep retrieval until you have written the todo list" in captured["tool_description"]
     assert "mark multiple items as `in_progress` together in one `write_todos` call" in captured["tool_description"]
+    assert "run that parallel batch and return findings before you continue" in captured["tool_description"]

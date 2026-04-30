@@ -15,20 +15,22 @@ from src.community.knowledge_base.reading_state import get_active_reading_state,
 
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_ROUTING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
+READING_ROUTE_TOOL_NAMES = {"knowledge_search", "knowledge_locate", "write_todos", "task"}
 REMINDER_SOURCE_TOOL_NAMES = {
     "book_search",
     "knowledge_search",
     "knowledge_locate",
     "knowledge_checkpoint",
+    "write_todos",
 }
 RETRY_APPENDICES = (
     "系统插入提示（不是用户的新问题）：当前阅读集仍有未覆盖书目。"
     "你刚才试图在未读完阅读集前直接起草答案。"
-    "现在不要直接回答；下一步优先对未覆盖书目调用 `knowledge_locate(doc_id=...)` 做目录、章节页、命中页或连续页阅读，"
+    "现在不要直接回答；如果你是主任务，下一步应针对未覆盖书目写 `书 × 信息目标` todo 并派发子任务；"
+    "子任务再调用 `knowledge_locate(doc_id=...)` 做目录、章节页、命中页或连续页阅读。"
     "不要用 `knowledge_search(doc_ids=...)`，并且尽量不要再次只围绕已覆盖书继续展开。",
     "系统再次插入提示（不是用户的新问题）：当前阅读集仍未覆盖完整。"
-    "请把下一步改成且仅改成针对未覆盖书目的 `knowledge_locate` 定位阅读，"
+    "请把下一步改成针对未覆盖书目的子任务派发；子任务负责 `knowledge_locate` 定位阅读。"
     "不要直接回答，不要跳过这些书。",
 )
 
@@ -75,8 +77,9 @@ class BookCoverageMiddleware(AgentMiddleware[AgentState]):
             title = titles.get(doc_id) or doc_id
             lines.append(f"- {title} (`{doc_id}`)")
         lines.append(
-            "下一步优先对这些未覆盖书目做至少一次针对性的 `knowledge_locate`，"
-            "确认它们各自能提供什么证据，再继续综合。不要把未覆盖书目的 `doc_ids` 传给 `knowledge_search`。"
+            "下一步优先针对这些未覆盖书目派发 `书 × 信息目标` 子任务；"
+            "子任务至少做一次针对性的 `knowledge_locate`，确认它们各自能提供什么证据，再继续综合。"
+            "不要把未覆盖书目的 `doc_ids` 传给 `knowledge_search`。"
         )
         return HumanMessage(content="\n".join(lines))
 
@@ -109,15 +112,30 @@ class BookCoverageMiddleware(AgentMiddleware[AgentState]):
         if not tool_calls:
             return False
 
-        knowledge_calls = [tool_call for tool_call in tool_calls if tool_call.get("name") in KNOWLEDGE_ROUTING_TOOL_NAMES]
-        if not knowledge_calls:
+        route_calls = [tool_call for tool_call in tool_calls if tool_call.get("name") in READING_ROUTE_TOOL_NAMES]
+        if not route_calls:
             return True
 
-        for tool_call in knowledge_calls:
+        unread_titles = {
+            str(state.get("knowledge_reading_set_titles", {}).get(doc_id) or "").strip()
+            for doc_id in unread
+        }
+        unread_titles.discard("")
+
+        for tool_call in route_calls:
             args = tool_call.get("args", {}) or {}
             if tool_call.get("name") == "knowledge_locate":
                 doc_id = str(args.get("doc_id") or "").strip()
                 if doc_id and doc_id in unread:
+                    return True
+            elif tool_call.get("name") == "write_todos":
+                todos = args.get("todos") or []
+                todo_text = _stringify_content(todos)
+                if any(doc_id in todo_text for doc_id in unread) or any(title in todo_text for title in unread_titles):
+                    return True
+            elif tool_call.get("name") == "task":
+                task_text = _stringify_content(args)
+                if any(doc_id in task_text for doc_id in unread) or any(title in task_text for title in unread_titles):
                     return True
 
         return False

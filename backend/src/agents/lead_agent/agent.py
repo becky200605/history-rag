@@ -4,6 +4,7 @@ from langchain.agents import create_agent
 from langchain_core.runnables import RunnableConfig
 
 from src.agents.lead_agent.prompt import apply_prompt_template
+from src.agents.middlewares.book_coverage_middleware import BookCoverageMiddleware
 from src.agents.middlewares.citation_enforcement_middleware import CitationEnforcementMiddleware
 from src.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from src.agents.middlewares.dangling_tool_call_middleware import DanglingToolCallMiddleware
@@ -266,6 +267,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
         ThreadDataMiddleware(),
         UploadsMiddleware(),
         KnowledgeDirectoryMiddleware(),
+        BookCoverageMiddleware(),
         SandboxMiddleware(),
         DanglingToolCallMiddleware(),
         KnowledgeCheckpointMiddleware(),
@@ -335,7 +337,12 @@ def make_lead_agent(config: RunnableConfig):
     qa_mode = config.get("configurable", {}).get("qa_mode", False)
     concise_answers = config.get("configurable", {}).get("concise_answers", False)
     allow_direct_task_tool = subagent_enabled and not is_plan_mode
-    use_minimal_lead_tools = subagent_enabled and is_plan_mode
+    use_minimal_lead_tools = subagent_enabled
+    lead_allowed_tool_names = None
+    if use_minimal_lead_tools:
+        lead_allowed_tool_names = set(LEAD_ORCHESTRATOR_TOOL_NAMES)
+        if allow_direct_task_tool:
+            lead_allowed_tool_names.add("task")
 
     app_config = get_app_config()
     model_config = app_config.get_model_config(model_name) if model_name else None
@@ -376,7 +383,7 @@ def make_lead_agent(config: RunnableConfig):
             model_name=model_name,
             subagent_enabled=subagent_enabled,
             include_task_tool=allow_direct_task_tool,
-            allowed_tool_names=LEAD_ORCHESTRATOR_TOOL_NAMES if use_minimal_lead_tools else None,
+            allowed_tool_names=lead_allowed_tool_names,
         ),
         middleware=_build_middlewares(config, model_name=model_name),
         system_prompt=apply_prompt_template(

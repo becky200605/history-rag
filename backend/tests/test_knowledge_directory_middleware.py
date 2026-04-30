@@ -7,6 +7,7 @@ from pathlib import Path
 from types import ModuleType
 from types import SimpleNamespace
 
+import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.community.knowledge_base.catalog import BookCatalogEntry
@@ -47,6 +48,12 @@ _MIDDLEWARE_SPEC.loader.exec_module(knowledge_directory_middleware)
 KnowledgeDirectoryMiddleware = knowledge_directory_middleware.KnowledgeDirectoryMiddleware
 
 
+@pytest.fixture(autouse=True)
+def _clear_directory_cache():
+    with knowledge_directory_middleware._directory_block_cache_lock:
+        knowledge_directory_middleware._directory_block_cache.clear()
+
+
 @dataclass(frozen=True)
 class _DummyRequest:
     runtime: object
@@ -78,7 +85,7 @@ def test_knowledge_directory_middleware_injects_tree_into_hidden_user_message(mo
     monkeypatch.setattr(
         knowledge_directory_middleware,
         "list_book_catalog",
-        lambda thread_id=None, user_id=None: entries,
+        lambda thread_id=None, user_id=None, **kwargs: entries,
     )
 
     captured: dict[str, object] = {}
@@ -131,7 +138,7 @@ def test_knowledge_directory_middleware_does_not_mistake_prompt_reference_for_in
     monkeypatch.setattr(
         knowledge_directory_middleware,
         "list_book_catalog",
-        lambda thread_id=None, user_id=None: entries,
+        lambda thread_id=None, user_id=None, **kwargs: entries,
     )
 
     captured: dict[str, object] = {}
@@ -162,7 +169,7 @@ def test_knowledge_directory_middleware_injects_empty_folder_candidates(monkeypa
     monkeypatch.setattr(
         knowledge_directory_middleware,
         "list_book_catalog",
-        lambda thread_id=None, user_id=None: [],
+        lambda thread_id=None, user_id=None, **kwargs: [],
     )
     monkeypatch.setattr(
         knowledge_directory_middleware,

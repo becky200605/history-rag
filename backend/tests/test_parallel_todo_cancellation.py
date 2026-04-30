@@ -28,7 +28,7 @@ def test_write_todos_marks_cancelled_subtask_as_failed(monkeypatch):
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def execute_async(self, prompt: str, task_id: str):
+        def execute_async(self, prompt: str, task_id: str, **kwargs):
             return task_id
 
     class FakeStatus:

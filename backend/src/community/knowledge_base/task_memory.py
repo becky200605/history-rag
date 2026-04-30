@@ -243,7 +243,7 @@ def render_task_memory_matches(
             "本轮没有命中可直接复用的历史主任务/子任务结果。\n\n"
             "---\n"
             "把这次未命中视为当前主题没有可复用历史结果。不要继续改写 query 反复调用 `knowledge_search`；"
-            "下一步直接从零走原始资料路线：先用 `book_search` 选书，再用 `knowledge_locate` 读目录、章节页、命中页或连续页正文。"
+            "下一步直接从零走原始资料路线：主任务先用 `book_search` 选书并派发子任务；子任务再用 `knowledge_locate` 读目录、章节页、命中页或连续页正文。"
         )
 
     lines = [heading, ""]

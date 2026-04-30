@@ -121,6 +121,8 @@ def test_prompt_supports_parallel_book_subtasks_and_fiscal_historian_style(monke
     assert "Todo Gate After Book Search Rule" in prompt
     assert "If there are multiple materially relevant books, the todo list is mandatory." in prompt
     assert "let that call dispatch/wait for the subagent batch" in prompt
+    assert "Auto-Drain Rule" in prompt
+    assert "auto-drains the queued lanes" in prompt
     assert "Do not immediately duplicate the same batch with manual `task` calls" in prompt
     assert "Historian Voice Rule" in prompt
     assert "历史综合题默认补足这些维度" in prompt

@@ -862,6 +862,20 @@ def test_knowledge_search_tool_schema_exposes_doc_ids_as_array() -> None:
     assert not any(item.get("type") == "string" for item in doc_ids_schema["anyOf"])
 
 
+def test_knowledge_search_tool_invoke_does_not_require_runtime(monkeypatch) -> None:
+    task_memory_stub = ModuleType("src.community.knowledge_base.task_memory")
+    task_memory_stub.search_task_memory = (
+        lambda query, *, title=None, top_k=None: [{"content": "命中", "metadata": {}, "score": 1.0}]
+    )
+    task_memory_stub.render_task_memory_matches = lambda results, *, heading: f"{heading}\n\nok"
+    monkeypatch.setitem(sys.modules, "src.community.knowledge_base.task_memory", task_memory_stub)
+
+    output = tools_module.knowledge_search_tool.invoke({"query": "任意问题"})
+
+    assert "## 检索结果" in output
+    assert "ok" in output
+
+
 def test_knowledge_search_tool_accepts_doc_id_arrays(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

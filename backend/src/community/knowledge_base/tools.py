@@ -1067,8 +1067,8 @@ def book_search_tool(
 
 @tool("knowledge_search", args_schema=KnowledgeSearchArgs)
 def knowledge_search_tool(
-    runtime: ToolRuntime[ContextT, ThreadState],
-    query: str,
+    runtime: ToolRuntime[ContextT, ThreadState] | None = None,
+    query: str = "",
     doc_ids: list[str] | None = None,
     scopes: str | None = None,
     knowledge_folders: list[str] | None = None,

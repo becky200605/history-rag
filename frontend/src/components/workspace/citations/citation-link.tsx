@@ -9,7 +9,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
-import { useArtifacts } from "@/components/workspace/artifacts";
+import { useArtifacts } from "@/components/workspace/artifacts/context";
 import {
   getKnowledgeCitationMeta,
   getKnowledgeCitationPageRef,

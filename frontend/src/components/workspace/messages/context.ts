@@ -1,3 +1,5 @@
+"use client";
+
 import type { UseStream } from "@langchain/langgraph-sdk/react";
 import { createContext, useContext } from "react";
 

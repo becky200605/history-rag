@@ -11,13 +11,13 @@ import { ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
+import { ArtifactFileDetail } from "@/components/workspace/artifacts/artifact-file-detail";
+import { ArtifactFileList } from "@/components/workspace/artifacts/artifact-file-list";
 import {
-  ArtifactFileDetail,
-  ArtifactFileList,
   KNOWLEDGE_ARTIFACT_PANEL_DEFAULT_WIDTH,
   KNOWLEDGE_ARTIFACT_PANEL_EXPANDED_WIDTH,
-  useArtifacts,
-} from "@/components/workspace/artifacts";
+} from "@/components/workspace/artifacts/knowledge-layout";
+import { useArtifacts } from "@/components/workspace/artifacts/context";
 import { InputBox } from "@/components/workspace/input-box";
 import { MessageList } from "@/components/workspace/messages";
 import { ThreadContext } from "@/components/workspace/messages/context";

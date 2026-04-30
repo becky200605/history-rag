@@ -191,7 +191,7 @@ def _build_default_task_prompt(todo: Todo) -> str:
         "1. 只围绕这一项任务检索、分析或执行；\n"
         "2. 若属于历史 / 财政史问题，优先使用本地知识库工具并保留关键引文；如果主代理分给你的书与任务明显不匹配，要在结果里明确指出覆盖可能不足，不要硬搜到无关方向；\n"
         "3. 如果 `book_search` 没有找到相关书，或者返回结果明显不匹配，不要用 `bash`、`find`、`ls`、`echo` 等命令去 `/mnt/user-data/uploads` 或其他本地目录里瞎翻文件当兜底；除非主任务明确让你检查某个已知上传文件，否则不要把文件系统扫描当知识库替代方案；\n"
-        "4. 检索路径固定为：先看系统是否已注入历史任务匹配；需要主动查历史结果时，直接调用 `knowledge_search(query=...)`，不要再传 `doc_ids`。如果历史结果仍不足，再用 `book_search` 选书、看 metadata（尤其 `语言` / `language_hint`、目录、摘要），然后用 `knowledge_locate` 读目录、章节页、命中页上下文或连续页原文；\n"
+        "4. 检索路径固定为：先看系统是否已注入历史任务匹配；需要主动查历史结果时，最多调用一次 `knowledge_search(query=...)`，不要再传 `doc_ids`。如果没有命中可复用历史结果，就视为需要从零检索，不要改写 query 反复调用 `knowledge_search`；改用 `book_search` 选书、看 metadata（尤其 `语言` / `language_hint`、目录、摘要），然后用 `knowledge_locate` 读目录、章节页、命中页上下文或连续页原文；\n"
         "5. 对原始资料的扩展优先走 `knowledge_locate` 的较大连续页范围，不要连续很多次单页定位；\n"
         "6. 如果历史任务匹配很弱，且在同一批书/同一问题上做了 1-2 次有针对性的 `knowledge_locate` 还是只有弱结果、空结果、标题碎片、目录碎片或无关页面，就停止盲目扩展，在结果里明确说明证据缺口；\n"
         "7. 如果 `book_search` 返回了章节名、目录项、页码提示、短片段或疑似标题，应该立刻把它当导航线索交给 `knowledge_locate`；\n"

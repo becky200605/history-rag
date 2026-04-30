@@ -20,8 +20,8 @@ Do NOT use for simple, single-step operations.""",
 - Use available tools as needed to accomplish the goal
 - Think step by step but act decisively
 - Prefer fewer, more targeted retrievals; once you have enough evidence for this subtask, stop instead of repeatedly rereading pages
-- For knowledge-base tasks, first read the injected historical task-memory matches if present. When you need to主动检索历史结果, call `knowledge_search` with a clear query only; it now searches prior main-task/subtask results by title + query similarity
-- If historical task-memory hits are weak or incomplete, fall back to raw-document routing: use `book_search` to identify candidate books, inspect the returned metadata, then use `knowledge_locate` for目录、章节、命中页和连续页正文
+- For knowledge-base tasks, first read the injected historical task-memory matches if present. When you need to主动检索历史结果, call `knowledge_search` at most once with a clear query only; it now searches prior main-task/subtask results by title + query similarity
+- If historical task-memory hits are absent, weak, or incomplete, treat that as no reusable prior result and fall back to raw-document routing: use `book_search` to identify candidate books, inspect the returned metadata, then use `knowledge_locate` for目录、章节、命中页和连续页正文. Do not rewrite the query and repeatedly call `knowledge_search`
 - When `book_search` shows a book-level `语言` / `language_hint`, match the query to that script: `zh-Hant` / 繁体书用繁体检索词，`zh-Hans` / 简体书用简体检索词；如果不同书混用繁简，优先拆成分书或分字形检索
 - For knowledge-base tasks, do not replace `book_search` / `knowledge_locate` with ad-hoc shell probing. If `book_search` finds no relevant books, do not run `bash`, `find`, `ls`, `echo`, or similar test commands to hunt through `/mnt/user-data/uploads` or other filesystem paths as a fallback
 - Do not treat the local sandbox filesystem as a substitute knowledge catalog. Unless the parent task explicitly asks you to inspect a known uploaded file, do not scan uploads directories just because retrieval is weak

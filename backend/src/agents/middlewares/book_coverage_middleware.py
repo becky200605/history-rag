@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from typing import override
 
@@ -26,8 +25,8 @@ REMINDER_SOURCE_TOOL_NAMES = {
 RETRY_APPENDICES = (
     "系统插入提示（不是用户的新问题）：当前阅读集仍有未覆盖书目。"
     "你刚才试图在未读完阅读集前直接起草答案。"
-    "现在不要直接回答；下一步优先对未覆盖书目调用 `knowledge_search`（传这些未覆盖书目的 `doc_ids` JSON 数组）"
-    "或 `knowledge_locate`，并且尽量不要再次只围绕已覆盖书继续展开。",
+    "现在不要直接回答；下一步优先对未覆盖书目调用 `knowledge_locate(doc_id=...)` 做目录、章节页、命中页或连续页阅读，"
+    "不要用 `knowledge_search(doc_ids=...)`，并且尽量不要再次只围绕已覆盖书继续展开。",
     "系统再次插入提示（不是用户的新问题）：当前阅读集仍未覆盖完整。"
     "请把下一步改成且仅改成针对未覆盖书目的 `knowledge_locate` 定位阅读，"
     "不要直接回答，不要跳过这些书。",
@@ -46,21 +45,6 @@ def _stringify_content(content: object) -> str:
                 parts.append(str(item))
         return "\n".join(parts)
     return str(content or "")
-
-
-def _normalize_doc_id_values(value: object) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple, set)):
-        return [str(item).strip() for item in value if str(item).strip()]
-    text = str(value).strip()
-    if not text:
-        return []
-    matches = re.findall(r"\[([^\[\]]+)\]", text)
-    remainder = re.sub(r"\[[^\[\]]+\]", "", text).strip()
-    if matches and not remainder:
-        return [item.strip() for item in matches if item.strip()]
-    return [item.strip() for item in re.split(r"[,，、;\n；]+", text) if item.strip()]
 
 
 class BookCoverageMiddleware(AgentMiddleware[AgentState]):
@@ -92,7 +76,7 @@ class BookCoverageMiddleware(AgentMiddleware[AgentState]):
             lines.append(f"- {title} (`{doc_id}`)")
         lines.append(
             "下一步优先对这些未覆盖书目做至少一次针对性的 `knowledge_locate`，"
-            "确认它们各自能提供什么证据，再继续综合。"
+            "确认它们各自能提供什么证据，再继续综合。不要把未覆盖书目的 `doc_ids` 传给 `knowledge_search`。"
         )
         return HumanMessage(content="\n".join(lines))
 
@@ -134,12 +118,6 @@ class BookCoverageMiddleware(AgentMiddleware[AgentState]):
             if tool_call.get("name") == "knowledge_locate":
                 doc_id = str(args.get("doc_id") or "").strip()
                 if doc_id and doc_id in unread:
-                    return True
-                continue
-
-            if tool_call.get("name") == "knowledge_search":
-                doc_ids = _normalize_doc_id_values(args.get("doc_ids"))
-                if any(doc_id in unread for doc_id in doc_ids):
                     return True
 
         return False

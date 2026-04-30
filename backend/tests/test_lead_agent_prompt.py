@@ -21,9 +21,9 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "knowledge_folders" in prompt
     assert "Knowledge Folder Semantics Rule" in prompt
     assert "Scope Label Rule" in prompt
-    assert "Temporary Retrieval Mode Rule" in prompt
-    assert "knowledge_search` is enabled again" in prompt
-    assert "native array value" in prompt
+    assert "Task Memory One-Shot Rule" in prompt
+    assert "No Task-Memory Loop Rule" in prompt
+    assert "Knowledge Search Is Not Raw Search Rule" in prompt
     assert "Metadata Language Rule" in prompt
     assert "zh-Hant" in prompt
     assert "繁体检索词" in prompt
@@ -78,8 +78,8 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Query Formation Rule" in prompt
     assert "keyword pile-up" in prompt
     assert "vague" in prompt
-    assert "Scope Is Hard Filter Rule" in prompt
-    assert "Doc-ID Scope Alignment Rule" in prompt
+    assert "Deprecated Knowledge-Search Args Rule" in prompt
+    assert "Doc-ID Routing Rule" in prompt
     assert "Retry Discipline Rule" in prompt
     assert "Best-Match Book Rule" in prompt
     assert "Response Staging Rule" in prompt

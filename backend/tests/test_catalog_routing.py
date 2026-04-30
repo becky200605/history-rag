@@ -439,8 +439,9 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert 'core doc_ids: ["core-1"]' in output
     assert 'specialized doc_ids: ["spec-1"]' in output
     assert 'reference doc_ids: ["ref-1"]' in output
-    assert "允许混传不同层级的 `doc_ids`" in output
-    assert "优先直接用这批 `doc_ids` 联合检索" in output
+    assert "`knowledge_search` 只检索历史主任务/子任务结果" in output
+    assert "调用 `knowledge_locate`" in output
+    assert "按 `书 × 信息目标` 写 todo" in output
     assert "默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料" in output
     assert "检索前先看每本候选书的 metadata" in output
     assert "就用繁体检索词" in output
@@ -725,7 +726,7 @@ def test_search_book_catalog_can_reuse_prelisted_entries(monkeypatch) -> None:
     assert [item.doc_id for item in results] == ["core-1"]
 
 
-def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
+def test_knowledge_search_tool_rejects_scopes_with_doc_ids(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class _DummyRetriever:
@@ -782,8 +783,7 @@ def test_knowledge_search_tool_aligns_scopes_with_doc_ids(monkeypatch) -> None:
         knowledge_folders=["财政史/清代"],
     )
 
-    assert captured["doc_ids"] == ["global-doc", "global-doc-2"]
-    assert captured["scopes"] == ["global"]
+    assert captured == {}
 
 
 def test_knowledge_search_tool_accepts_json_doc_id_string(monkeypatch) -> None:
@@ -850,7 +850,7 @@ def test_knowledge_search_tool_accepts_json_doc_id_string(monkeypatch) -> None:
         knowledge_folders=["财政史/清代"],
     )
 
-    assert captured["doc_ids"] == ["global-doc-1", "global-doc-2", "global-doc-3"]
+    assert captured == {}
 
 
 def test_knowledge_search_tool_schema_exposes_doc_ids_as_array() -> None:
@@ -874,6 +874,38 @@ def test_knowledge_search_tool_invoke_does_not_require_runtime(monkeypatch) -> N
 
     assert "## 检索结果" in output
     assert "ok" in output
+
+
+def test_knowledge_search_tool_no_result_stops_task_memory_loop(monkeypatch) -> None:
+    task_memory_stub = ModuleType("src.community.knowledge_base.task_memory")
+    task_memory_stub.search_task_memory = lambda query, *, title=None, top_k=None: []
+    task_memory_stub.render_task_memory_matches = (
+        lambda results, *, heading: f"{heading}\n\n本轮没有命中可直接复用的历史主任务/子任务结果。"
+    )
+    monkeypatch.setitem(sys.modules, "src.community.knowledge_base.task_memory", task_memory_stub)
+
+    output = tools_module.knowledge_search_tool.invoke({"query": "任意问题"})
+
+    assert "没有可复用历史结果" in output
+    assert "不要继续改写 query 反复调用 `knowledge_search`" in output
+    assert "knowledge_locate" in output
+
+
+def test_knowledge_search_tool_rejects_raw_doc_filters(monkeypatch) -> None:
+    task_memory_stub = ModuleType("src.community.knowledge_base.task_memory")
+    task_memory_stub.search_task_memory = lambda query, *, title=None, top_k=None: []
+    task_memory_stub.render_task_memory_matches = lambda results, *, heading: f"{heading}\n\nunexpected"
+    monkeypatch.setitem(sys.modules, "src.community.knowledge_base.task_memory", task_memory_stub)
+
+    output = tools_module.knowledge_search_tool.func(
+        SimpleNamespace(context={}),
+        "任意问题",
+        doc_ids=["doc-1"],
+    )
+
+    assert "`knowledge_search` 现在只检索历史主任务/子任务结果" in output
+    assert "`doc_ids`、`scopes`、`knowledge_folders` 在这里都是误用参数" in output
+    assert "knowledge_locate(doc_id=...)" in output
 
 
 def test_knowledge_search_tool_accepts_doc_id_arrays(monkeypatch) -> None:
@@ -927,7 +959,7 @@ def test_knowledge_search_tool_accepts_doc_id_arrays(monkeypatch) -> None:
         knowledge_folders=["财政史/清代"],
     )
 
-    assert captured["doc_ids"] == ["global-doc-1", "global-doc-2"]
+    assert captured == {}
 
 
 def test_knowledge_search_tool_forwards_knowledge_folders(monkeypatch) -> None:
@@ -982,7 +1014,7 @@ def test_knowledge_search_tool_forwards_knowledge_folders(monkeypatch) -> None:
         knowledge_folders=["财政史/清代", "财政史/晚清"],
     )
 
-    assert captured["folder_paths"] == ["财政史/清代", "财政史/晚清"]
+    assert captured == {}
 
 
 def test_knowledge_search_tool_requires_knowledge_folders(monkeypatch) -> None:
@@ -1013,7 +1045,8 @@ def test_knowledge_search_tool_requires_knowledge_folders(monkeypatch) -> None:
         knowledge_folders=None,
     )
 
-    assert "Error: `knowledge_search` 需要至少提供一种约束" in output
+    assert "本轮没有命中可直接复用的历史主任务/子任务结果" in output
+    assert "不要继续改写 query 反复调用 `knowledge_search`" in output
 
 
 def test_knowledge_search_tool_rejects_virtual_layer_labels_as_knowledge_folders(monkeypatch) -> None:
@@ -1044,9 +1077,9 @@ def test_knowledge_search_tool_rejects_virtual_layer_labels_as_knowledge_folders
         knowledge_folders=["用户书籍", "核心通用书"],
     )
 
-    assert "层级标签" in output
-    assert "不是知识库逻辑目录" in output
-    assert "人物传记/" in output
+    assert "`knowledge_search` 现在只检索历史主任务/子任务结果" in output
+    assert "`doc_ids`、`scopes`、`knowledge_folders` 在这里都是误用参数" in output
+    assert "knowledge_locate(doc_id=...)" in output
 
 
 def test_tool_schema_marks_knowledge_folders_as_required() -> None:
@@ -1117,8 +1150,9 @@ def test_knowledge_search_tool_allows_mixed_layer_doc_ids(monkeypatch) -> None:
     )
 
     assert "## 检索结果" in output
-    assert "Reference Book" in output
-    assert "citation:" in output
+    assert "`knowledge_search` 现在只检索历史主任务/子任务结果" in output
+    assert "`doc_ids`、`scopes`、`knowledge_folders` 在这里都是误用参数" in output
+    assert "按 `书 × 信息目标` 派发子任务从零检索" in output
 
 
 def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) -> None:
@@ -1188,10 +1222,9 @@ def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) 
         knowledge_folders=["财政史/民国"],
     )
 
-    assert "关键词段落检索" in output
-    assert "原生数组值传入" in output
-    assert "`scopes` 是硬过滤" in output
-    assert "只有在你已经尝试了合理的换 query / 换书层 / `knowledge_locate` 展开后" in output
+    assert "`knowledge_search` 现在只检索历史主任务/子任务结果" in output
+    assert "`doc_ids`、`scopes`、`knowledge_folders` 在这里都是误用参数" in output
+    assert "knowledge_locate(doc_id=...)" in output
 
 
 def test_knowledge_search_tool_no_result_guides_grounded_retries_before_web(monkeypatch) -> None:
@@ -1231,11 +1264,9 @@ def test_knowledge_search_tool_no_result_guides_grounded_retries_before_web(monk
         knowledge_folders=["财政史/清代"],
     )
 
-    assert "先在同一批 `doc_ids` 里最多 grounded 重试 2 次" in output
-    assert "直接调用 `knowledge_locate(doc_id=...)` 做原文定位" in output
-    assert "建议下一轮 query" in output
-    assert "`晚清财政情况如何`" in output
-    assert "`清末财政情况如何`" in output
+    assert "`knowledge_search` 现在只检索历史主任务/子任务结果" in output
+    assert "`doc_ids`、`scopes`、`knowledge_folders` 在这里都是误用参数" in output
+    assert "不要继续改写 query 反复调用 `knowledge_search`" in output
 
 
 def test_knowledge_locate_tool_emits_citations_and_page_level_followup_guidance(monkeypatch) -> None:

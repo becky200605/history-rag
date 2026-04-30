@@ -68,8 +68,8 @@ def test_book_coverage_middleware_retries_when_model_keeps_searching_only_read_b
                     tool_calls=[
                         {
                             "id": "call-2",
-                            "name": "knowledge_search",
-                            "args": {"query": "去读未读书", "doc_ids": ["unread-doc"]},
+                            "name": "knowledge_locate",
+                            "args": {"doc_id": "unread-doc"},
                         }
                     ],
                 )
@@ -80,4 +80,5 @@ def test_book_coverage_middleware_retries_when_model_keeps_searching_only_read_b
 
     assert len(seen_requests) == 2
     assert "未读书 (`unread-doc`)" in str(seen_requests[1].messages[-2].content)
-    assert final_response.result[-1].tool_calls[0]["args"]["doc_ids"] == ["unread-doc"]
+    assert final_response.result[-1].tool_calls[0]["name"] == "knowledge_locate"
+    assert final_response.result[-1].tool_calls[0]["args"]["doc_id"] == "unread-doc"

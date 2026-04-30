@@ -71,21 +71,20 @@ logger = logging.getLogger(__name__)
 
 
 class KnowledgeSearchArgs(BaseModel):
-    query: str = Field(description="Search query anchored to the user's question.")
+    query: str = Field(description="Search query for prior main-task/subtask results. Use at most once per topic.")
     doc_ids: list[str] | None = Field(
         default=None,
         description=(
-            "Deprecated compatibility field. Historical task-memory retrieval now ignores "
-            "`doc_ids`; write a clear query instead."
+            "Deprecated compatibility field. Do not pass book doc_ids here; use `knowledge_locate` for raw document reading."
         ),
     )
     scopes: str | None = Field(
         default=None,
-        description="Deprecated compatibility field. Historical task-memory retrieval ignores scopes.",
+        description="Deprecated compatibility field. Do not pass scopes here; this tool is not raw document search.",
     )
     knowledge_folders: list[str] | None = Field(
         default=None,
-        description="Deprecated compatibility field. Historical task-memory retrieval ignores folders.",
+        description="Deprecated compatibility field. Use `book_search` for folder/book routing instead.",
     )
 
     @field_validator("doc_ids", mode="before")
@@ -562,8 +561,8 @@ def _build_retry_query_suggestions(query: str) -> list[str]:
 def _build_no_result_guidance(query: str, doc_ids: list[str] | None) -> str:
     lines = ["## 检索结果", "", "本轮没有命中到可直接使用的内部知识片段。", "", "---"]
     if doc_ids:
-        lines.append("先在同一批 `doc_ids` 里最多 grounded 重试 2 次。")
-        lines.append("如果 2 次后仍然没有结果，直接调用 `knowledge_locate(doc_id=...)` 做原文定位；优先看目录、序言、章节开头，再顺着相关板块继续找正文。")
+        lines.append("不要在同一批 `doc_ids` 上继续反复调用 `knowledge_search`。")
+        lines.append("直接调用 `knowledge_locate(doc_id=...)` 做原文定位；优先看目录、序言、章节开头，再顺着相关板块继续找正文。")
     else:
         lines.append("先回到 `book_search` 找更匹配的书，再继续检索。")
 
@@ -1035,11 +1034,12 @@ def book_search_tool(
 
     lines.append("---")
     lines.append("检索规则:")
-    lines.append("1. 可将多本相关书一起传给 `knowledge_search`，允许混传不同层级的 `doc_ids`。")
-    lines.append("2. 如果你已经确定一批书需要对读，优先直接用这批 `doc_ids` 联合检索；调用时把它作为原生数组值传入，不要再额外包一层引号。")
-    lines.append("3. 默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料。")
-    lines.append("4. 检索前先看每本候选书的 metadata，尤其 `语言`、`目录`、`摘要` 等信号。")
-    lines.append("5. 如果某本书标记为 `zh-Hant` / 繁体中文，就用繁体检索词；如果标记为 `zh-Hans` / 简体中文，就用简体检索词。混合不同字形的书时，优先按书或按字形分开搜。")
+    lines.append("1. `knowledge_search` 只检索历史主任务/子任务结果，不检索这些书的正文；不要把这里的 `doc_ids` 传给 `knowledge_search`。")
+    lines.append("2. 如果你已经确定一批书需要对读，下一步用这些 `doc_ids` 调用 `knowledge_locate` 读目录、章节页、命中页或连续页正文。")
+    lines.append("3. 如果问题涉及多本书且已启用子任务，先按 `书 × 信息目标` 写 todo 并派发子任务，不要由主任务继续串行深挖。")
+    lines.append("4. 默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料。")
+    lines.append("5. 检索前先看每本候选书的 metadata，尤其 `语言`、`目录`、`摘要` 等信号。")
+    lines.append("6. 如果某本书标记为 `zh-Hant` / 繁体中文，就用繁体检索词；如果标记为 `zh-Hans` / 简体中文，就用简体检索词。混合不同字形的书时，优先按书或按字形分开读。")
     if user_doc_ids:
         lines.append(f"user doc_ids: {user_doc_ids}")
     if thread_doc_ids:
@@ -1083,20 +1083,29 @@ def knowledge_search_tool(
     """
     started_at = time.perf_counter()
     try:
-        from src.community.knowledge_base.task_memory import render_task_memory_matches, search_task_memory
-
-        current_task_title = ""
-        if runtime is not None and getattr(runtime, "state", None):
-            current_task_title = str(runtime.state.get("current_task_title") or "").strip()
-
         if doc_ids or scopes or knowledge_folders:
             logger.info(
-                "Knowledge search ignoring deprecated routing args: query=%r doc_ids=%s scopes=%r knowledge_folders=%s",
+                "Knowledge search rejected deprecated routing args: query=%r doc_ids=%s scopes=%r knowledge_folders=%s",
                 query,
                 len(doc_ids or []),
                 scopes,
                 knowledge_folders or [],
             )
+            return (
+                "## 检索结果\n\n"
+                "`knowledge_search` 现在只检索历史主任务/子任务结果，不检索书籍正文；"
+                "`doc_ids`、`scopes`、`knowledge_folders` 在这里都是误用参数。\n\n"
+                "---\n"
+                "不要继续改写 query 反复调用 `knowledge_search`。如果你已经有 `book_search` 返回的候选书，"
+                "下一步直接用 `knowledge_locate(doc_id=...)` 读原文目录、章节页、命中页或连续页正文；"
+                "若问题涉及多本书且子任务可用，请按 `书 × 信息目标` 派发子任务从零检索。"
+            )
+
+        from src.community.knowledge_base.task_memory import render_task_memory_matches, search_task_memory
+
+        current_task_title = ""
+        if runtime is not None and getattr(runtime, "state", None):
+            current_task_title = str(runtime.state.get("current_task_title") or "").strip()
 
         logger.info(
             "Knowledge task-memory search start: query=%r current_task_title=%r elapsed_ms=%.1f",
@@ -1127,7 +1136,9 @@ def knowledge_search_tool(
     if "本轮没有命中" in output:
         output += (
             "\n\n---\n"
-            "下一步优先改写 query 或补充更清楚的任务标题；如果仍然没有可复用历史结果，再回到原始资料检索链路补证。"
+            "把这次未命中视为当前主题没有可复用历史结果。不要继续改写 query 反复调用 `knowledge_search`；"
+            "下一步直接从零走原始资料路线：先用 `book_search` 选书，再用 `knowledge_locate` 读目录、章节页、命中页或连续页正文；"
+            "若问题涉及多本书且子任务可用，请按 `书 × 信息目标` 派发子任务。"
         )
     return output
 

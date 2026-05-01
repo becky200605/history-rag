@@ -49,11 +49,26 @@ models:
       extra_body:
         include_reasoning: true
     supports_vision: true
+
   - name: qwen/qwen3.6-flash
     display_name: OpenRouter Qwen3.6-Flash
     use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
     model: qwen/qwen3.6-flash
     base_url: https://openrouter.ai/api/v1
+    api_key: $OPENAI_API_KEY
+    max_tokens: 8192
+    request_timeout: 18000
+    supports_thinking: true
+    when_thinking_enabled:
+      extra_body:
+        include_reasoning: true
+    supports_vision: true
+
+  - name: Qwen3.6-27B-4bit
+    display_name: Qwen3.6-27B-4bit-selfhosted
+    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
+    model: Qwen3.6-27B-4bit
+    base_url: https://model.kbkbk.xyz/v1
     api_key: $OPENAI_API_KEY
     max_tokens: 8192
     request_timeout: 18000
@@ -238,7 +253,7 @@ subagents:
   # Default timeout in seconds for all subagents (default: 900 = 15 minutes)
   timeout_seconds: 900
   # Optional default model for all subagents.
-  model_name: qwen/qwen3.6-flash
+  model_name: Qwen3.6-27B-4bit
   # Optional default thinking mode for all subagents.
   thinking_enabled: false
 #

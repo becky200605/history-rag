@@ -23,6 +23,17 @@ def _extract_reasoning(payload: dict[str, Any] | None) -> str | None:
         value = payload.get(key)
         if isinstance(value, str) and value:
             return value
+    reasoning_details = payload.get("reasoning_details")
+    if isinstance(reasoning_details, list):
+        parts: list[str] = []
+        for item in reasoning_details:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+        if parts:
+            return "\n".join(parts)
     return None
 
 

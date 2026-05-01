@@ -107,3 +107,26 @@ def test_create_chat_model_uses_when_thinking_enabled_without_injecting_none(mon
     factory_module.create_chat_model(name="demo-model", thinking_enabled=True)
 
     assert captured["extra_body"] == {"include_reasoning": True}
+
+
+def test_create_chat_model_wraps_anthropic_with_minimax_compat(monkeypatch):
+    app_config = _make_app_config(
+        [
+            _make_model(
+                "anthropic-compatible",
+                supports_thinking=True,
+                extra_fields={"use": "langchain_anthropic:ChatAnthropic"},
+            )
+        ]
+    )
+
+    monkeypatch.setattr(factory_module, "get_app_config", lambda: app_config)
+    monkeypatch.setattr(factory_module, "is_tracing_enabled", lambda: False)
+
+    model = factory_module.create_chat_model(
+        name="anthropic-compatible",
+        api_key="dummy",
+        thinking_enabled=True,
+    )
+
+    assert model.__class__.__name__ == "MiniMaxAnthropicCompatChatAnthropic"

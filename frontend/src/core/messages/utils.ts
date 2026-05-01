@@ -127,11 +127,15 @@ export function groupMessages<T>(
 
 export function extractTextFromMessage(message: Message) {
   if (typeof message.content === "string") {
-    return message.content.trim();
+    return sanitizeMinimaxAnthropicThinkingText(message.content).content;
   }
   if (Array.isArray(message.content)) {
     return message.content
-      .map((content) => (content.type === "text" ? content.text : ""))
+      .map((content) =>
+        content.type === "text"
+          ? sanitizeMinimaxAnthropicThinkingText(content.text).content
+          : "",
+      )
       .join("\n")
       .trim();
   }
@@ -140,14 +144,14 @@ export function extractTextFromMessage(message: Message) {
 
 export function extractContentFromMessage(message: Message) {
   if (typeof message.content === "string") {
-    return message.content.trim();
+    return sanitizeMinimaxAnthropicThinkingText(message.content).content;
   }
   if (Array.isArray(message.content)) {
     return message.content
       .map((content) => {
         switch (content.type) {
           case "text":
-            return content.text;
+            return sanitizeMinimaxAnthropicThinkingText(content.text).content;
           case "image_url":
             const imageURL = extractURLFromImageURLContent(content.image_url);
             return `![image](${imageURL})`;
@@ -163,12 +167,24 @@ export function extractContentFromMessage(message: Message) {
 
 export function extractReasoningContentFromMessage(message: Message) {
   if (message.type !== "ai" || !message.additional_kwargs) {
+    if (message.type === "ai") {
+      return extractLeakedMinimaxAnthropicReasoning(message.content);
+    }
     return null;
   }
+  const leakedReasoning = extractLeakedMinimaxAnthropicReasoning(
+    message.content,
+  );
   if ("reasoning_content" in message.additional_kwargs) {
-    return message.additional_kwargs.reasoning_content as string | null;
+    const reasoningContent = message.additional_kwargs.reasoning_content as
+      | string
+      | null;
+    if (reasoningContent && leakedReasoning) {
+      return `${reasoningContent}\n${leakedReasoning}`;
+    }
+    return reasoningContent ?? leakedReasoning;
   }
-  return null;
+  return leakedReasoning;
 }
 
 export function removeReasoningContentFromMessage(message: Message) {
@@ -193,10 +209,10 @@ export function extractURLFromImageURLContent(
 
 export function hasContent(message: Message) {
   if (typeof message.content === "string") {
-    return message.content.trim().length > 0;
+    return extractContentFromMessage(message).length > 0;
   }
   if (Array.isArray(message.content)) {
-    return message.content.length > 0;
+    return extractContentFromMessage(message).length > 0;
   }
   return false;
 }
@@ -204,8 +220,187 @@ export function hasContent(message: Message) {
 export function hasReasoning(message: Message) {
   return (
     message.type === "ai" &&
-    typeof message.additional_kwargs?.reasoning_content === "string"
+    (typeof message.additional_kwargs?.reasoning_content === "string" ||
+      extractLeakedMinimaxAnthropicReasoning(message.content) !== null)
   );
+}
+
+interface SanitizedMinimaxAnthropicThinking {
+  content: string;
+  reasoning: string | null;
+}
+
+function findPythonDictLiteralEnd(text: string, start: number) {
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote !== null) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+    } else if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
+  }
+
+  return null;
+}
+
+function parsePythonStringLiteral(text: string, start: number) {
+  const quote = text[start];
+  if (quote !== "'" && quote !== '"') {
+    return null;
+  }
+
+  let value = "";
+  for (let index = start + 1; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "\\") {
+      const next = text[index + 1];
+      if (next === undefined) {
+        return null;
+      }
+      if (next === "n") {
+        value += "\n";
+      } else if (next === "r") {
+        value += "\r";
+      } else if (next === "t") {
+        value += "\t";
+      } else {
+        value += next;
+      }
+      index += 1;
+    } else if (char === quote) {
+      return { value, end: index + 1 };
+    } else {
+      value += char;
+    }
+  }
+
+  return null;
+}
+
+function extractPythonDictStringValue(literal: string, key: string) {
+  for (let index = 0; index < literal.length; index += 1) {
+    const char = literal[index];
+    if (char !== "'" && char !== '"') {
+      continue;
+    }
+
+    const parsedKey = parsePythonStringLiteral(literal, index);
+    if (!parsedKey) {
+      continue;
+    }
+    index = parsedKey.end - 1;
+    if (parsedKey.value !== key) {
+      continue;
+    }
+
+    let valueStart = parsedKey.end;
+    while (/\s/.test(literal[valueStart] ?? "")) {
+      valueStart += 1;
+    }
+    if (literal[valueStart] !== ":") {
+      continue;
+    }
+    valueStart += 1;
+    while (/\s/.test(literal[valueStart] ?? "")) {
+      valueStart += 1;
+    }
+
+    const parsedValue = parsePythonStringLiteral(literal, valueStart);
+    if (parsedValue) {
+      return parsedValue.value;
+    }
+  }
+
+  return null;
+}
+
+export function sanitizeMinimaxAnthropicThinkingText(
+  text: string,
+): SanitizedMinimaxAnthropicThinking {
+  if (!text.includes("thinking")) {
+    return { content: text.trim(), reasoning: null };
+  }
+
+  const contentParts: string[] = [];
+  const reasoningParts: string[] = [];
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const start = text.indexOf("{", cursor);
+    if (start === -1) {
+      contentParts.push(text.slice(cursor));
+      break;
+    }
+
+    contentParts.push(text.slice(cursor, start));
+    const end = findPythonDictLiteralEnd(text, start);
+    if (end === null) {
+      const partialLiteral = text.slice(start);
+      if (
+        !partialLiteral.includes("'thinking'") &&
+        !partialLiteral.includes('"thinking"')
+      ) {
+        contentParts.push(partialLiteral);
+      }
+      break;
+    }
+
+    const literal = text.slice(start, end);
+    const type = extractPythonDictStringValue(literal, "type");
+    const thinking = extractPythonDictStringValue(literal, "thinking");
+    if (type === "thinking" && thinking) {
+      reasoningParts.push(thinking);
+    } else {
+      contentParts.push(literal);
+    }
+    cursor = end;
+  }
+
+  return {
+    content: contentParts.join("").replace(/\n{3,}/g, "\n\n").trim(),
+    reasoning: reasoningParts.join("\n").trim() || null,
+  };
+}
+
+function extractLeakedMinimaxAnthropicReasoning(
+  content: Message["content"],
+): string | null {
+  if (typeof content === "string") {
+    return sanitizeMinimaxAnthropicThinkingText(content).reasoning;
+  }
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const reasoningParts = content
+    .map((block) =>
+      block.type === "text"
+        ? sanitizeMinimaxAnthropicThinkingText(block.text).reasoning
+        : null,
+    )
+    .filter((reasoning): reasoning is string => Boolean(reasoning));
+
+  return reasoningParts.join("\n").trim() || null;
 }
 
 export function hasToolCalls(message: Message) {

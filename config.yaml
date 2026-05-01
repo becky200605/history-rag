@@ -23,19 +23,19 @@ models:
   #   max_tokens: 8192
   #   supports_vision: true  # Enable vision support for view_image tool
 
-  # DeepSeek account is currently out of balance, so keep it disabled.
-  # - name: deepseek-v3
-  #   display_name: DeepSeek V3 (Thinking)
-  #   use: src.models.patched_deepseek:PatchedChatDeepSeek
-  #   model: deepseek-reasoner
-  #   api_key: $DEEPSEEK_API_KEY
-  #   max_tokens: 16384
-  #   supports_thinking: true
-  #   supports_vision: false  # DeepSeek V3 does not support vision
-  #   when_thinking_enabled:
-  #     extra_body:
-  #       thinking:
-  #         type: enabled
+  - name: MiniMax-M2.7
+    display_name: MiniMax M2.7
+    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
+    model: MiniMax-M2.7
+    base_url: https://api.minimaxi.com/v1
+    api_key: sk-cp-r1RLEOXiiPhLR7R_VNQE4CfaXSXAq9RcxsLnPUuQi9b2LUsW_hCogwwGPQ75WMcEhvVcbC3U4aoIRw-I5Z43jWVzV-TL_j_bd4mt3mASE7OZ4u9sOGPObGA
+    max_tokens: 8192
+    timeout: 18000
+    extra_body:
+      reasoning_split: true
+    supports_thinking: true
+    supports_vision: false
+
   - name: qwen/qwen3.6-27b
     display_name: OpenRouter Qwen3.6-27b
     use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
@@ -253,7 +253,7 @@ subagents:
   # Default timeout in seconds for all subagents (default: 900 = 15 minutes)
   timeout_seconds: 900
   # Optional default model for all subagents.
-  model_name: Qwen3.6-27B-4bit
+  model_name: MiniMax-M2.7
   # Optional default thinking mode for all subagents.
   thinking_enabled: false
 #

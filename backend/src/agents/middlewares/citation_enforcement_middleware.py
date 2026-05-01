@@ -13,6 +13,8 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from src.models.minimax_thinking import sanitize_minimax_anthropic_thinking_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,12 +73,14 @@ QUESTION_PREFIX_PATTERN = re.compile(r"^\s*(?:[-*•]|\d+[.)]|[一二三四五�
 
 def _stringify_content(content: object) -> str:
     if isinstance(content, str):
-        return content
+        return sanitize_minimax_anthropic_thinking_text(content).content
     if isinstance(content, list):
         parts: list[str] = []
         for item in content:
             if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(str(item.get("text", "")))
+                parts.append(sanitize_minimax_anthropic_thinking_text(str(item.get("text", ""))).content)
+            elif isinstance(item, dict) and item.get("type") in {"thinking", "redacted_thinking"}:
+                continue
             else:
                 parts.append(str(item))
         return "\n".join(parts)
@@ -470,7 +474,7 @@ def _normalize_suggested_questions(*, text: str, user_question: str, refusal: bo
             continue
         if SUGGESTION_HEADING_PATTERN.match(line):
             continue
-        normalized = _normalize_question_text(line)
+        normalized = _normalize_question_text(sanitize_minimax_anthropic_thinking_text(line).content)
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)

@@ -36,6 +36,12 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
     if model_config is None:
         raise ValueError(f"Model {name} not found in config") from None
     model_class = resolve_class(model_config.use, BaseChatModel)
+    if model_config.use == "langchain_anthropic:ChatAnthropic":
+        from src.models.minimax_anthropic_compat import (
+            MiniMaxAnthropicCompatChatAnthropic,
+        )
+
+        model_class = MiniMaxAnthropicCompatChatAnthropic
     model_settings_from_config = model_config.model_dump(
         exclude_none=True,
         exclude={

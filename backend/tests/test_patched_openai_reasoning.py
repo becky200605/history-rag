@@ -42,6 +42,40 @@ def test_create_chat_result_maps_reasoning_into_reasoning_content() -> None:
     assert message.additional_kwargs["reasoning_content"] == "先做加法，然后直接回答。"
 
 
+def test_create_chat_result_maps_minimax_reasoning_details() -> None:
+    model = _build_model()
+    result = model._create_chat_result(
+        {
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "model": "MiniMax-M2.7",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": "你好！",
+                        "reasoning_details": [
+                            {"type": "reasoning.text", "text": "先识别问候。"},
+                            {"type": "reasoning.text", "text": "再简短回应。"},
+                        ],
+                    },
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 12,
+                "total_tokens": 22,
+            },
+        }
+    )
+
+    message = result.generations[0].message
+    assert message.content == "你好！"
+    assert message.additional_kwargs["reasoning_content"] == "先识别问候。\n再简短回应。"
+
+
 def test_stream_chunk_maps_delta_reasoning_into_reasoning_content() -> None:
     model = _build_model()
     chunk = model._convert_chunk_to_generation_chunk(

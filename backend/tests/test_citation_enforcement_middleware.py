@@ -329,7 +329,9 @@ class TestCitationEnforcementMiddleware:
                         content=(
                             "可以据此得出结论。"
                             "[citation:张之洞全集 12 书札 家书 勤学篇 輶轩语 书目答问 读经札记 论金石札路上 古文 骈体文 诗集 弟子记_12733686_可搜索 原书第178页第1段]"
-                            "(/api/knowledge/docs/张之洞全集 12 书札 家书 勤学篇 輶轩语 书目答问 读经札记 论金石札路上+古文 骈体文 诗集 弟子记_12733686_可搜索.pdf?page_no=178&pdf_page_no=178&paragraph_no=1&citation_source_kind=structured#page=178)"
+                            "(/api/knowledge/docs/张之洞全集 12 书札 家书 勤学篇 輶轩语 书目答问 "
+                            "读经札记 论金石札路上+古文 骈体文 诗集 弟子记_12733686_可搜索.pdf"
+                            "?page_no=178&pdf_page_no=178&paragraph_no=1&citation_source_kind=structured#page=178)"
                         )
                     )
                 ]
@@ -461,6 +463,28 @@ class TestCitationEnforcementMiddleware:
         assert "1. [citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)" in content
         assert "建议问题" in content
         assert "1. 新问题一？" in content
+
+    def test_stage_three_drops_leaked_minimax_thinking_from_suggestions(self):
+        middleware = CitationEnforcementMiddleware()
+        request = _build_request(
+            model=_SuggestionModel(
+                "{'thinking': '先分析应该问什么。', 'type': 'thinking', 'index': 0, 'signature': 'abc'}\n"
+                "你能帮我分析或研究哪方面的内容？\n"
+                "我注意到知识库中有一份刘恺卿(1905-1952)的人物档案，需要我帮你深入了解吗？"
+            )
+        )
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return _good_stage_one_response()
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert "1. 你能帮我分析或研究哪方面的内容？" in content
+        assert "2. 我注意到知识库中有一份刘恺卿(1905-1952)的人物档案，需要我帮你深入了解吗？" in content
+        assert "3. 围绕" in content
+        assert "thinking" not in content
+        assert "\n1. \n" not in content
 
     def test_allows_refusal_without_reference_section_when_catalog_has_no_material(self):
         middleware = CitationEnforcementMiddleware()

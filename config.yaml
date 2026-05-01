@@ -255,7 +255,7 @@ subagents:
   # Optional default model for all subagents.
   model_name: MiniMax-M2.7
   # Optional default thinking mode for all subagents.
-  thinking_enabled: false
+  thinking_enabled: true
 #
 #   # Optional per-agent timeout overrides
 #   agents:

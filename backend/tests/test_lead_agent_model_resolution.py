@@ -240,6 +240,7 @@ def test_create_todo_list_middleware_uses_parallel_batch_language_when_subagents
     assert "parallel batch" in captured["system_prompt"]
     assert "up to 3" in captured["system_prompt"]
     assert "will drain the queued todos" in captured["system_prompt"]
+    assert "first use `knowledge_search` once when needed" in captured["system_prompt"]
     assert "After `book_search`, if multiple books are materially relevant" in captured["system_prompt"]
     assert "Only skip that todo step when one dominant book is clearly sufficient" in captured["system_prompt"]
     assert "`write_todos` is the dispatch point" in captured["system_prompt"]
@@ -249,3 +250,4 @@ def test_create_todo_list_middleware_uses_parallel_batch_language_when_subagents
     assert "if multiple books remain in scope, do not continue deep retrieval until you have written the todo list" in captured["tool_description"]
     assert "mark multiple items as `in_progress` together in one `write_todos` call" in captured["tool_description"]
     assert "run that parallel batch and return findings before you continue" in captured["tool_description"]
+    assert "do one `knowledge_search` when needed" in captured["tool_description"]

@@ -16,7 +16,9 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
 
     prompt = prompt_module.apply_prompt_template()
 
-    assert "Book Search First Rule" in prompt
+    assert "Historical Reuse Before Dispatch Rule" in prompt
+    assert "Book Search After History Check Rule" in prompt
+    assert "knowledge_search(query=...)" in prompt
     assert "book_search(query=...)" in prompt
     assert "knowledge_folders" in prompt
     assert "Knowledge Folder Semantics Rule" in prompt

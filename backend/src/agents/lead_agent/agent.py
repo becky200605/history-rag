@@ -151,6 +151,7 @@ This tool is designed for complex objectives that require systematic tracking:
 - Remove tasks that become irrelevant
 - Add new tasks discovered during implementation
 - Don't be afraid to revise the todo list as you learn more
+- Before you create a retrieval todo board, first use `knowledge_search` once when needed to check whether prior main-task/subtask results already cover the question
 - After `book_search`, if multiple books are materially relevant, create/update the todo list BEFORE deep retrieval so the reading plan becomes explicit
 - Only skip that todo step when one dominant book is clearly sufficient for a narrow question
 - For historical / multi-book retrieval tasks, write todo items as `书名 × 信息目标` pairs so the reading route is explicit
@@ -222,6 +223,7 @@ If blocked, keep the task as `in_progress` and create a new task describing what
 - Update task status in real-time as you work
 - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
 - Remove tasks that are no longer relevant
+- Before creating retrieval todos, do one `knowledge_search` when needed to check for reusable prior task results; if that misses, then proceed to `book_search` and the todo board
 - For historical or knowledge-base retrieval tasks, prefer todo items like `读《某书》：查某问题` instead of vague items like `继续检索`
 - Do not include terminal synthesis items such as `汇总结论` / `整合证据` / `撰写最终答案` in the todo board; the board should only contain delegated execution lanes
 - After `book_search`, if multiple books remain in scope, do not continue deep retrieval until you have written the todo list for that reading set

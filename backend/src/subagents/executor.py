@@ -605,7 +605,11 @@ class SubagentExecutor:
             run_config: RunnableConfig = {
                 "recursion_limit": self.config.max_turns,
             }
-            context = {}
+            context = {
+                "trace_id": self.trace_id,
+                "subtask_id": result.task_id,
+                "subagent_name": self.config.name,
+            }
             if self.thread_id:
                 run_config["configurable"] = {"thread_id": self.thread_id}
                 context["thread_id"] = self.thread_id

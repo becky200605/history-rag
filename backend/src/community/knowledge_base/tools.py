@@ -1169,8 +1169,37 @@ def knowledge_locate_tool(
         pdf_page_no: Optional physical PDF page number to inspect.
         pdf_page_no_end: Optional inclusive ending PDF page number for contiguous reading.
     """
+    from src.utils.subtask_logging import log_subtask_event
+
+    runtime_context = getattr(runtime, "context", {}) or {}
+    log_subtask_event(
+        "knowledge_locate_invoked",
+        trace_id=runtime_context.get("trace_id"),
+        task_id=runtime_context.get("subtask_id"),
+        subagent_name=runtime_context.get("subagent_name"),
+        thread_id=runtime_context.get("thread_id"),
+        doc_id=doc_id,
+        filename=filename,
+        page_no=page_no,
+        page_no_end=page_no_end,
+        pdf_page_no=pdf_page_no,
+        pdf_page_no_end=pdf_page_no_end,
+    )
     if not doc_id and not filename:
-        return "knowledge_locate requires either doc_id or filename."
+        log_subtask_event(
+            "knowledge_locate_missing_document_id",
+            trace_id=runtime_context.get("trace_id"),
+            task_id=runtime_context.get("subtask_id"),
+            subagent_name=runtime_context.get("subagent_name"),
+            thread_id=runtime_context.get("thread_id"),
+        )
+        return (
+            "knowledge_locate requires either doc_id or filename. "
+            "Your previous tool call omitted the document identifier. "
+            "Retry only if you can copy the exact original `doc_id` or `filename` "
+            "from the parent task or a prior tool result; otherwise stop and return "
+            "`【证据不足】`. Do not call `knowledge_locate` again with empty args."
+        )
 
     thread_id = runtime.context.get("thread_id")
     user_id = runtime.context.get("user_id")

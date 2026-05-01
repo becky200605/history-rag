@@ -67,6 +67,8 @@ HISTORICAL_PERIOD_ALIASES = {
 }
 HISTORICAL_TOPIC_RETRY_HINTS = ("情况", "概况", "变化", "变迁", "问题", "状况")
 FINANCE_RETRY_FACETS = ("财政收入结构", "财政支出结构", "财政政策")
+_TASK_PROMPT_DOC_ID_PATTERN = re.compile(r"doc_id\s*=\s*['\"]([^'\"]+)['\"]")
+_TASK_PROMPT_FILENAME_PATTERN = re.compile(r"filename\s*=\s*['\"]([^'\"]+)['\"]")
 logger = logging.getLogger(__name__)
 
 
@@ -108,6 +110,57 @@ class KnowledgeSearchArgs(BaseModel):
 def _tool_runtime_state(runtime: ToolRuntime[ContextT, ThreadState]) -> dict[str, Any] | None:
     state = getattr(runtime, "state", None)
     return state if isinstance(state, dict) else None
+
+
+def _message_content_as_text(message: Any) -> str:
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
+def _infer_document_identifier_from_runtime(
+    runtime: ToolRuntime[ContextT, ThreadState],
+) -> tuple[str | None, str | None]:
+    state = _tool_runtime_state(runtime)
+    if state is None:
+        return None, None
+
+    messages = state.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return None, None
+
+    human_texts: list[str] = []
+    for message in reversed(messages):
+        message_type = getattr(message, "type", None)
+        if message_type != "human":
+            continue
+        text = _message_content_as_text(message).strip()
+        if text:
+            human_texts.append(text)
+        if len(human_texts) >= 2:
+            break
+
+    if not human_texts:
+        return None, None
+
+    combined_text = "\n\n".join(human_texts)
+    doc_ids = {match.strip() for match in _TASK_PROMPT_DOC_ID_PATTERN.findall(combined_text) if match.strip()}
+    filenames = {match.strip() for match in _TASK_PROMPT_FILENAME_PATTERN.findall(combined_text) if match.strip()}
+
+    inferred_doc_id = next(iter(doc_ids)) if len(doc_ids) == 1 else None
+    inferred_filename = next(iter(filenames)) if len(filenames) == 1 else None
+    return inferred_doc_id, inferred_filename
 
 
 def _list_book_catalog_for_tools(

@@ -20,8 +20,17 @@ Do NOT use for simple, single-step operations.""",
 - Use available tools as needed to accomplish the goal
 - Think step by step but act decisively
 - Prefer fewer, more targeted retrievals; once you have enough evidence for this subtask, stop instead of repeatedly rereading pages
+- For historical / knowledge-base subtasks, follow this workflow strictly:
+  1. Read the delegated task carefully and extract the concrete information goal
+  2. Check the injected historical task-memory matches first and reuse them if they already cover the needed evidence
+  3. If those matches are absent, weak, stale, or incomplete, use `book_search` to choose the right book(s) for this exact goal
+  4. Read the `book_search` result carefully, especially title, snippet, metadata, and returned `doc_id`
+  5. Only after you have a concrete `doc_id` or `filename`, call `knowledge_locate` to read目录、章节页、命中页或连续页正文
+  6. Once you have enough grounded evidence, stop retrieval and write the result
+- Do not skip directly to `knowledge_locate` just because the delegated task mentions a book title or a topic; first confirm the retrieval route from historical task-memory or `book_search` unless the parent task already explicitly provides the exact `doc_id` or `filename` to use
 - For knowledge-base tasks, first read the injected historical task-memory matches if present. When you need to主动检索历史结果, call `knowledge_search` at most once with a clear query only; it now searches prior main-task/subtask results by title + query similarity
 - If historical task-memory hits are absent, weak, or incomplete, treat that as no reusable prior result and fall back to raw-document routing: use `book_search` to identify candidate books, inspect the returned metadata, then use `knowledge_locate` for目录、章节、命中页和连续页正文. Do not rewrite the query and repeatedly call `knowledge_search`
+- `book_search` is the normal gateway into raw document reading. Treat its returned `doc_id` values as the authoritative source for later `knowledge_locate` calls
 - If the parent task, `book_search`, or a prior tool result already gave you a concrete `doc_id` or `filename`, treat that value as mandatory input for `knowledge_locate`: copy the exact original string verbatim into the tool call, do not paraphrase it, do not shorten it, and do not omit it
 - Never call `knowledge_locate` with only page numbers or with both `doc_id` and `filename` empty
 - If `knowledge_locate` says `requires either doc_id or filename`, that means your last tool call omitted the required document identifier. Retry only if you can immediately copy the exact `doc_id` or `filename` from the parent task or tool output; otherwise stop and return `【证据不足】` instead of looping

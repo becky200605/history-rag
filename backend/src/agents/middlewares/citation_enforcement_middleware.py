@@ -73,6 +73,12 @@ SUGGESTION_SYSTEM_PROMPT = (
 )
 SUGGESTION_HEADING_PATTERN = re.compile(r"^(?:#{1,6}\s*|\*\*)?建议问题(?:\*\*)?\s*$", re.IGNORECASE)
 QUESTION_PREFIX_PATTERN = re.compile(r"^\s*(?:[-*•]|\d+[.)]|[一二三四五六七八九十]+[、.])\s*")
+TASK_MEMORY_BLOCK_PATTERN = re.compile(r"<task_memory_matches>[\s\S]*?</task_memory_matches>", re.IGNORECASE)
+UPLOADED_FILES_BLOCK_PATTERN = re.compile(r"<uploaded_files>[\s\S]*?</uploaded_files>", re.IGNORECASE)
+SUGGESTION_CONTAMINATION_PATTERN = re.compile(
+    r"<task_memory_matches>|</task_memory_matches>|系统插入提示|不是用户的新问题|当前\s*query|当前任务标题|强制历史证据包",
+    re.IGNORECASE,
+)
 
 
 def _stringify_content(content: object) -> str:
@@ -101,8 +107,16 @@ def _latest_human_index(messages: list) -> int:
 def _latest_human_message(messages: list) -> str:
     for index in range(len(messages) - 1, -1, -1):
         if isinstance(messages[index], HumanMessage):
-            return _stringify_content(messages[index].content).strip()
+            content = _strip_injected_context(_stringify_content(messages[index].content))
+            if content:
+                return content
     return ""
+
+
+def _strip_injected_context(content: str) -> str:
+    cleaned = TASK_MEMORY_BLOCK_PATTERN.sub("", content)
+    cleaned = UPLOADED_FILES_BLOCK_PATTERN.sub("", cleaned)
+    return cleaned.strip()
 
 
 def _find_first_section_start(content: str) -> int | None:
@@ -447,7 +461,7 @@ def _normalize_question_text(text: str) -> str:
 
 
 def _question_seed(user_question: str) -> str:
-    seed = " ".join(user_question.split())
+    seed = " ".join(_strip_injected_context(user_question).split())
     if len(seed) > 36:
         return f"{seed[:33]}..."
     return seed or "当前主题"
@@ -471,6 +485,7 @@ def _fallback_suggested_questions(*, user_question: str, refusal: bool) -> list[
 def _normalize_suggested_questions(*, text: str, user_question: str, refusal: bool) -> list[str]:
     seen: set[str] = set()
     questions: list[str] = []
+    clean_user_question = _strip_injected_context(user_question)
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -479,12 +494,14 @@ def _normalize_suggested_questions(*, text: str, user_question: str, refusal: bo
         if SUGGESTION_HEADING_PATTERN.match(line):
             continue
         normalized = _normalize_question_text(sanitize_minimax_anthropic_thinking_text(line).content)
+        if SUGGESTION_CONTAMINATION_PATTERN.search(normalized):
+            continue
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
         questions.append(normalized)
 
-    for fallback in _fallback_suggested_questions(user_question=user_question, refusal=refusal):
+    for fallback in _fallback_suggested_questions(user_question=clean_user_question, refusal=refusal):
         if len(questions) >= 3:
             break
         if fallback in seen:
@@ -497,9 +514,11 @@ def _normalize_suggested_questions(*, text: str, user_question: str, refusal: bo
 
 def _build_suggestion_prompt(*, user_question: str, answer_body: str, reference_section: str) -> str:
     references = reference_section or "（本轮无参考文献阶段内容）"
+    clean_user_question = _strip_injected_context(user_question)
+    clean_answer_body = _strip_injected_context(answer_body)
     return (
-        f"用户原问题：\n{user_question or '（未提供）'}\n\n"
-        f"阶段1-回答正文：\n{answer_body or '（空）'}\n\n"
+        f"用户原问题：\n{clean_user_question or '（未提供）'}\n\n"
+        f"阶段1-回答正文：\n{clean_answer_body or '（空）'}\n\n"
         f"阶段2-参考文献：\n{references}"
     )
 
@@ -618,6 +637,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         reference_section: str,
     ) -> list[str]:
         refusal = _is_refusal(answer_body)
+        user_question = _strip_injected_context(user_question)
         model = getattr(request, "model", None)
         if model is None or not hasattr(model, "invoke"):
             return _fallback_suggested_questions(user_question=user_question, refusal=refusal)
@@ -653,6 +673,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         reference_section: str,
     ) -> list[str]:
         refusal = _is_refusal(answer_body)
+        user_question = _strip_injected_context(user_question)
         model = getattr(request, "model", None)
         if model is None or not hasattr(model, "ainvoke"):
             return self._generate_suggested_questions_sync(

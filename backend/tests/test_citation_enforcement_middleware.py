@@ -486,6 +486,42 @@ class TestCitationEnforcementMiddleware:
         assert "thinking" not in content
         assert "\n1. \n" not in content
 
+    def test_stage_three_ignores_task_memory_injection_when_building_suggestions(self):
+        middleware = CitationEnforcementMiddleware()
+        injected = (
+            "<task_memory_matches>\n"
+            "系统插入提示（不是用户的新问题）：以下是基于当前任务标题与 query 匹配到的历史主任务/子任务结果。\n"
+            "当前 query：张之洞创办汉阳铁厂等洋务企业时具体面临过哪些困境与失败？\n"
+            "</task_memory_matches>"
+        )
+        request = ModelRequest(
+            model=_SuggestionModel(
+                "围绕“系统插入提示（不是用户的新问题）”，下一步最值得继续展开的关键阶段或专题是什么？\n"
+                "如果继续深挖“<task_memory_matches> 系统插入提示”，最需要补充证据的机制是哪一项？\n"
+                "张之洞创办汉阳铁厂等洋务企业时具体面临过哪些困境与失败？"
+            ),
+            messages=[
+                HumanMessage(content=injected),
+                HumanMessage(content="张之洞创办汉阳铁厂等洋务企业时具体面临过哪些困境与失败？"),
+                ToolMessage(
+                    content="citation: [citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)",
+                    tool_call_id="tool-call-1",
+                    name="knowledge_search",
+                ),
+            ],
+            system_message=SystemMessage(content="You are a helpful assistant."),
+        )
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return _good_stage_one_response()
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert "系统插入提示" not in content
+        assert "<task_memory_matches>" not in content
+        assert "张之洞创办汉阳铁厂" in content
+
     def test_allows_refusal_without_reference_section_when_catalog_has_no_material(self):
         middleware = CitationEnforcementMiddleware()
         request = _build_request(model=_SuggestionModel("缩小到更具体时期？\n指定书名或章节？\n优先核实哪条史料？"))

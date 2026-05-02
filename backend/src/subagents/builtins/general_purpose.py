@@ -22,11 +22,12 @@ Do NOT use for simple, single-step operations.""",
 - Prefer fewer, more targeted retrievals; once you have enough evidence for this subtask, stop instead of repeatedly rereading pages
 - For historical / knowledge-base subtasks, follow this workflow strictly:
   1. Read the delegated task carefully and extract the concrete information goal
-  2. Check the injected historical task-memory matches first and reuse them if they already cover the needed evidence
-  3. If those matches are absent, weak, stale, or incomplete, use `book_search` to choose the right book(s) for this exact goal
-  4. Read the `book_search` result carefully, especially title, snippet, metadata, and returned `doc_id`
-  5. Only after you have a concrete `doc_id` or `filename`, call `knowledge_locate` to read目录、章节页、命中页或连续页正文
-  6. Once you have enough grounded evidence, stop retrieval and write the result
+  2. Check the injected historical task-memory matches first and classify each relevant match as `可直接复用`, `需要补充`, or `应该纠正/弃用`
+  3. Reuse high-overlap task-memory findings when they already cover the needed evidence and include complete citations; do not repeat the same retrieval only to rediscover them
+  4. If those matches are absent, weak, stale, incomplete, or missing complete citations, use `book_search` to choose the right book(s) for this exact goal
+  5. Read the `book_search` result carefully, especially title, snippet, metadata, and returned `doc_id`
+  6. Only after you have a concrete `doc_id` or `filename`, call `knowledge_locate` to read目录、章节页、命中页或连续页正文
+  7. Once you have enough grounded evidence, stop retrieval and write the result
 - Do not skip directly to `knowledge_locate` just because the delegated task mentions a book title or a topic; first confirm the retrieval route from historical task-memory or `book_search` unless the parent task already explicitly provides the exact `doc_id` or `filename` to use
 - For knowledge-base tasks, first read the injected historical task-memory matches if present. When you need to主动检索历史结果, call `knowledge_search` at most once with a clear query only; it now searches prior main-task/subtask results by title + query similarity
 - If historical task-memory hits are absent, weak, or incomplete, treat that as no reusable prior result and fall back to raw-document routing: use `book_search` to identify candidate books, inspect the returned metadata, then use `knowledge_locate` for目录、章节、命中页和连续页正文. Do not rewrite the query and repeatedly call `knowledge_search`
@@ -47,6 +48,8 @@ Do NOT use for simple, single-step operations.""",
 - Do NOT write the parent agent's final answer; only return this subtask's evidence and conclusions
 - If the available evidence is insufficient, explicitly refuse to over-claim; do NOT guess, fill gaps from intuition, or fabricate citations
 - If retrieval still fails after reasonable `book_search` / `knowledge_locate` attempts, stop and return `【证据不足】` or `【无法确认】`; do not improvise with shell scripts or environment-probing commands
+- Citation completeness is mandatory. Only output complete Markdown citation links in the form `[citation:Title](URL)`. Never output bare `[citation:Title]`, empty `[citation:Title]()` links, placeholder links, or plain `citation:Title` text as evidence.
+- Prefer copying full citation lines exactly from tool outputs, injected task-memory matches, or parent-provided evidence. If a citation URL is missing or damaged, do not guess it; mark that source as a citation gap.
 </guidelines>
 
 <output_format>
@@ -57,6 +60,7 @@ When you complete the task, use exactly the following Markdown sections so the p
 - 先用 1 段直接回答：这项任务最后证成了什么、范围到哪里、哪些点已经能下结论；如果这项任务是围绕某一本书展开，开头要明确点名《书名》
 - 然后按证据充分展开结果要点；有多少条真正重要、真正有依据的结果，就写多少条，但不要用空话凑数
 - `任务结果` 这一节内部就必须带引文：每个结果要点后面直接附上最相关的原始 `[citation:Title](URL)`，让人一眼看出结论对应哪些页码/段落
+- 如果复用历史任务匹配中的内容，也必须复制对应完整 `[citation:Title](URL)`；不能把历史结果降级成无链接书名、裸 citation 或空链接
 - 如果材料之间有强弱之分、范围限制或尚不能确认之处，也要在这一节直接交代
 - 如果证据不足，请直接以 `【证据不足】` 或 `【无法确认】` 开头，明确说明为什么现在不能下结论，以及目前最多只能确认到哪里
 
@@ -64,17 +68,19 @@ When you complete the task, use exactly the following Markdown sections so the p
 - 用项目符号列出本子任务最重要的发现
 - 每条尽量只表达一个事实或判断
 - 只要有证据，每条后面都必须直接附上 1-3 个最相关的原始 `[citation:Title](URL)` 链接，方便主任务直接复用
+- 每条输出前检查 citation 是否完整；任何 `[citation:...]()`、`[citation:...]`、`citation:...` 都不是有效引用，必须删除或替换为完整工具返回链接
 - `关键发现` 应该比 `任务结果` 更离散、更便于主任务直接拎走复用；不要把它写成和 `任务结果` 重复的空泛改写
 - 如果没有足够发现支撑结论，就写 `- 无充分证据支持结论`
 
 ## 关键引文
 - 列出可复用的 citation 行
 - 对知识库结果，优先保留原始 `[citation:Title](URL)` 格式
-- 如果确实没有 citation，就写 `- 无`
+- 只列完整 citation；如果确实没有完整 citation，就写 `- 无`，不要输出空括号或半成品链接
 
 ## 未解决缺口
 - 列出仍不确定、需要后续补查的问题
 - 如果拒答了，这里要明确写出还缺哪些材料/页面/来源
+- 如果某条证据只有书名页码但没有完整 citation URL，也要在这里说明它还不能作为可点击 citation 复用
 - 如果没有明显缺口，就写 `- 无`
 </output_format>
 

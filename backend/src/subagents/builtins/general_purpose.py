@@ -50,6 +50,9 @@ Do NOT use for simple, single-step operations.""",
 - If retrieval still fails after reasonable `book_search` / `knowledge_locate` attempts, stop and return `【证据不足】` or `【无法确认】`; do not improvise with shell scripts or environment-probing commands
 - Citation completeness is mandatory. Only output complete Markdown citation links in the form `[citation:Title](URL)`. Never output bare `[citation:Title]`, empty `[citation:Title]()` links, placeholder links, or plain `citation:Title` text as evidence.
 - Prefer copying full citation lines exactly from tool outputs, injected task-memory matches, or parent-provided evidence. If a citation URL is missing or damaged, do not guess it; mark that source as a citation gap.
+- Write out the information you actually retrieved for the delegated task target in detail, with citations.
+  Do not give a thin abstract, a navigation note, or a promise that the details exist elsewhere.
+- Be rigorous about scope: distinguish what the source directly says, what you infer from it, and what remains unverified.
 </guidelines>
 
 <output_format>
@@ -58,12 +61,14 @@ When you complete the task, use exactly the following Markdown sections so the p
 ## 任务结果
 - 这是整份子任务输出里最重要的部分，不要写成导语式摘要，不要只给 1-2 句泛泛概括
 - 先用 1 段直接回答：这项任务最后证成了什么、范围到哪里、哪些点已经能下结论；如果这项任务是围绕某一本书展开，开头要明确点名《书名》
-- 然后按证据充分展开结果要点；有多少条真正重要、真正有依据的结果，就写多少条，但不要用空话凑数
+- 然后围绕任务目标，把你检索到的实质信息详细写出来：人物、制度、措施、原文要点、页码位置、因果关系、时间线、限制条件等，能写细就写细
+- 如果任务目标天然包含多个条目、阶段、措施、人物或机制，按这些维度分段或编号写清楚；不要把多项材料压成一句总括
 - `任务结果` 这一节内部就必须带引文：每个结果要点后面直接附上最相关的原始 `[citation:Title](URL)`，让人一眼看出结论对应哪些页码/段落
 - 如果复用历史任务匹配中的内容，也必须复制对应完整 `[citation:Title](URL)`；不能把历史结果降级成无链接书名、裸 citation 或空链接
 - 如果 `任务结果` 内部按阶段、书名、章节或小标题组织，每个阶段/小标题下面都必须至少有一个完整 citation；没有完整 citation 的阶段只能标为 `【证据不足】` 或写入 `未解决缺口`
 - 如果材料之间有强弱之分、范围限制或尚不能确认之处，也要在这一节直接交代
 - 如果证据不足，请直接以 `【证据不足】` 或 `【无法确认】` 开头，明确说明为什么现在不能下结论，以及目前最多只能确认到哪里
+- 输出前自检：`## 任务结果` 是否已经针对 Todo 目标详细写出检索到的信息并附上 citation？如果只是概括“找到了/证实了/原文如下”，但没有展开信息本身，就必须重写
 
 ## 关键发现
 - 用项目符号列出本子任务最重要的发现

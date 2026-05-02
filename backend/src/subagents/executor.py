@@ -535,10 +535,11 @@ class SubagentExecutor:
         if not summary:
             return
 
+        storage_query = title if task_level == "subtask" else task
         try:
             upsert_task_memory_record(
                 title=title,
-                query=task,
+                query=storage_query,
                 summary=summary,
                 findings=findings,
                 citations=citations,

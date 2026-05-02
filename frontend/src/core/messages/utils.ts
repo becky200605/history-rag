@@ -26,6 +26,13 @@ type MessageGroup =
   | AssistantClarificationGroup
   | AssistantSubagentGroup;
 
+function isHiddenInjectedHumanMessage(message: Message) {
+  return (
+    message.type === "human" &&
+    extractTextFromMessage(message).includes("<task_memory_matches>")
+  );
+}
+
 export function groupMessages<T>(
   messages: Message[],
   mapper: (group: MessageGroup) => T,
@@ -36,6 +43,10 @@ export function groupMessages<T>(
   const groups: MessageGroup[] = [];
 
   for (const message of messages) {
+    if (isHiddenInjectedHumanMessage(message)) {
+      continue;
+    }
+
     const lastGroup = groups[groups.length - 1];
     if (message.type === "human") {
       groups.push({

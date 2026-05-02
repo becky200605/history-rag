@@ -113,7 +113,7 @@ def _create_todo_list_middleware(
 - Treat the todo list as an execution board, not a sequential outline
 - When there are multiple independent tasks, prefer a parallel batch over single-threaded exploration
 - `write_todos` is the dispatch point: once you submit the todo board, the system will drain the queued todos for you in batches of up to {max_concurrent_subagents} concurrent subagents
-- `write_todos` is also a hard phase boundary: do not combine it with `bash`, `task`, `knowledge_search`, or any other tool call in the same response
+- `write_todos` is also a hard phase boundary: do not combine it with `bash`, `task`, or any other tool call in the same response
 - Do NOT mirror the same batch with manual `task` calls in the same response after calling `write_todos`
 - Keep each todo scoped like one execution lane, usually one `书名 × 信息目标` item per subagent-sized unit of work
 - Do NOT put final synthesis / summary / answer-writing items into the todo board; those stay with the lead agent after the subtask batch returns
@@ -151,7 +151,7 @@ This tool is designed for complex objectives that require systematic tracking:
 - Remove tasks that become irrelevant
 - Add new tasks discovered during implementation
 - Don't be afraid to revise the todo list as you learn more
-- Before you create a retrieval todo board, first use `knowledge_search` once when needed to check whether prior main-task/subtask results already cover the question
+- Before you create a retrieval todo board, first review any injected task-memory matches to see whether prior main-task/subtask results already cover the question
 - After `book_search`, if multiple books are materially relevant, create/update the todo list BEFORE deep retrieval so the reading plan becomes explicit
 - Only skip that todo step when one dominant book is clearly sufficient for a narrow question
 - For historical / multi-book retrieval tasks, write todo items as `书名 × 信息目标` pairs so the reading route is explicit
@@ -223,7 +223,7 @@ If blocked, keep the task as `in_progress` and create a new task describing what
 - Update task status in real-time as you work
 - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
 - Remove tasks that are no longer relevant
-- Before creating retrieval todos, do one `knowledge_search` when needed to check for reusable prior task results; if that misses, then proceed to `book_search` and the todo board
+- Before creating retrieval todos, review any injected task-memory matches for reusable prior task results; if they do not cover the task, proceed to `book_search` and the todo board
 - For historical or knowledge-base retrieval tasks, prefer todo items like `读《某书》：查某问题` instead of vague items like `继续检索`
 - Do not include terminal synthesis items such as `汇总结论` / `整合证据` / `撰写最终答案` in the todo board; the board should only contain delegated execution lanes
 - After `book_search`, if multiple books remain in scope, do not continue deep retrieval until you have written the todo list for that reading set
@@ -386,6 +386,7 @@ def make_lead_agent(config: RunnableConfig):
             subagent_enabled=subagent_enabled,
             include_task_tool=allow_direct_task_tool,
             allowed_tool_names=lead_allowed_tool_names,
+            disabled_tool_names={"knowledge_search"},
         ),
         middleware=_build_middlewares(config, model_name=model_name),
         system_prompt=apply_prompt_template(

@@ -40,6 +40,7 @@ def get_available_tools(
     subagent_enabled: bool = False,
     include_task_tool: bool | None = None,
     allowed_tool_names: set[str] | None = None,
+    disabled_tool_names: set[str] | None = None,
 ) -> list[BaseTool]:
     """Get all available tools from config.
 
@@ -54,15 +55,21 @@ def get_available_tools(
         include_task_tool: Whether to expose the raw `task` tool to the lead agent.
             Defaults to the value of `subagent_enabled`.
         allowed_tool_names: Optional allowlist of tool names to expose.
+        disabled_tool_names: Optional per-call denylist of tool names to hide.
 
     Returns:
         List of available tools.
     """
     config = get_app_config()
+    disabled_tool_names = disabled_tool_names or set()
     loaded_tools = [
         resolve_variable(tool.use, BaseTool)
         for tool in config.tools
-        if (groups is None or tool.group in groups) and tool.name not in TEMPORARILY_DISABLED_TOOL_NAMES
+        if (
+            (groups is None or tool.group in groups)
+            and tool.name not in TEMPORARILY_DISABLED_TOOL_NAMES
+            and tool.name not in disabled_tool_names
+        )
     ]
     if allowed_tool_names is not None:
         loaded_tools = [tool for tool in loaded_tools if tool.name in allowed_tool_names]
@@ -81,7 +88,12 @@ def get_available_tools(
             extensions_config = ExtensionsConfig.from_file()
             if extensions_config.get_enabled_mcp_servers():
                 mcp_tools = get_cached_mcp_tools()
-                mcp_tools = [tool for tool in mcp_tools if tool.name not in TEMPORARILY_DISABLED_TOOL_NAMES]
+                mcp_tools = [
+                    tool
+                    for tool in mcp_tools
+                    if tool.name not in TEMPORARILY_DISABLED_TOOL_NAMES
+                    and tool.name not in disabled_tool_names
+                ]
                 if allowed_tool_names is not None:
                     mcp_tools = [tool for tool in mcp_tools if tool.name in allowed_tool_names]
                 if mcp_tools:
@@ -114,6 +126,8 @@ def get_available_tools(
 
     if allowed_tool_names is not None:
         builtin_tools = [tool for tool in builtin_tools if tool.name in allowed_tool_names]
+    if disabled_tool_names:
+        builtin_tools = [tool for tool in builtin_tools if tool.name not in disabled_tool_names]
 
     if TEMPORARILY_DISABLED_TOOL_NAMES:
         logger.info(

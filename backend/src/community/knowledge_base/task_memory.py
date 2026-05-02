@@ -16,6 +16,9 @@ TASK_MEMORY_COLLECTION_SUFFIX = "__task_memory"
 TASK_MEMORY_TOP_K = 5
 TASK_MEMORY_TITLE_MATCH_BOOST = 0.15
 TASK_MEMORY_TITLE_PARTIAL_BOOST = 0.05
+LINKED_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\((?:<[^>\n]+>|[^)\n]*)\)", re.IGNORECASE)
+BARE_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\](?!\()", re.IGNORECASE)
+EMPTY_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\(\s*\)", re.IGNORECASE)
 
 
 def _utc_now() -> str:
@@ -44,6 +47,69 @@ def _normalize_string_list(value: list[str] | None) -> list[str]:
     return [str(item).strip() for item in value or [] if str(item).strip()]
 
 
+def _is_complete_citation(text: str) -> bool:
+    match = re.fullmatch(r"\[citation:[^\]]+\]\((<[^>\n]+>|[^)\n]+)\)", text.strip(), re.IGNORECASE)
+    if not match:
+        return False
+    url = match.group(1).strip()
+    if url.startswith("<") and url.endswith(">"):
+        url = url[1:-1].strip()
+    return bool(url)
+
+
+def _complete_citations(value: list[str] | None) -> list[str]:
+    return [item for item in _normalize_string_list(value) if _is_complete_citation(item)]
+
+
+def _sanitize_injected_text(text: str) -> str:
+    """Remove broken citation tokens from injected memory so models don't copy them."""
+
+    sanitized = EMPTY_CITATION_PATTERN.sub("", text)
+
+    def _drop_empty_link(match: re.Match[str]) -> str:
+        citation = match.group(0)
+        return citation if _is_complete_citation(citation) else ""
+
+    sanitized = LINKED_CITATION_PATTERN.sub(_drop_empty_link, sanitized)
+    sanitized = BARE_CITATION_PATTERN.sub("", sanitized)
+    sanitized = re.sub(r"[ \t]+\n", "\n", sanitized)
+    sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
+    return sanitized.strip()
+
+
+def _compact_query_for_storage(query: str, *, task_level: str) -> str:
+    cleaned = str(query or "").strip()
+    if not cleaned:
+        return ""
+    todo_match = re.search(r"(?im)^\s*Todo:\s*(.+?)\s*$", cleaned)
+    if task_level == "subtask" and todo_match:
+        return todo_match.group(1).strip()
+    if task_level == "subtask" and ("你只负责执行下面这一项 todo" in cleaned or "要求：" in cleaned):
+        first_line = next((line.strip() for line in cleaned.splitlines() if line.strip()), "")
+        return first_line[:500]
+    return cleaned
+
+
+def _render_query_for_injection(query: str, *, task_level: str) -> str:
+    cleaned = _sanitize_injected_text(str(query or "").strip())
+    if not cleaned:
+        return ""
+
+    todo_match = re.search(r"(?im)^\s*Todo:\s*(.+?)\s*$", cleaned)
+    if task_level == "subtask" and todo_match:
+        return f"任务目标: {todo_match.group(1).strip()}"
+
+    # Avoid injecting long delegated-task prompts; they are instructions from an
+    # older run, not evidence for the current task.
+    if task_level == "subtask" and ("你只负责执行下面这一项 todo" in cleaned or "要求：" in cleaned):
+        first_line = next((line.strip() for line in cleaned.splitlines() if line.strip()), "")
+        return f"任务目标: {first_line[:240]}{'…' if len(first_line) > 240 else ''}"
+
+    if len(cleaned) > 500:
+        return cleaned[:499].rstrip() + "…"
+    return cleaned
+
+
 def _build_task_memory_text(
     *,
     title: str,
@@ -65,6 +131,34 @@ def _build_task_memory_text(
     if open_questions:
         sections.append("未解决缺口:\n" + "\n".join(f"- {item}" for item in open_questions))
     return "\n\n".join(section for section in sections if section.strip()).strip()
+
+
+def _build_task_memory_embedding_text(
+    *,
+    title: str,
+    query: str,
+    summary: str,
+    findings: list[str],
+    citations: list[str],
+    open_questions: list[str],
+    task_level: str,
+) -> str:
+    """Build the text embedded into the vector DB.
+
+    For subtasks, keep delegated prompts out of the vector text. The reusable
+    memory is the subtask's final result, findings, citations, and gaps; the
+    parent prompt is orchestration noise and can dominate retrieval.
+    """
+
+    vector_query = "" if task_level == "subtask" else query
+    return _build_task_memory_text(
+        title=title,
+        query=vector_query,
+        summary=summary,
+        findings=findings,
+        citations=citations,
+        open_questions=open_questions,
+    )
 
 
 def _ensure_task_memory_collection() -> tuple[Any, Any, str]:
@@ -111,6 +205,7 @@ def upsert_task_memory_record(
     if not normalized_title or not normalized_summary:
         return None
 
+    normalized_query = _compact_query_for_storage(str(query or ""), task_level=task_level)
     normalized_findings = _normalize_string_list(findings)
     normalized_citations = _normalize_string_list(citations)
     normalized_open_questions = _normalize_string_list(open_questions)
@@ -125,13 +220,14 @@ def upsert_task_memory_record(
         embedding=embeddings,
     )
 
-    content = _build_task_memory_text(
+    content = _build_task_memory_embedding_text(
         title=title,
-        query=query,
+        query=normalized_query,
         summary=normalized_summary,
         findings=normalized_findings,
         citations=normalized_citations,
         open_questions=normalized_open_questions,
+        task_level=task_level,
     )
     record_id = build_task_memory_id(title)
     document = Document(
@@ -141,7 +237,7 @@ def upsert_task_memory_record(
             "record_id": record_id,
             "title": title.strip(),
             "normalized_title": normalized_title,
-            "query": str(query or "").strip(),
+            "query": normalized_query,
             "summary": normalized_summary,
             "findings": normalized_findings,
             "citations": normalized_citations,
@@ -251,11 +347,11 @@ def render_task_memory_matches(
         metadata = item.get("metadata", {}) or {}
         title = str(metadata.get("title") or "未命名任务").strip()
         task_level = str(metadata.get("task_level") or "unknown").strip()
-        query = str(metadata.get("query") or "").strip()
-        summary = str(metadata.get("summary") or "").strip()
+        query = _render_query_for_injection(str(metadata.get("query") or "").strip(), task_level=task_level)
+        summary = _sanitize_injected_text(str(metadata.get("summary") or "").strip())
         findings = _normalize_string_list(metadata.get("findings"))
-        citations = _normalize_string_list(metadata.get("citations"))
-        open_questions = _normalize_string_list(metadata.get("open_questions"))
+        citations = _complete_citations(metadata.get("citations"))
+        open_questions = [_sanitize_injected_text(item) for item in _normalize_string_list(metadata.get("open_questions"))]
         thread_id = str(metadata.get("thread_id") or "").strip()
         task_id = str(metadata.get("task_id") or "").strip()
 
@@ -264,7 +360,7 @@ def render_task_memory_matches(
         )
         lines.append(f"任务层级: {task_level}")
         if query:
-            lines.append(f"原始 query: {query}")
+            lines.append(query)
         if thread_id:
             lines.append(f"thread_id: {thread_id}")
         if task_id:
@@ -274,7 +370,7 @@ def render_task_memory_matches(
             lines.append(summary)
         if findings:
             lines.append("关键发现:")
-            lines.extend(f"- {item}" for item in findings)
+            lines.extend(f"- {_sanitize_injected_text(item)}" for item in findings)
         if citations:
             lines.append("关键引文:")
             lines.extend(f"- {item}" for item in citations)

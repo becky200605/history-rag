@@ -222,6 +222,26 @@ def _build_default_task_prompt(todo: Todo) -> str:
     )
 
 
+def _build_task_prompt(todo: Todo) -> str:
+    custom_prompt = str(todo.get("task_prompt") or "").strip()
+    if not custom_prompt:
+        return _build_default_task_prompt(todo)
+
+    return (
+        "你只负责执行下面这一项 todo，不要扩展到其他任务，不要替主代理写最终总答案。\n\n"
+        f"Todo: {todo['content']}\n\n"
+        "主代理给你的具体任务说明如下：\n"
+        f"{custom_prompt}\n\n"
+        "强制检索规则：\n"
+        "1. 历史 / 知识库任务必须先确认可用文档：优先复核已注入的历史任务匹配；不足时使用 `book_search` 选书；\n"
+        "2. `book_search` 返回的 `doc_id` / `filename` 是后续 `knowledge_locate` 的必填文档标识；决定读哪本书后，必须把原样字符串逐字复制进 `knowledge_locate`；\n"
+        "3. 禁止调用空文档定位：不要只传 `page_no`、`pdf_page_no` 或页码范围；`knowledge_locate` 每次调用都必须带非空 `doc_id` 或 `filename`；\n"
+        "4. 如果 `knowledge_locate` 返回 `requires either doc_id or filename`，说明刚才漏传文档标识。只能立刻用父任务或 `book_search` 结果里的原样 `doc_id` / `filename` 重试一次；拿不到原样值就停止调用并返回 `【证据不足】`；\n"
+        "5. 不要反复空参数重试，不要把 `book_search` 已列出的 doc_id 只写在最终报告里却不传给工具；\n"
+        "6. 最终输出必须使用固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`，并保留完整 citation。"
+    )
+
+
 def _serialize_todos_for_event(todos: list[Todo]) -> list[dict[str, Any]]:
     return [dict(todo) for todo in todos]
 
@@ -519,7 +539,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 )
 
                 task_id = f"{tool_call_id}:{todo['id']}"
-                task_prompt = cast(str, todo.get("task_prompt") or _build_default_task_prompt(todo))
+                task_prompt = _build_task_prompt(todo)
                 todo["status"] = "in_progress"
                 todo["task_id"] = task_id
                 todo["subagent_type"] = cast(Any, subagent_type)

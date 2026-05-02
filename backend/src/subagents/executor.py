@@ -134,6 +134,23 @@ def _dedupe_strings(items: list[str]) -> list[str]:
     return deduped
 
 
+def _clip_for_subtask_log(value: Any, *, limit: int = 2000) -> Any:
+    if isinstance(value, str):
+        normalized = " ".join(value.split())
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: limit - 1].rstrip() + "…"
+    if isinstance(value, dict):
+        return {str(key): _clip_for_subtask_log(item, limit=limit) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clip_for_subtask_log(item, limit=limit) for item in value]
+    return value
+
+
+def _stable_log_signature(value: Any) -> str:
+    return repr(_clip_for_subtask_log(value, limit=500))
+
+
 def _extract_bullets(block: str) -> list[str]:
     bullets: list[str] = []
     for raw_line in block.splitlines():
@@ -623,6 +640,7 @@ class SubagentExecutor:
             # `messages` yields incremental AI chunks; `values` gives us the final state.
             final_state = None
             aggregated_chunks: dict[str, AIMessageChunk] = {}
+            logged_tool_call_signatures: set[tuple[str, str, str]] = set()
             for mode, payload in agent.stream(  # type: ignore[arg-type]
                 state,
                 config=run_config,
@@ -661,6 +679,27 @@ class SubagentExecutor:
                     result.ai_messages.append(message_dict)
                     logger.info(
                         f"[trace={self.trace_id}] Subagent {self.config.name} captured AI message snapshot #{len(result.ai_messages)}"
+                    )
+
+                for tool_call in message_dict.get("tool_calls") or []:
+                    if not isinstance(tool_call, dict):
+                        continue
+                    tool_call_id = str(tool_call.get("id") or "")
+                    tool_name = str(tool_call.get("name") or "")
+                    tool_args = tool_call.get("args")
+                    signature = (tool_call_id, tool_name, _stable_log_signature(tool_args))
+                    if not tool_name or signature in logged_tool_call_signatures:
+                        continue
+                    logged_tool_call_signatures.add(signature)
+                    log_subtask_event(
+                        "subtask_tool_call_requested",
+                        trace_id=self.trace_id,
+                        task_id=result.task_id,
+                        subagent_name=self.config.name,
+                        thread_id=self.thread_id,
+                        tool_call_id=tool_call_id or None,
+                        tool_name=tool_name,
+                        tool_args=_clip_for_subtask_log(tool_args),
                     )
 
             logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} completed execution")

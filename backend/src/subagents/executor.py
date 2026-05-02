@@ -461,12 +461,14 @@ class SubagentExecutor:
 
         # Subagents need minimal middlewares to ensure tools can access sandbox and thread_data
         # These middlewares will reuse the sandbox/thread_data from parent agent
+        from src.agents.middlewares.knowledge_checkpoint_middleware import KnowledgeCheckpointMiddleware
         from src.agents.middlewares.thread_data_middleware import ThreadDataMiddleware
         from src.sandbox.middleware import SandboxMiddleware
 
         middlewares = [
             ThreadDataMiddleware(lazy_init=True),  # Compute thread paths
             SandboxMiddleware(lazy_init=True),  # Reuse parent's sandbox (no re-acquisition)
+            KnowledgeCheckpointMiddleware(),  # Enforce checkpoint cadence during raw retrieval loops
         ]
 
         return create_agent(

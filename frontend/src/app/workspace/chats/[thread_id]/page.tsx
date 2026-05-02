@@ -13,11 +13,11 @@ import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import { ArtifactFileDetail } from "@/components/workspace/artifacts/artifact-file-detail";
 import { ArtifactFileList } from "@/components/workspace/artifacts/artifact-file-list";
+import { useArtifacts } from "@/components/workspace/artifacts/context";
 import {
   KNOWLEDGE_ARTIFACT_PANEL_DEFAULT_WIDTH,
   KNOWLEDGE_ARTIFACT_PANEL_EXPANDED_WIDTH,
 } from "@/components/workspace/artifacts/knowledge-layout";
-import { useArtifacts } from "@/components/workspace/artifacts/context";
 import { InputBox } from "@/components/workspace/input-box";
 import { MessageList } from "@/components/workspace/messages";
 import { ThreadContext } from "@/components/workspace/messages/context";
@@ -161,6 +161,11 @@ type TodoBoardUpdatedEvent = {
   todos: Todo[];
 };
 
+type ActiveRun = {
+  runId: string;
+  threadId: string;
+};
+
 function isTaskStartedEvent(event: unknown): event is TaskStartedEvent {
   return (
     typeof event === "object" &&
@@ -217,6 +222,22 @@ function isTodoBoardUpdatedEvent(event: unknown): event is TodoBoardUpdatedEvent
     "todos" in event &&
     Array.isArray(event.todos)
   );
+}
+
+function readActiveRunId(threadId?: string | null): string | null {
+  if (typeof window === "undefined" || !threadId) {
+    return null;
+  }
+
+  return window.sessionStorage.getItem(`lg:stream:${threadId}`);
+}
+
+function clearActiveRunId(threadId?: string | null) {
+  if (typeof window === "undefined" || !threadId) {
+    return;
+  }
+
+  window.sessionStorage.removeItem(`lg:stream:${threadId}`);
 }
 
 function normalizeTodoContent(content?: string | null) {
@@ -483,6 +504,7 @@ function ChatPageContent({
   const searchParams = useSearchParams();
   const promptInputController = usePromptInputController();
   const didNavigateForCreatedRunRef = useRef(false);
+  const activeRunRef = useRef<ActiveRun | null>(null);
   const inputInitialValue = useMemo(() => {
     if (
       initialThreadIdFromPath !== "new" ||
@@ -576,6 +598,10 @@ function ChatPageContent({
     isNewThread,
     threadId,
     onCreated(run) {
+      activeRunRef.current = {
+        runId: run.run_id,
+        threadId: run.thread_id,
+      };
       if (!isNewThread || didNavigateForCreatedRunRef.current) {
         return;
       }
@@ -605,6 +631,7 @@ function ChatPageContent({
       );
     },
     onFinish: (state) => {
+      activeRunRef.current = null;
       setLiveTodos(state.todos ?? null);
       setFinalState(state);
       if (document.hidden || !document.hasFocus()) {
@@ -927,7 +954,14 @@ function ChatPageContent({
     [submitThread],
   );
   const handleStop = useCallback(async () => {
-    const currentThreadId = threadId;
+    const activeRun = activeRunRef.current;
+    const currentThreadId = activeRun?.threadId ?? threadId;
+    const currentRunId =
+      activeRun?.runId ?? readActiveRunId(activeRun?.threadId ?? threadId);
+
+    clearActiveRunId(currentThreadId);
+
+    const stopPromise = thread.stop();
     try {
       if (currentThreadId) {
         await getAPIClient().threads.updateState(currentThreadId, {
@@ -938,8 +972,21 @@ function ChatPageContent({
       }
     } catch (error) {
       console.error("Failed to mark subtasks for cancellation:", error);
+    }
+
+    try {
+      if (currentThreadId && currentRunId) {
+        await getAPIClient().runs.cancel(
+          currentThreadId,
+          currentRunId,
+          true,
+        );
+      }
+    } catch (error) {
+      console.error("Failed to cancel active run:", error);
     } finally {
-      await thread.stop();
+      activeRunRef.current = null;
+      await stopPromise;
     }
   }, [thread, threadId]);
 

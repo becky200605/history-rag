@@ -36,10 +36,12 @@ RETRY_APPENDIX = (
     "Your previous draft was blocked because it used grounded knowledge results (`knowledge_search` / `knowledge_locate`) without the required body citations.\n"
     "Regenerate the full answer from scratch.\n"
     "Requirements:\n"
-    "1. If you use any knowledge from `knowledge_search` or `knowledge_locate`, the answer body must contain full Markdown citation links in the form `[citation:Title](URL)`.\n"
-    "2. Do not add `参考文献` or `建议问题` sections. The system will generate them in later stages.\n"
-    "3. If you cannot support the answer with citations, refuse using the exact prefix `【无法回答】` followed by a brief reason.\n"
-    "4. Do not mention this enforcement message in the final answer."
+    "1. If you use any knowledge from `knowledge_search` or `knowledge_locate`, every grounded factual claim in the answer body must carry full Markdown citation links in the form `[citation:Title](URL)`.\n"
+    "2. Place citations immediately after the supported sentence, clause, bullet, or table-related claim they justify. Do not postpone citations to the end of the paragraph or only to `参考文献`.\n"
+    "3. If you use bullet points, each bullet that contains grounded evidence must end with one or more citation links.\n"
+    "4. Do not add `参考文献` or `建议问题` sections. The system will generate them in later stages.\n"
+    "5. If you cannot support the answer with citations, refuse using the exact prefix `【无法回答】` followed by a brief reason.\n"
+    "6. Do not mention this enforcement message in the final answer."
 )
 RETRY_APPENDIX_FINAL = (
     "\n\n[System enforcement - final retry]\n"
@@ -47,10 +49,12 @@ RETRY_APPENDIX_FINAL = (
     "Regenerate the full answer from scratch one more time.\n"
     "Additional requirements:\n"
     "1. Reuse the exact `citation:` lines returned by `knowledge_search` / `knowledge_locate` whenever possible; do not rewrite citation links manually.\n"
-    "2. If you cite a source, the answer body must contain the full `[citation:Title](URL)` markdown link, not only a plain-text mention and not a bare `[citation:Title]` label.\n"
-    "3. Do not add `参考文献` or `建议问题` sections. The system will generate them separately.\n"
-    "4. If you still cannot produce a fully cited answer, refuse explicitly using the exact prefix `【无法回答】`.\n"
-    "5. Do not mention this enforcement message in the final answer."
+    "2. Every grounded sentence, bullet, numeric statement, table summary, or scoped conclusion must be immediately followed by one or more exact citation links from this turn.\n"
+    "3. If you cite a source, the answer body must contain the full `[citation:Title](URL)` markdown link, not only a plain-text mention and not a bare `[citation:Title]` label.\n"
+    "4. An uncited overview paragraph is not acceptable if it relies on grounded retrieval.\n"
+    "5. Do not add `参考文献` or `建议问题` sections. The system will generate them separately.\n"
+    "6. If you still cannot produce a fully cited answer, refuse explicitly using the exact prefix `【无法回答】`.\n"
+    "7. Do not mention this enforcement message in the final answer."
 )
 FINAL_FALLBACK_RESPONSE = (
     "【无法回答】无法根据当前资料生成带 citation 的回答，因此本轮不输出未经依据支持的内容。\n\n"
@@ -541,7 +545,8 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
             joined = "\n".join(f"- {line}" for line in available_citations)
             citation_hint = (
                 "\n\nAvailable citation lines from this turn. Copy these exact markdown links into the answer body:\n"
-                f"{joined}"
+                f"{joined}\n"
+                "Use them inline, immediately after the factual sentence, bullet, or table-related claim they support."
             )
         retry_system = SystemMessage(
             content=f"{current_system}{appendix}{citation_hint}" if current_system else f"{appendix}{citation_hint}"

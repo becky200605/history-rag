@@ -51,3 +51,12 @@ def test_subtask_result_format_fully_replaces_summary_with_task_result() -> None
     assert "## 摘要" not in general_purpose
     assert '"任务结果": "summary"' in executor_source
     assert '"摘要": "summary"' not in executor_source
+
+
+def test_subagents_enable_checkpoint_middleware() -> None:
+    executor_source = (
+        Path(__file__).resolve().parents[1] / "src" / "subagents" / "executor.py"
+    ).read_text(encoding="utf-8")
+
+    assert "KnowledgeCheckpointMiddleware" in executor_source
+    assert "KnowledgeCheckpointMiddleware(),  # Enforce checkpoint cadence during raw retrieval loops" in executor_source

@@ -151,6 +151,23 @@ def _stable_log_signature(value: Any) -> str:
     return repr(_clip_for_subtask_log(value, limit=500))
 
 
+def _extract_tool_call_debug_payload(message_dict: dict[str, Any]) -> dict[str, Any]:
+    additional_kwargs = message_dict.get("additional_kwargs")
+    if not isinstance(additional_kwargs, dict):
+        additional_kwargs = {}
+
+    response_metadata = message_dict.get("response_metadata")
+    if not isinstance(response_metadata, dict):
+        response_metadata = {}
+
+    return {
+        "tool_calls": _clip_for_subtask_log(message_dict.get("tool_calls") or []),
+        "invalid_tool_calls": _clip_for_subtask_log(message_dict.get("invalid_tool_calls") or []),
+        "additional_kwargs_tool_calls": _clip_for_subtask_log(additional_kwargs.get("tool_calls") or []),
+        "response_metadata_finish_reason": response_metadata.get("finish_reason"),
+    }
+
+
 def _extract_bullets(block: str) -> list[str]:
     bullets: list[str] = []
     for raw_line in block.splitlines():
@@ -641,6 +658,7 @@ class SubagentExecutor:
             final_state = None
             aggregated_chunks: dict[str, AIMessageChunk] = {}
             logged_tool_call_signatures: set[tuple[str, str, str]] = set()
+            logged_ai_message_debug_signatures: set[tuple[str, str]] = set()
             for mode, payload in agent.stream(  # type: ignore[arg-type]
                 state,
                 config=run_config,
@@ -675,6 +693,27 @@ class SubagentExecutor:
                 else:
                     continue
 
+                tool_call_debug_payload = _extract_tool_call_debug_payload(message_dict)
+                debug_signature = (
+                    str(message_dict.get("id") or ""),
+                    _stable_log_signature(tool_call_debug_payload),
+                )
+                if (
+                    tool_call_debug_payload["tool_calls"]
+                    or tool_call_debug_payload["invalid_tool_calls"]
+                    or tool_call_debug_payload["additional_kwargs_tool_calls"]
+                ) and debug_signature not in logged_ai_message_debug_signatures:
+                    logged_ai_message_debug_signatures.add(debug_signature)
+                    log_subtask_event(
+                        "subtask_ai_message_tool_calls",
+                        trace_id=self.trace_id,
+                        task_id=result.task_id,
+                        subagent_name=self.config.name,
+                        thread_id=self.thread_id,
+                        message_id=message_dict.get("id"),
+                        **tool_call_debug_payload,
+                    )
+
                 if not result.ai_messages or result.ai_messages[-1] != message_dict:
                     result.ai_messages.append(message_dict)
                     logger.info(
@@ -701,6 +740,32 @@ class SubagentExecutor:
                         tool_name=tool_name,
                         tool_args=_clip_for_subtask_log(tool_args),
                     )
+
+            if final_state is not None:
+                for final_message in final_state.get("messages", []) or []:
+                    if not isinstance(final_message, AIMessage):
+                        continue
+                    final_message_dict = _strip_reasoning_from_message_dict(final_message.model_dump())
+                    tool_call_debug_payload = _extract_tool_call_debug_payload(final_message_dict)
+                    debug_signature = (
+                        str(final_message_dict.get("id") or ""),
+                        _stable_log_signature(tool_call_debug_payload),
+                    )
+                    if (
+                        tool_call_debug_payload["tool_calls"]
+                        or tool_call_debug_payload["invalid_tool_calls"]
+                        or tool_call_debug_payload["additional_kwargs_tool_calls"]
+                    ) and debug_signature not in logged_ai_message_debug_signatures:
+                        logged_ai_message_debug_signatures.add(debug_signature)
+                        log_subtask_event(
+                            "subtask_final_state_tool_calls",
+                            trace_id=self.trace_id,
+                            task_id=result.task_id,
+                            subagent_name=self.config.name,
+                            thread_id=self.thread_id,
+                            message_id=final_message_dict.get("id"),
+                            **tool_call_debug_payload,
+                        )
 
             logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} completed execution")
             self._raise_if_cancelled(result, cancel_event)

@@ -138,8 +138,9 @@ def test_make_lead_agent_hides_raw_task_tool_in_plan_mode(monkeypatch):
 
     assert captured_tool_kwargs["subagent_enabled"] is True
     assert captured_tool_kwargs["include_task_tool"] is False
-    assert captured_tool_kwargs["allowed_tool_names"] == {"book_search", "knowledge_search"}
+    assert captured_tool_kwargs["allowed_tool_names"] == set()
     assert "knowledge_locate" not in captured_tool_kwargs["allowed_tool_names"]
+    assert "book_search" not in captured_tool_kwargs["allowed_tool_names"]
 
 
 def test_make_lead_agent_hides_knowledge_locate_when_subagents_enabled_outside_plan_mode(monkeypatch):
@@ -172,8 +173,9 @@ def test_make_lead_agent_hides_knowledge_locate_when_subagents_enabled_outside_p
 
     assert captured_tool_kwargs["subagent_enabled"] is True
     assert captured_tool_kwargs["include_task_tool"] is True
-    assert captured_tool_kwargs["allowed_tool_names"] == {"book_search", "knowledge_search", "task"}
+    assert captured_tool_kwargs["allowed_tool_names"] == {"task"}
     assert "knowledge_locate" not in captured_tool_kwargs["allowed_tool_names"]
+    assert "book_search" not in captured_tool_kwargs["allowed_tool_names"]
 
 
 def test_build_middlewares_uses_resolved_model_name_for_vision(monkeypatch):
@@ -219,6 +221,20 @@ def test_build_middlewares_includes_book_coverage_middleware(monkeypatch):
     assert any(type(m).__name__ == "BookCoverageMiddleware" for m in middlewares)
 
 
+def test_build_middlewares_omits_book_coverage_when_subagents_enabled(monkeypatch):
+    app_config = _make_app_config([_make_model("default-model", supports_thinking=False)])
+    monkeypatch.setattr(lead_agent_module, "get_app_config", lambda: app_config)
+    monkeypatch.setattr(lead_agent_module, "_create_summarization_middleware", lambda: None)
+    monkeypatch.setattr(lead_agent_module, "_create_todo_list_middleware", lambda is_plan_mode, **kwargs: None)
+
+    middlewares = lead_agent_module._build_middlewares(
+        {"configurable": {"model_name": "default-model", "is_plan_mode": False, "subagent_enabled": True}},
+        model_name="default-model",
+    )
+
+    assert not any(type(m).__name__ == "BookCoverageMiddleware" for m in middlewares)
+
+
 def test_create_todo_list_middleware_uses_parallel_batch_language_when_subagents_enabled(monkeypatch):
     captured: dict[str, str] = {}
 
@@ -240,14 +256,13 @@ def test_create_todo_list_middleware_uses_parallel_batch_language_when_subagents
     assert "parallel batch" in captured["system_prompt"]
     assert "up to 3" in captured["system_prompt"]
     assert "will drain the queued todos" in captured["system_prompt"]
-    assert "first use `knowledge_search` once when needed" in captured["system_prompt"]
-    assert "After `book_search`, if multiple books are materially relevant" in captured["system_prompt"]
-    assert "Only skip that todo step when one dominant book is clearly sufficient" in captured["system_prompt"]
+    assert "The lead agent should not select books itself" in captured["system_prompt"]
+    assert "each subtask will run `book_search`" in captured["system_prompt"]
+    assert "任务目标 / 探索方向" in captured["system_prompt"]
     assert "`write_todos` is the dispatch point" in captured["system_prompt"]
     assert "Do NOT mirror the same batch with manual `task` calls" in captured["system_prompt"]
     assert "Parallel batches" in captured["tool_description"]
-    assert "Multi-book retrieval after `book_search`" in captured["tool_description"]
-    assert "if multiple books remain in scope, do not continue deep retrieval until you have written the todo list" in captured["tool_description"]
+    assert "Evidence-gap retrieval with subtasks" in captured["tool_description"]
+    assert "Do not put book names into todo items unless" in captured["tool_description"]
     assert "mark multiple items as `in_progress` together in one `write_todos` call" in captured["tool_description"]
     assert "run that parallel batch and return findings before you continue" in captured["tool_description"]
-    assert "do one `knowledge_search` when needed" in captured["tool_description"]

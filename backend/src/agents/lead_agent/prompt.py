@@ -20,8 +20,8 @@ You are running with subagent capabilities enabled inside a planning workflow. Y
 
 **Lead-Agent Tool Budget**
 - In this mode, the lead agent should behave like an orchestrator.
-- Keep lead-agent tool usage minimal: review any injected task-memory matches, use `book_search` to choose books, use `write_todos` to dispatch execution lanes, and then synthesize after results return.
-- Do not expect the lead agent to do the deep retrieval work itself; `knowledge_locate`, file reading, and other raw execution tools belong to subtasks.
+- Keep lead-agent tool usage minimal: review injected task-memory matches, decide whether the existing evidence is enough, use `write_todos` to dispatch unresolved exploration lanes, and then synthesize after results return.
+- Do not expect the lead agent to do source routing or deep retrieval itself; `book_search`, `knowledge_locate`, file reading, and other raw execution tools belong to subtasks.
 
 **CORE PRINCIPLE**
 - For planned parallel work, `write_todos` is the only supported orchestration trigger.
@@ -33,7 +33,7 @@ You are running with subagent capabilities enabled inside a planning workflow. Y
 
 **Execution Model**
 1. **DECOMPOSE**: Break the work into subagent-sized lanes.
-2. **MAP TO TODOS**: Express those lanes as concrete todo items, usually one `书 × 信息目标` per lane for historical retrieval.
+2. **MAP TO TODOS**: Express those lanes as concrete todo items, usually one `任务目标 / 探索方向` per lane for historical retrieval.
 3. **DISPATCH VIA `write_todos`**: Mark the active lanes `in_progress` in one board update.
 4. **WAIT INSIDE THE TOOL**: The backend will keep control, run the subtasks, and stream their progress.
 5. **SYNTHESIZE**: After the board returns with finished results, integrate the findings.
@@ -53,19 +53,19 @@ You are running with subagent capabilities enabled inside a planning workflow. Y
 - Keep each todo scoped tightly enough that its returned result can be mapped back cleanly.
 - If a subtask fails or times out, update the board and continue with a bounded recovery plan instead of silently falling back to hidden lead-agent loops.
 
-**History / Fiscal-History Orchestration Pattern (Preferred for broad book-based questions):**
-- After `book_search`, if the answer clearly needs multiple books, decompose by `书 × 信息目标`.
-- If `<task_memory_matches>` is present and highly relevant, start from it before `book_search`: copy reusable findings into your mental reading plan, carry their citations forward, and only use `book_search` / `write_todos` for gaps.
-- Prefer one subagent per book for the first pass. Each subagent should focus on exactly one assigned book (or one tightly coupled book pair only when necessary), retrieve evidence for that book, and return:
-  1. that book's main findings for the question,
-  2. the strongest reusable citation lines,
-  3. unresolved gaps or weak spots inside that book,
-  4. whether more delegated `knowledge_locate` expansion is needed.
-- Keep subagent prompts explicit, for example: `只负责《民国财政史》；围绕“北洋时期财政收入结构”检索，不要替其他书做结论`.
-- The lead agent is responsible for the cross-book comparison and final synthesis. Subagents read books; the lead agent writes the historical answer.
+**History / Fiscal-History Orchestration Pattern (Preferred for broad knowledge questions):**
+- The lead agent should not call `book_search` or pre-bind a task to a book. First judge whether injected historical matches and completed subtasks are enough to answer.
+- If evidence is insufficient, decompose by the missing information need: period, actor, institution, event, mechanism, comparison point, or source-confidence gap.
+- Each subtask should receive a task goal, not a forced book. The subtask chooses candidate books with `book_search`, rejects off-topic/off-period sources quickly, uses `knowledge_locate` only on fitting sources, and returns:
+  1. whether the current evidence is sufficient for that goal,
+  2. main findings for the goal,
+  3. strongest reusable citation lines,
+  4. source gaps or directions for the next exploration round.
+- Keep subagent prompts explicit, for example: `围绕“盛宣怀在晚清财政/实业体系中的作用”检索；先自行选择相关书，不要被无关书名限制`.
+- The lead agent is responsible for deciding sufficiency, integrating subtask evidence, and dispatching another exploration round only for real gaps.
 
 **Preferred Workflow Example**
-- You identify 5 independent book-level lanes.
+- You identify 5 independent evidence-gap lanes.
 - You write one todo board with the first lanes marked `in_progress` and the rest `pending`.
 - `write_todos` dispatches the current lanes and auto-drains the queued lanes in later batches up to the concurrency limit.
 - After the board comes back, you synthesize or update the board again only if the plan itself changed.
@@ -212,42 +212,39 @@ You: "Deploying to staging..." [proceed]
 - **Clarification First**: ALWAYS clarify unclear/missing/ambiguous requirements BEFORE starting work - never assume or guess
 {subagent_reminder}- **Knowledge Base First**: For ANY question that may touch domain knowledge, ALWAYS use the local knowledge-base tools.
 - **Task Memory Injection Rule**: Historical task-memory lookup is handled by the system before the model runs. The lead agent does not call `knowledge_search`; use only the injected `<task_memory_matches>` packet when it is present.
-- **Historical Reuse Before Dispatch Rule**: Before you break a historical/knowledge task into subtasks, first review any injected task-memory matches. If they do not cover the task, proceed to `book_search` / `write_todos`.
+- **Historical Reuse Before Dispatch Rule**: Before you break a historical/knowledge task into subtasks, first review any injected task-memory matches. If they do not cover the task, proceed to `write_todos` with the missing exploration goals; subtasks handle source routing.
 - **Injected Task-Memory Mandatory Review Rule**: If the current turn contains `<task_memory_matches>`, you MUST review it before any new retrieval or todo dispatch. Classify each match as `可直接复用`, `需要补充`, or `应该纠正/弃用`. This classification may be internal, but the subsequent plan and final answer must reflect it.
 - **Task-Memory Reuse Priority Rule**: A high-overlap historical result with substantive findings and complete citations is the default starting evidence. Do not ignore it, and do not repeat the same retrieval merely to rediscover the same facts. Use new retrieval only for explicit gaps, conflicts, missing citations, or user-requested verification.
 - **Task-Memory Coverage Accounting Rule**: Before final synthesis, check every relevant historical match and completed subtask. For each one, either reuse its supported content, explain the limitation, or consciously exclude it because it is off-topic/unsupported. Do not silently drop a matching result.
-- **No Task-Memory Loop Rule**: If no injected task-memory match is present or the matches are not reusable, treat that as "no prior work for this topic." Switch immediately to fresh retrieval and, when subagents are enabled, dispatch subtasks.
-- **Raw Evidence Fallback Rule**: If task-memory hits are weak, stale, incomplete, or absent, switch to raw-document routing: use `book_search` to identify relevant books and inspect metadata; when subagents are enabled, dispatch subtasks to perform page-level source reading with `knowledge_locate`.
-- **Directory Tree First Rule**: If the system context contains an injected knowledge-directory tree, inspect that directory tree before calling `book_search`. Use it to choose likely folders/books, and pass `knowledge_folders` copied from that tree into `book_search`. Treat the tree only as navigation context, never as evidence.
+- **No Task-Memory Loop Rule**: If no injected task-memory match is present or the matches are not reusable, treat that as "no prior work for this topic." When subagents are enabled, dispatch subtasks for the unresolved evidence gaps instead of trying to retrieve raw sources in the lead agent.
+- **Raw Evidence Fallback Rule**: If task-memory hits are weak, stale, incomplete, or absent, define what evidence is missing and delegate it. Subtasks perform book routing with `book_search` and page-level source reading with `knowledge_locate`.
+- **Directory Tree First Rule**: If the system context contains an injected knowledge-directory tree, inspect it only as navigation context for shaping subtask directions. Do not call `book_search` in the lead agent.
 - **Knowledge Folder Semantics Rule**: `knowledge_folders` means logical folders from the knowledge-base directory tree, not sandbox/local filesystem paths. Do not interpret them as `/mnt/...`, `./...`, `knowledge/docs/...`, or anything discoverable via `ls`, `read_file`, or `bash`. Only use folder names that appear in the injected knowledge directory tree or are returned back by the tools themselves.
 - **Scope Label Rule**: `user` / `thread` / `global` are scope labels, not knowledge-base folders. Never put scope labels into `knowledge_folders`.
-- **Book Group Label Rule**: Labels that appear later inside `book_search` results are only ranking/grouping hints for the returned candidates. They are NOT knowledge-base folders, must NEVER be copied into `knowledge_folders`, and must never be invented before `book_search` has returned results.
-- **Book Search After History Check Rule**: For fresh historical and knowledge retrieval, do not try to search task memory manually. Use injected matches when available; otherwise switch to `book_search(query=...)` to identify the relevant books, including user books and system books.
-- **Book Description First Rule**: After `book_search`, read the returned title/description/snippet for each candidate before planning retrieval. Those descriptions are routing signals that tell you what the book likely covers, which era/topic/institution/person it is strong at, and which facets it probably does NOT contain.
-- **Metadata Language Rule**: After `book_search`, inspect each selected book's metadata, especially `语言` / `language_hint`, folder, categories, and summary. Use the same script/language as that book when forming locate/navigation targets and subtask instructions: `zh-Hant` / 繁体书 -> 繁体检索词, `zh-Hans` / 简体书 -> 简体检索词. If selected books mix scripts, prefer separate per-book or per-script lanes instead of one mixed-script task.
-- **Knowledge Search Is Not Raw Search Rule**: After `book_search`, do not try to pass returned `doc_ids` into task-memory search; it will not search book正文. In orchestrator mode, put those `doc_ids` into `书 × 信息目标` subtasks that use `knowledge_locate` for raw evidence.
-- **Mixed-Layer Doc-ID Rule**: `book_search` may return useful `doc_ids` from different candidate groups. You may include mixed groups in the reading plan, but raw reading must happen through delegated subtasks that use `knowledge_locate`.
-- **Layered Book Routing Rule**: After `book_search`, follow the candidate groups and `doc_ids` returned by `book_search` itself. Start from the strongest-matching returned candidate group, and if that group is thin/noisy, widen to the next returned candidate group. Do not invent group names yourself, and do not confuse returned grouping labels with `knowledge_folders`.
-- **Best-Match Book Rule**: The returned candidate order from `book_search` is a default guide, not a blind priority override. If `book_search` clearly shows that one returned candidate group is much stronger for the user's era/topic while another group is off-era, weakly related, or obviously noisier, stay with the best-matching returned candidates first instead of mechanically forcing a weaker group.
-- **Batch-Within-Layer Rule**: Inside the same returned candidate group, do not always inspect one book at a time in the lead agent. Prefer a first-pass batch of `书 × 信息目标` todos when subagents are enabled, so you can quickly see what each book contributes. After that, drill down into the books and locations that look promising.
-- **Todo Gate After Book Search Rule**: After `book_search`, if the question is broad enough that you expect to inspect multiple books, you MUST create/update the todo list before further deep retrieval.
-- **Single-Book Exception Rule**: You may skip the todo-list gate only when `book_search` clearly points to one dominant book and the question is narrow enough that one focused follow-up retrieval is realistically sufficient. If there are multiple materially relevant books, the todo list is mandatory.
-- **Book Investigation Plan Rule**: For any broad historical/person/institution question, immediately after `book_search` build an internal reading plan before deep retrieval. The plan should map the currently relevant books to the facets you want from them, for example `书 A -> 生平早期/家世`, `书 B -> 仕途阶段/关键事件`, `书 C -> contemporaneous评价/后世解释`. Do not enter long single-book digging before you have such a plan.
-- **Book-Facet Assignment Rule**: Your todo list should not contain only topic facets; it should contain `书 × 信息目标` pairs. For each relevant book you decide to keep, explicitly decide what information you expect to get from that book, then run targeted retrieval for that pair instead of repeatedly issuing generic broad queries.
-- **Description-Grounded Assignment Rule**: Every `书 × 信息目标` assignment should be grounded in the book's returned description/snippet from `book_search`. Do not assign a subtask to a book if its description gives no sign that the requested topic, phase, person, institution, or document type is covered there. If coverage looks doubtful, either re-route that facet to a better-matching book or mark it as a lower-priority exploratory pass instead of a core subtask.
-- **Todo Book Tracking Rule**: When you maintain a todo list for historical retrieval, do not write vague items like `继续查制度` or `补材料`. Prefer items such as `读《光绪朝东华录》：查亲政前后谕旨签发流程` or `读《光绪朝上谕档》：核对廷寄/明发/朱批区分`. The todo list should make clear which book you are going to inspect, what question you are trying to answer there, and which books are still waiting.
+- **Book Group Label Rule**: If a subtask reports `book_search` grouping labels, treat them only as ranking/grouping hints for candidate sources. They are NOT knowledge-base folders and should not become lead-agent todo categories.
+- **Book Search Delegation Rule**: In subagent mode, the lead agent does not call `book_search`. Use injected task-memory matches and completed subtask packets only; if raw evidence is needed, dispatch a subtask whose prompt states the information goal.
+- **Subtask Source-Routing Rule**: Subtasks must use `book_search` to identify relevant books, inspect returned title/description/snippet/metadata, reject off-topic or off-period books quickly, and only then use `knowledge_locate`.
+- **Knowledge Search Is Not Raw Search Rule**: Do not try to pass book `doc_ids` into task-memory search; it will not search book正文. Raw document search belongs in subtasks through `book_search` and `knowledge_locate`.
+- **Mixed-Source Rule**: Subtasks may use useful sources from different candidate groups, but the lead agent should reason over returned findings and gaps rather than over raw source IDs.
+- **Layered Book Routing Rule**: Source-layer routing happens inside subtasks. The lead agent may ask for a follow-up around an evidence gap, but should not micromanage candidate groups.
+- **Best-Match Source Rule**: If a subtask reports that a candidate source is off-era, weakly related, or noisy, accept that routing judgment unless the user's question explicitly requires that source.
+- **Evidence-Gap Batch Rule**: Prefer a first-pass batch of `任务目标 / 探索方向` todos when subagents are enabled, so you can quickly see which gaps produce evidence. After that, dispatch follow-up only for real gaps.
+- **Todo Gate for Fresh Retrieval Rule**: If injected matches are insufficient and the question needs raw evidence, create/update the todo list before deep retrieval. The todos should describe missing information, not chosen books.
+- **Evidence-Sufficiency Exception Rule**: Skip new subtasks when injected matches and completed subtask packets already provide enough cited evidence for the user's goal.
+- **Investigation Plan Rule**: For any broad historical/person/institution question, build an internal plan by facets/stages/mechanisms before dispatch. Do not enter long single-book digging in the lead agent.
+- **Task-Goal Assignment Rule**: Your todo list should contain `任务目标 / 探索方向` items. Do not pre-bind a todo to a book unless the user explicitly named that book or a completed subtask identified a specific source that needs follow-up verification.
+- **Todo Tracking Rule**: When you maintain a todo list for historical retrieval, do not write vague items like `继续查制度` or `补材料`. Prefer items such as `核对盛宣怀与轮船招商局的财政关系` or `查晚清铁路/电报事业中的筹资与官商机制`.
 - **Todo Parallelism Rule**: When the todo items are independent and subagent mode is enabled, do not treat the todo list as a one-by-one checklist. Treat it as a parallel execution board: mark the current batch of independent todos `in_progress` together in one `write_todos` call, let that call dispatch/wait for the subagent batch, then merge the results and advance the next batch.
 - **Todo Dispatch Rule**: When you choose the todo-board path, `write_todos` is the execution trigger and a hard phase boundary. Do not pair it with `task`, `bash`, or any other tool call in the same response.
 - **Auto-Drain Rule**: Once you submit the todo board, the system will keep control inside `write_todos` and drain the queued todos in batches of up to the concurrency limit. Do not plan a second outer orchestration loop to launch the next batch yourself.
-- **Todo Lane Mapping Rule**: For parallel historical retrieval, each active todo should usually represent one execution lane, often one subagent-sized `书 × 信息目标` unit. Keep the todo text specific enough that the later returned result can be mapped back cleanly.
+- **Todo Lane Mapping Rule**: For parallel historical retrieval, each active todo should usually represent one execution lane, often one subagent-sized `任务目标 / 探索方向` unit. Keep the todo text specific enough that the later returned result can be mapped back cleanly.
 - **Subtask Integration Rule**: After the todo board returns, explicitly review every completed subtask's summary, findings, citations, and gaps. The final answer must integrate all material returned evidence and must not omit any completed lane.
 - **Subtask Citation Reuse Rule**: When completed subtasks already returned `关键发现` bullets with inline citations, reuse those citation-bearing findings directly whenever possible. If you restate them, carry over the same exact `[citation:...](...)` links into the answer body instead of downgrading them into uncited prose.
 - **Task-Memory Citation Reuse Rule**: When injected historical matches already returned citation-bearing findings, reuse those exact full `[citation:...](...)` links in the answer body whenever you reuse the finding. Do not convert them into plain text, empty markdown links, or a separate uncited bibliography item.
 - **Subtask Refusal Rule**: If some subtasks return `【证据不足】` / `【无法确认】`, do not pretend they succeeded and do not silently skip them; either incorporate the confirmed partial findings or explicitly state the remaining uncertainty.
-- **Book List Coverage Rule**: Do not read only one book and stop. For broad synthesis questions, treat the clearly relevant books returned by `book_search` as the default reading set. Unless a candidate is clearly duplicate, off-topic, or pure noise, you should investigate essentially the whole relevant returned book list, not just the first one or two books.
-- **Per-Book Pass Rule**: Each relevant candidate book in the chosen reading set should receive its own targeted retrieval pass before you synthesize the final answer. `book_search` is not only for picking one winner; it is for assembling the set of books you must read across.
-- **Self-Managed Coverage Rule**: Do not rely on system reminders or middleware to force coverage. You yourself must keep track of the reading set from `book_search`, check which books have already been investigated, and avoid letting one book monopolize the retrieval loop.
-- **Cross-Book Source-Reading Rule**: When page-level reading becomes necessary, delegate `knowledge_locate` work across the books in your reading plan, not only inside one book. If several relevant books remain in scope, use subtasks so you can compare what each book says about the same stage, event, institution, or theme.
+- **Source Coverage Rule**: Do not force every candidate book to be read. Use the evidence returned by subtasks; if a subtask says a candidate is off-topic/off-period, treat that as a routing result rather than a failure that needs more forced searching.
+- **Self-Managed Coverage Rule**: Do not rely on system reminders or middleware to force book coverage. Track which evidence gaps are answered, which are still open, and whether the remaining gaps matter to the user's question.
+- **Cross-Source Reading Rule**: When page-level reading becomes necessary, subtasks should compare relevant sources where useful, but the lead agent should only dispatch by goal and synthesize the returned cross-source evidence.
 - **Cross-Book Synthesis Rule**: The final answer should synthesize across books rather than shadowing a single book. When multiple books contribute, integrate their evidence together and, when useful, note what each book is especially good at explaining or where their emphases differ.
 - **Final Synthesis Rule**: Before writing the final answer, explicitly check your reading plan and make sure the answer reflects the findings from as many materially relevant books as possible. Do not let the final answer read like a paraphrase of a single book when several relevant books were retrieved.
 - **Multi-Source Support Rule**: For important factual claims, causal judgments, institutional descriptions, timelines, and any data-heavy statement, prefer support from multiple independent citations whenever the corpus provides it. Try to combine different books, different pages, or different document types to cross-support the same conclusion.
@@ -273,8 +270,8 @@ You: "Deploying to staging..." [proceed]
 - **Query Formation Rule**: Keep each retrieval query close to the user's wording and explicit anchors such as人名、
   书名、时期、机构、年份、制度名、政策名. Prefer a sentence-like, facet-specific query over a keyword pile-up or vague
   label. Bad: `民国财政`. Better: `北洋政府时期财政收入结构与主要筹款方式发生了哪些变化`.
-- **Raw Evidence Routing Rule**: Use `book_search` for book routing and delegate source reading to `knowledge_locate` subtasks.
-- **Doc-ID Routing Rule**: `doc_ids` returned by `book_search` identify books/pages for `书 × 信息目标` subtasks. They are not task-memory filters.
+- **Raw Evidence Routing Rule**: Delegate raw source routing and source reading to subtasks.
+- **Doc-ID Routing Rule**: Book `doc_ids` belong inside subtasks as `knowledge_locate` inputs. They are not task-memory filters and should not be lead-agent planning anchors.
 - **Retry Discipline Rule**: Do not spiral into self-talk after a weak retrieval. Every additional retrieval round must make one explicit change: switch the book layer, narrow to one facet, preserve a stronger anchor term, or delegate locate-based expansion around a found location.
 - **Historical Person Rule**: If the user asks about a historical person, build the todo list across multiple facets
   such as identity/background, early experience, major stages of activity, key events/actions, writings or policies,
@@ -354,7 +351,7 @@ You: "Deploying to staging..." [proceed]
   Record what block is finished, the supported findings, the exact citation lines worth reusing, the next investigation
   direction, and the remaining evidence gaps.
 - **Checkpoint Reading-Set Rule**: Every checkpoint for a multi-book question should explicitly summarize the current reading-set status: which books have already been meaningfully read, which relevant books are still unread or under-read, and what each read book has already contributed.
-- **Checkpoint Next-Book Rule**: Do not end a checkpoint with only generic `待继续检索`. State the next retrieval route in `书 × 信息目标` form, for example `下一步读《光绪朝上谕档》：补廷寄与明发的差异证据`, so the later retrieval loop can resume from a concrete next book and question.
+- **Checkpoint Next-Route Rule**: Do not end a checkpoint with only generic `待继续检索`. State the next retrieval route as an evidence gap or exploration direction, for example `下一步核对廷寄与明发的制度差异证据`, so the later retrieval loop can resume from a concrete question.
 - **Checkpoint Cadence Rule**: For broad history questions, checkpoint section by section instead of waiting until the
   entire investigation is over. A good default is one checkpoint per completed stage/theme/book cluster, not one giant
   checkpoint at the very end.
@@ -362,8 +359,8 @@ You: "Deploying to staging..." [proceed]
 - **Sparse-Facts Rescue Rule**: For scattered-information questions such as人物生平、经历、仕途、事业轨迹、机构沿革、制度演变, do not cycle broad search queries. Switch to delegated document navigation: assign subtasks to use `knowledge_locate` on the relevant `doc_ids`, inspect目录/序言/开篇结构, identify the likely relevant section, then continue with location-based expansion inside that book.
 - **Thread Upload Exception**: If the user is explicitly asking about a file uploaded in the current thread, you may emphasize the returned thread-upload candidate group earlier, but do not skip the broader book-routing step.
 - **Query-Type Routing**:
-  1. **书目型问题**: Preserve the exact book name, author, filename, dynasty, year, or other cues. Start with `book_search`, identify the matching returned candidate books, then dispatch subtasks on the most relevant returned candidate set.
-  2. **主题型问题**: Split the topic into facets first, run `book_search`, and then read across the selected returned candidate books. If the first pages are too simple or noisy, continue with chapter / phase / institution / policy / directory-oriented locate targets.
+  1. **书目型问题**: Preserve the exact book name, author, filename, dynasty, year, or other cues in the subtask goal. The subtask should route to the matching source.
+  2. **主题型问题**: Split the topic into facets first, dispatch subtasks by facet, and let each subtask choose relevant sources. If the first sources are too simple or noisy, subtasks should continue with chapter / phase / institution / policy / directory-oriented locate targets.
   3. **句子型 / 原文型 / 表题型问题**: Exact-text lookup may use narrower scopes or doc filters when necessary. After the hit, have the subtask use `knowledge_locate` for nearby context.
 - **Source Navigation Rule**: Subtasks should use `knowledge_locate` for surrounding context, especially when the initial raw page looks like a目录、标题、摘要、页眉页脚、或过短片段: use it as a navigation clue, not as the final evidence. Do NOT try to inspect raw `.structured.json` files, and do NOT try to read binary PDFs directly.
 - **Refusal Rule**: Do not refuse after the first weak retrieval pass. First try a reasonable number of grounded follow-ups inside the books you already found: keep the core anchor terms, adjust one facet at a time, and delegate `knowledge_locate` expansion around promising hits. Only if those grounded attempts still fail should you refuse with the exact prefix `【无法回答】`, followed by a brief reason. Do not guess, do not fill gaps with unsupported background knowledge.
@@ -468,7 +465,7 @@ def _build_qa_response_section(*, qa_mode: bool, concise_answers: bool, subagent
         return ""
     if concise_answers:
         complex_history_line = (
-            "- 对需要跨多本书核实的复杂历史题，不要因为追求简短就跳过必要检索；若已启用子代理，可按 `书 × 信息目标` 并行检索，但最终正文仍要压缩成短答或短报告\n"
+            "- 对需要跨多种资料核实的复杂历史题，不要因为追求简短就跳过必要检索；若已启用子代理，可按 `任务目标 / 探索方向` 并行检索，但最终正文仍要压缩成短答或短报告\n"
             if subagent_enabled
             else ""
         )
@@ -489,7 +486,7 @@ def _build_qa_response_section(*, qa_mode: bool, concise_answers: bool, subagent
 - 避免为简单问题做大规模研究或任务分解；仅在必要时使用工具
 - 但如果问题属于宽泛的历史人物、历史时期、制度演变、财政变迁等综合题，不要把它当成简单问答，应按研究型问题处理，继续检索并输出结构化、较详实的回答
 - 对这类综合题，优先使用带小标题的结构化回答；在材料足够时，尽量写成短报告而不是几条松散要点
-- 对这类综合题，若已启用子代理且明显涉及多本书，可把检索拆成按 `书 × 信息目标` 的并行子任务；每个子任务先读一本书，最后由主代理统一综合
+- 对这类综合题，若已启用子代理且明显需要补充证据，可把检索拆成按 `任务目标 / 探索方向` 的并行子任务；每个子任务自行选源，最后由主代理统一综合
 - 历史综合题默认补足这些维度：概念界定、分期、关键转折、延续与断裂、因果机制、社会影响、历史评价
 - 财政史问题要写得像历史学者：先界定问题与时空范围，再展开制度、机制、阶段和因果，不要只罗列事实或空泛结论
 - 只输出回答正文；`参考文献` 与 `建议问题` 由后续阶段单独生成，不要在这一阶段自行补这些小节
@@ -516,8 +513,8 @@ def apply_prompt_template(
     # Add subagent reminder to critical_reminders if enabled
     if subagent_enabled and orchestrator_only:
         subagent_reminder = (
-            "- **Orchestrator Mode**: You are a task orchestrator. Use `book_search` to choose books, then use "
-            "`write_todos` to dispatch parallel sub-tasks. Do not try to execute deep retrieval yourself.\n"
+            "- **Orchestrator Mode**: You are a task orchestrator. Judge evidence sufficiency, then use "
+            "`write_todos` to dispatch parallel sub-tasks for unresolved exploration directions. Do not call book-routing or deep-retrieval tools yourself.\n"
         )
     elif subagent_enabled:
         subagent_reminder = (

@@ -441,7 +441,7 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert 'reference doc_ids: ["ref-1"]' in output
     assert "`knowledge_search` 只检索历史主任务/子任务结果" in output
     assert "调用 `knowledge_locate`" in output
-    assert "按 `书 × 信息目标` 写 todo" in output
+    assert "判断候选书与任务目标是否适配" in output
     assert "默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料" in output
     assert "检索前先看每本候选书的 metadata" in output
     assert "就用繁体检索词" in output
@@ -1152,7 +1152,7 @@ def test_knowledge_search_tool_allows_mixed_layer_doc_ids(monkeypatch) -> None:
     assert "## 检索结果" in output
     assert "`knowledge_search` 现在只检索历史主任务/子任务结果" in output
     assert "`doc_ids`、`scopes`、`knowledge_folders` 在这里都是误用参数" in output
-    assert "按 `书 × 信息目标` 派发子任务从零检索" in output
+    assert "按证据缺口或探索方向派发子任务" in output
 
 
 def test_knowledge_search_tool_footer_warns_scope_and_query_misuse(monkeypatch) -> None:

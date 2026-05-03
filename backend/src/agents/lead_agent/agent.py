@@ -115,7 +115,7 @@ def _create_todo_list_middleware(
 - `write_todos` is the dispatch point: once you submit the todo board, the system will drain the queued todos for you in batches of up to {max_concurrent_subagents} concurrent subagents
 - `write_todos` is also a hard phase boundary: do not combine it with `bash`, `task`, or any other tool call in the same response
 - Do NOT mirror the same batch with manual `task` calls in the same response after calling `write_todos`
-- Keep each todo scoped like one execution lane, usually one `书名 × 信息目标` item per subagent-sized unit of work
+- Keep each todo scoped like one execution lane, usually one `任务目标 / 探索方向` item per subagent-sized unit of work
 - Do NOT put final synthesis / summary / answer-writing items into the todo board; those stay with the lead agent after the subtask batch returns
 - The tool will keep control until the queued todo batches finish; do not plan a second orchestration loop outside the tool call
 """
@@ -152,11 +152,9 @@ This tool is designed for complex objectives that require systematic tracking:
 - Add new tasks discovered during implementation
 - Don't be afraid to revise the todo list as you learn more
 - Before you create a retrieval todo board, first review any injected task-memory matches to see whether prior main-task/subtask results already cover the question
-- After `book_search`, if multiple books are materially relevant, create/update the todo list BEFORE deep retrieval so the reading plan becomes explicit
-- Only skip that todo step when one dominant book is clearly sufficient for a narrow question
-- For historical / multi-book retrieval tasks, write todo items as `书名 × 信息目标` pairs so the reading route is explicit
-- Reflect book coverage in the todo list when relevant: which books are already checked, which books are still pending, and which book you are going to inspect next
-- If subagent mode is available and several books can be searched independently, mark multiple `书名 × 信息目标` todo items `in_progress` in one `write_todos` call; that call is what dispatches and waits for the parallel subagent batch
+- The lead agent should not select books itself. For historical / knowledge-base retrieval, write todo items around the user's information need, evidence gap, stage, actor, institution, or mechanism; each subtask will run `book_search` and decide which sources fit.
+- If injected evidence is insufficient, dispatch the unresolved exploration directions to subtasks instead of calling book-routing tools in the lead agent.
+- If subagent mode is available and several exploration directions can be searched independently, mark multiple `任务目标 / 探索方向` todo items `in_progress` in one `write_todos` call; that call is what dispatches and waits for the parallel subagent batch
 - Do NOT add `总结` / `汇总` / `整合` / `写最终答案` 这类收尾任务到 todo board；子任务结果回到主任务后，由主任务自行综合
 {parallel_hint}
 
@@ -177,7 +175,7 @@ Use this tool in these scenarios:
 3. **User explicitly requests todo list**: When the user directly asks you to track tasks
 4. **Multiple tasks**: When users provide a list of things to be done
 5. **Dynamic planning**: When the plan may need updates based on intermediate results
-6. **Multi-book retrieval after `book_search`**: When `book_search` shows several materially relevant books, create the todo list before further retrieval
+6. **Evidence-gap retrieval with subtasks**: When injected evidence is insufficient, create exploration-direction todos and let subtasks handle source routing
 
 ## When NOT to Use
 
@@ -223,12 +221,11 @@ If blocked, keep the task as `in_progress` and create a new task describing what
 - Update task status in real-time as you work
 - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
 - Remove tasks that are no longer relevant
-- Before creating retrieval todos, review any injected task-memory matches for reusable prior task results; if they do not cover the task, proceed to `book_search` and the todo board
-- For historical or knowledge-base retrieval tasks, prefer todo items like `读《某书》：查某问题` instead of vague items like `继续检索`
+- Before creating retrieval todos, review any injected task-memory matches for reusable prior task results; if they do not cover the task, dispatch subtasks for the missing exploration directions
+- For historical or knowledge-base retrieval tasks, prefer todo items like `查盛宣怀的晚清实业财政活动` or `核对北洋时期财政收入结构` instead of vague items like `继续检索`
 - Do not include terminal synthesis items such as `汇总结论` / `整合证据` / `撰写最终答案` in the todo board; the board should only contain delegated execution lanes
-- After `book_search`, if multiple books remain in scope, do not continue deep retrieval until you have written the todo list for that reading set
-- If the task involves multiple books, let the todo list show the reading route: which book is already covered, which book remains pending, and which book you will search next
-- If subagent mode is enabled and the relevant books are independent enough, move several pending `读《某书》：查某问题` items to `in_progress` together in one `write_todos` call; the system will run that parallel batch and return findings before you continue
+- Do not put book names into todo items unless the user explicitly asked about a specific book or a prior subtask returned a specific source that needs follow-up verification
+- If subagent mode is enabled and the evidence gaps are independent enough, move several pending exploration items to `in_progress` together in one `write_todos` call; the system will run that parallel batch and return findings before you continue
 - **IMPORTANT**: When you write the todo list, mark your first task(s) or first parallel batch as `in_progress` immediately
 - **IMPORTANT**: Unless all tasks are completed, always have at least one task `in_progress` to show progress
 {parallel_hint}
@@ -265,16 +262,20 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
     Returns:
         List of middleware instances.
     """
+    configurable = config.get("configurable", {})
+    subagent_enabled = configurable.get("subagent_enabled", False)
+
     middlewares = [
         ThreadDataMiddleware(),
         UploadsMiddleware(),
         KnowledgeDirectoryMiddleware(),
-        BookCoverageMiddleware(),
         SandboxMiddleware(),
         DanglingToolCallMiddleware(),
         KnowledgeCheckpointMiddleware(),
         CitationEnforcementMiddleware(),
     ]
+    if not subagent_enabled:
+        middlewares.insert(3, BookCoverageMiddleware())
 
     # Add summarization middleware if enabled
     summarization_middleware = _create_summarization_middleware()
@@ -282,9 +283,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
         middlewares.append(summarization_middleware)
 
     # Add TodoList middleware if plan mode is enabled
-    configurable = config.get("configurable", {})
     is_plan_mode = configurable.get("is_plan_mode", False)
-    subagent_enabled = configurable.get("subagent_enabled", False)
     max_concurrent_subagents = configurable.get("max_concurrent_subagents", 4)
     todo_list_middleware = _create_todo_list_middleware(
         is_plan_mode,

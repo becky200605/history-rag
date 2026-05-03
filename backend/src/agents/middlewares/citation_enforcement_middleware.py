@@ -63,13 +63,15 @@ FINAL_FALLBACK_RESPONSE = (
 RETRY_APPENDICES = (RETRY_APPENDIX, RETRY_APPENDIX_FINAL)
 SUGGESTION_SYSTEM_PROMPT = (
     "你负责回答链路中的第 3 阶段：生成建议问题。\n"
-    "输入会包含用户原问题、阶段 1 的回答正文，以及阶段 2 的参考文献信息（如果有）。\n"
+    "输入会包含用户原问题、阶段 1 的回答正文、当前主任务/子任务的已有发现摘要，以及阶段 2 的参考文献信息（如果有）。\n"
     "请只输出 3 行建议问题，每行一个问题，不要输出标题、解释、前言、后记、代码块或额外编号说明。\n"
     "要求：\n"
     "1. 必须与当前问题和当前回答高度相关。\n"
-    "2. 必须帮助用户继续追问到更深一层，而不是泛泛而谈。\n"
-    "3. 如果阶段 1 是 `【无法回答】`，问题应引导用户缩小范围、补充线索、指定材料或切换到更可检索的角度。\n"
-    "4. 默认使用与用户相同的语言。"
+    "2. 必须结合阶段 1 正文和已有发现摘要中的具体阶段、制度、人物、企业、财政工具、因果机制、证据缺口或史料线索来发问。\n"
+    "3. 问题要有历史学研究意义，优先追问机制解释、制度运作、人物网络、时段转折、比较视角、史料互证或 historiographical 争议；不要输出套话式问题。\n"
+    "4. 禁止使用“关键阶段或专题是什么”“机制、人物或制度是哪一项”“哪个对比视角或史料视角”等泛化模板，除非已替换为当前发现中的具体对象。\n"
+    "5. 如果阶段 1 是 `【无法回答】`，问题应引导用户缩小范围、补充线索、指定材料或切换到更可检索的角度。\n"
+    "6. 默认使用与用户相同的语言。"
 )
 SUGGESTION_HEADING_PATTERN = re.compile(r"^(?:#{1,6}\s*|\*\*)?建议问题(?:\*\*)?\s*$", re.IGNORECASE)
 QUESTION_PREFIX_PATTERN = re.compile(r"^\s*(?:[-*•]|\d+[.)]|[一二三四五六七八九十]+[、.])\s*")
@@ -482,6 +484,36 @@ def _fallback_suggested_questions(*, user_question: str, refusal: bool) -> list[
     ]
 
 
+def _clip_for_prompt(text: str, *, limit: int = 6000) -> str:
+    normalized = text.strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 1].rstrip() + "…"
+
+
+def _current_findings_context(messages: list) -> str:
+    start = _latest_human_index(messages)
+    blocks: list[str] = []
+    for message in messages[start:]:
+        if not isinstance(message, ToolMessage):
+            continue
+        tool_name = getattr(message, "name", None)
+        if tool_name not in CITATION_SOURCE_TOOL_NAMES:
+            continue
+        content = _strip_injected_context(_stringify_content(message.content))
+        if not content:
+            continue
+        if tool_name == "write_todos":
+            title = "本轮 todo 子任务返回的主任务发现"
+        elif tool_name == "knowledge_checkpoint":
+            title = "本轮知识检查点/主任务总结"
+        else:
+            title = f"本轮 {tool_name} 证据摘要"
+        blocks.append(f"### {title}\n{content}")
+
+    return _clip_for_prompt("\n\n".join(blocks), limit=6000)
+
+
 def _normalize_suggested_questions(*, text: str, user_question: str, refusal: bool) -> list[str]:
     seen: set[str] = set()
     questions: list[str] = []
@@ -512,13 +544,21 @@ def _normalize_suggested_questions(*, text: str, user_question: str, refusal: bo
     return questions[:3]
 
 
-def _build_suggestion_prompt(*, user_question: str, answer_body: str, reference_section: str) -> str:
+def _build_suggestion_prompt(
+    *,
+    user_question: str,
+    answer_body: str,
+    reference_section: str,
+    findings_context: str = "",
+) -> str:
     references = reference_section or "（本轮无参考文献阶段内容）"
     clean_user_question = _strip_injected_context(user_question)
     clean_answer_body = _strip_injected_context(answer_body)
+    clean_findings_context = _strip_injected_context(findings_context).strip()
     return (
         f"用户原问题：\n{clean_user_question or '（未提供）'}\n\n"
         f"阶段1-回答正文：\n{clean_answer_body or '（空）'}\n\n"
+        f"当前主任务/子任务已有发现摘要：\n{clean_findings_context or '（无额外发现摘要）'}\n\n"
         f"阶段2-参考文献：\n{references}"
     )
 
@@ -651,6 +691,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
                             user_question=user_question,
                             answer_body=answer_body,
                             reference_section=reference_section,
+                            findings_context=_current_findings_context(request.messages),
                         )
                     ),
                 ]
@@ -692,6 +733,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
                             user_question=user_question,
                             answer_body=answer_body,
                             reference_section=reference_section,
+                            findings_context=_current_findings_context(request.messages),
                         )
                     ),
                 ]

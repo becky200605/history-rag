@@ -14,11 +14,14 @@ from src.agents.middlewares.citation_enforcement_middleware import (
 class _SuggestionModel:
     def __init__(self, suggestions: str | None = None) -> None:
         self.suggestions = suggestions or "问题一？\n问题二？\n问题三？"
+        self.messages = None
 
     def invoke(self, messages):
+        self.messages = messages
         return SimpleNamespace(content=self.suggestions)
 
     async def ainvoke(self, messages):
+        self.messages = messages
         return SimpleNamespace(content=self.suggestions)
 
 
@@ -521,6 +524,63 @@ class TestCitationEnforcementMiddleware:
         assert "系统插入提示" not in content
         assert "<task_memory_matches>" not in content
         assert "张之洞创办汉阳铁厂" in content
+
+    def test_stage_three_feeds_current_findings_context_to_suggestion_model(self):
+        middleware = CitationEnforcementMiddleware()
+        suggestion_model = _SuggestionModel(
+            "盛宣怀在轮船招商局的官督商办机制如何影响晚清财政与商股关系？\n"
+            "电报、铁路与银行事业之间的筹资网络是否构成盛宣怀贡献的制度核心？\n"
+            "甲午后铁路国有化争议如何改变对盛宣怀实业贡献的历史评价？"
+        )
+        request = ModelRequest(
+            model=suggestion_model,
+            messages=[
+                HumanMessage(content="盛宣怀是谁，有什么突出贡献"),
+                ToolMessage(
+                    content=(
+                        "### Todo: 查盛宣怀的晚清实业财政活动\n"
+                        "任务结果:\n"
+                        "盛宣怀的突出贡献集中在轮船招商局、电报、铁路、银行等官督商办事业，"
+                        "但仍需补查这些事业如何连接财政筹款、商股募集与国家利权。"
+                    ),
+                    tool_call_id="todo-call-1",
+                    name="write_todos",
+                ),
+                ToolMessage(
+                    content=(
+                        "citation: "
+                        "[citation:史料 第7页第2段]"
+                        "(/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)"
+                    ),
+                    tool_call_id="tool-call-1",
+                    name="knowledge_locate",
+                ),
+            ],
+            system_message=SystemMessage(content="You are a helpful assistant."),
+        )
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                result=[
+                    AIMessage(
+                        content=(
+                            "盛宣怀是晚清官僚型实业人物，其贡献主要体现为推动轮船招商局、电报、铁路、银行等新式事业。"
+                            "[citation:史料 第7页第2段](/api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2)"
+                        )
+                    )
+                ]
+            )
+
+        final_response = middleware.wrap_model_call(request, handler)
+        prompt = str(suggestion_model.messages[1].content)
+        content = str(final_response.result[-1].content)
+
+        assert "当前主任务/子任务已有发现摘要" in prompt
+        assert "轮船招商局" in prompt
+        assert "官督商办" in prompt
+        assert "商股募集" in prompt
+        assert "关键阶段或专题是什么" not in content
+        assert "盛宣怀在轮船招商局的官督商办机制" in content
 
     def test_allows_refusal_without_reference_section_when_catalog_has_no_material(self):
         middleware = CitationEnforcementMiddleware()

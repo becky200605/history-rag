@@ -165,7 +165,7 @@ def test_write_todos_wraps_custom_task_prompt_with_knowledge_locate_guardrails(m
     launched_prompt = next(iter(launched_prompts.values()))
     assert "检索海防相关奏折。" in launched_prompt
     assert "强制检索规则" in launched_prompt
-    assert "knowledge_locate` 每次调用都必须带非空 `doc_id` 或 `filename`" in launched_prompt
+    assert "逐字复制该书原样 `doc_id` 或 `filename` 到 `knowledge_locate`" in launched_prompt
     assert "requires either doc_id or filename" in launched_prompt
 
 

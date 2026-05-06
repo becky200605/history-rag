@@ -20,6 +20,7 @@ import {
 } from "@/core/messages/utils";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
 import { humanMessagePlugins } from "@/core/streamdown";
+import type { KnowledgeCitationRegistryItem } from "@/core/threads";
 import { cn } from "@/lib/utils";
 
 import { CopyButton } from "../copy-button";
@@ -30,10 +31,12 @@ export function MessageListItem({
   className,
   message,
   isLoading,
+  citationRegistry,
 }: {
   className?: string;
   message: Message;
   isLoading?: boolean;
+  citationRegistry?: KnowledgeCitationRegistryItem[];
 }) {
   const isHuman = message.type === "human";
   return (
@@ -45,6 +48,7 @@ export function MessageListItem({
         className={isHuman ? "w-fit" : "w-full"}
         message={message}
         isLoading={isLoading}
+        citationRegistry={citationRegistry}
       />
       <MessageToolbar
         className={cn(
@@ -100,10 +104,12 @@ function MessageContent_({
   className,
   message,
   isLoading = false,
+  citationRegistry,
 }: {
   className?: string;
   message: Message;
   isLoading?: boolean;
+  citationRegistry?: KnowledgeCitationRegistryItem[];
 }) {
   const rehypePlugins = useRehypeSplitWordsIntoSpans(isLoading);
   const isHuman = message.type === "human";
@@ -173,6 +179,7 @@ function MessageContent_({
         rehypePlugins={[...rehypePlugins, [rehypeKatex, { output: "html" }]]}
         className="my-3"
         components={components}
+        citationRegistry={citationRegistry}
       />
     </AIElementMessageContent>
   );

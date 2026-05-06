@@ -19,6 +19,7 @@ import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
 import type { Subtask } from "@/core/tasks";
 import { useUpdateSubtask } from "@/core/tasks/context";
 import type { AgentThreadState } from "@/core/threads";
+import type { KnowledgeCitationRegistryItem } from "@/core/threads";
 import { cn } from "@/lib/utils";
 
 import { ArtifactFileList } from "../artifacts/artifact-file-list";
@@ -48,6 +49,10 @@ export function MessageList({
   const rehypePlugins = useRehypeSplitWordsIntoSpans(thread.isLoading);
   const updateSubtask = useUpdateSubtask();
   const messages = messagesOverride ?? thread.messages;
+  const citationRegistry =
+    (thread.values.knowledge_citation_registry as
+      | KnowledgeCitationRegistryItem[]
+      | undefined) ?? [];
   if (thread.isThreadLoading) {
     return <MessageListSkeleton />;
   }
@@ -63,6 +68,7 @@ export function MessageList({
                 key={group.id}
                 message={group.messages[0]!}
                 isLoading={thread.isLoading}
+                citationRegistry={citationRegistry}
               />
             );
           } else if (group.type === "assistant:clarification") {
@@ -74,6 +80,7 @@ export function MessageList({
                   content={extractContentFromMessage(message)}
                   isLoading={thread.isLoading}
                   rehypePlugins={rehypePlugins}
+                  citationRegistry={citationRegistry}
                 />
               );
             }
@@ -94,6 +101,7 @@ export function MessageList({
                     isLoading={thread.isLoading}
                     rehypePlugins={rehypePlugins}
                     className="mb-4"
+                    citationRegistry={citationRegistry}
                   />
                 )}
                 <ArtifactFileList files={files} threadId={threadId} />
@@ -159,6 +167,7 @@ export function MessageList({
                     key={"thinking-group-" + message.id}
                     messages={[message]}
                     isLoading={thread.isLoading}
+                    citationRegistry={citationRegistry}
                   />,
                 );
               }
@@ -197,6 +206,7 @@ export function MessageList({
               key={"group-" + group.id}
               messages={group.messages}
               isLoading={thread.isLoading}
+              citationRegistry={citationRegistry}
             />
           );
         })}

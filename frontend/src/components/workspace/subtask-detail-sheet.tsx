@@ -13,7 +13,13 @@ import {
   Message as AIElementMessage,
   MessageContent as AIElementMessageContent,
 } from "@/components/ai-elements/message";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { useI18n } from "@/core/i18n/hooks";
 import { extractTextFromMessage, hasToolCalls } from "@/core/messages/utils";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
@@ -36,7 +42,10 @@ function statusLabel(
   return t.subtasks[status];
 }
 
-function latestProgressText(message: AIMessage | undefined, detail: string | null) {
+function latestProgressText(
+  message: AIMessage | undefined,
+  detail: string | null,
+) {
   if (!message) {
     return detail;
   }
@@ -47,10 +56,7 @@ function latestProgressText(message: AIMessage | undefined, detail: string | nul
   return detail;
 }
 
-function buildSyntheticAssistantMessage(
-  id: string,
-  content: string,
-): Message {
+function buildSyntheticAssistantMessage(id: string, content: string): Message {
   return {
     type: "ai",
     id,
@@ -70,16 +76,20 @@ export function SubtaskDetailSheet({
   const { t } = useI18n();
   const linkedSubtask = useSubtask(todo?.task_id ?? "");
   const rehypePlugins = useRehypeSplitWordsIntoSpans(false);
-  const fallbackLatestMessage = linkedSubtask?.latestMessage ?? todo?.latest_message;
+  const fallbackLatestMessage =
+    linkedSubtask?.latestMessage ?? todo?.latest_message;
   const fallbackStreamingMessages =
     linkedSubtask?.messages ?? todo?.stream_messages ?? [];
   const fallbackResult = linkedSubtask?.result ?? todo?.result;
   const fallbackSummary = linkedSubtask?.summary ?? todo?.structured_summary;
-  const fallbackFindings = linkedSubtask?.findings ?? todo?.structured_findings ?? [];
-  const fallbackCitations = linkedSubtask?.citations ?? todo?.structured_citations ?? [];
+  const fallbackFindings =
+    linkedSubtask?.findings ?? todo?.structured_findings ?? [];
+  const fallbackCitations =
+    linkedSubtask?.citations ?? todo?.structured_citations ?? [];
   const fallbackOpenQuestions =
     linkedSubtask?.openQuestions ?? todo?.structured_gaps ?? [];
   const fallbackError = linkedSubtask?.error ?? todo?.error;
+  const citationRegistry = todo?.citation_registry;
 
   const detailStatus = linkedSubtask?.status ?? todo?.status;
   const liveAction =
@@ -141,15 +151,15 @@ export function SubtaskDetailSheet({
       return <XCircleIcon className="size-4 text-red-500" />;
     }
     if (detailStatus === "in_progress") {
-      return <Loader2Icon className="size-4 animate-spin text-primary" />;
+      return <Loader2Icon className="text-primary size-4 animate-spin" />;
     }
-    return <CircleDotIcon className="size-4 text-muted-foreground/70" />;
+    return <CircleDotIcon className="text-muted-foreground/70 size-4" />;
   }, [detailStatus]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-2xl">
-        <SheetHeader className="border-b border-border/60 px-6 py-5">
+        <SheetHeader className="border-border/60 border-b px-6 py-5">
           <SheetTitle className="pr-8 text-base leading-relaxed">
             {todo?.content ?? "子任务详情"}
           </SheetTitle>
@@ -165,8 +175,11 @@ export function SubtaskDetailSheet({
           ) : (
             <div className="space-y-6">
               {todo.task_id && (
-                <div className="text-[11px] uppercase tracking-widest text-muted-foreground/70">
-                  {todo.subagent_type ?? linkedSubtask?.subagent_type ?? "subagent"} · {todo.task_id}
+                <div className="text-muted-foreground/70 text-[11px] tracking-widest uppercase">
+                  {todo.subagent_type ??
+                    linkedSubtask?.subagent_type ??
+                    "subagent"}{" "}
+                  · {todo.task_id}
                 </div>
               )}
 
@@ -174,10 +187,13 @@ export function SubtaskDetailSheet({
                 <AIElementMessage from="assistant">
                   <AIElementMessageContent className="w-full">
                     <MarkdownContent
-                      content={"## 下发状态\n这个 todo 目前还没有拿到真实的 subtask task_id。当前看到的是主任务里的进行中项，不是已经下发出去并可独立 streaming 的子任务。"}
+                      content={
+                        "## 下发状态\n这个 todo 目前还没有拿到真实的 subtask task_id。当前看到的是主任务里的进行中项，不是已经下发出去并可独立 streaming 的子任务。"
+                      }
                       isLoading={false}
                       rehypePlugins={rehypePlugins}
                       className="my-2 text-red-600 dark:text-red-400"
+                      citationRegistry={citationRegistry}
                     />
                   </AIElementMessageContent>
                 </AIElementMessage>
@@ -187,6 +203,7 @@ export function SubtaskDetailSheet({
                 <MessageGroup
                   messages={streamingMessages}
                   isLoading={detailStatus === "in_progress"}
+                  citationRegistry={citationRegistry}
                 />
               ) : latestProgress && detailStatus === "in_progress" ? (
                 <AIElementMessage from="assistant">
@@ -199,6 +216,7 @@ export function SubtaskDetailSheet({
                         "my-2",
                         detailStatus === "in_progress" ? "text-foreground" : "",
                       )}
+                      citationRegistry={citationRegistry}
                     />
                   </AIElementMessageContent>
                 </AIElementMessage>
@@ -208,6 +226,7 @@ export function SubtaskDetailSheet({
                 <MessageListItem
                   message={renderedResultMessage}
                   isLoading={false}
+                  citationRegistry={citationRegistry}
                 />
               )}
 
@@ -219,6 +238,7 @@ export function SubtaskDetailSheet({
                       isLoading={false}
                       rehypePlugins={rehypePlugins}
                       className="my-2"
+                      citationRegistry={citationRegistry}
                     />
                   </AIElementMessageContent>
                 </AIElementMessage>
@@ -232,6 +252,7 @@ export function SubtaskDetailSheet({
                       isLoading={false}
                       rehypePlugins={rehypePlugins}
                       className="my-2 text-red-600 dark:text-red-400"
+                      citationRegistry={citationRegistry}
                     />
                   </AIElementMessageContent>
                 </AIElementMessage>
@@ -243,10 +264,10 @@ export function SubtaskDetailSheet({
                 !todo.task_id &&
                 streamingMessages.length === 0 &&
                 !fallbackResult && (
-                <div className="text-muted-foreground text-sm">
-                  这个 todo 还没有关联到可展示的子任务详情。
-                </div>
-              )}
+                  <div className="text-muted-foreground text-sm">
+                    这个 todo 还没有关联到可展示的子任务详情。
+                  </div>
+                )}
             </div>
           )}
         </div>

@@ -9,6 +9,13 @@ export interface AgentThreadState extends Record<string, unknown> {
   artifacts: string[];
   todos?: Todo[];
   subtasks_cancel_requested_at?: string | null;
+  knowledge_citation_registry?: KnowledgeCitationRegistryItem[];
+}
+
+export interface KnowledgeCitationRegistryItem {
+  id?: string | number | null;
+  label?: string | null;
+  url?: string | null;
 }
 
 export interface AgentThread extends Thread<AgentThreadState> {}

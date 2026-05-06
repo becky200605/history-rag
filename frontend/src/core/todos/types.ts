@@ -1,4 +1,5 @@
 import type { AIMessage } from "@langchain/langgraph-sdk";
+import type { KnowledgeCitationRegistryItem } from "../threads";
 
 export interface Todo {
   id?: string;
@@ -16,5 +17,6 @@ export interface Todo {
   structured_findings?: string[];
   structured_citations?: string[];
   structured_gaps?: string[];
+  citation_registry?: KnowledgeCitationRegistryItem[];
   error?: string;
 }

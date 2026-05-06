@@ -621,8 +621,10 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                     )
                     if result.result:
                         todo["result"] = rewrite_numbered_citations(result.result, citation_id_mapping)
-                    if getattr(result, "citation_registry", None):
-                        todo["citation_registry"] = getattr(result, "citation_registry")
+                    if isinstance(getattr(runtime, "state", None), dict):
+                        raw_registry = runtime.state.get("knowledge_citation_registry")
+                        if isinstance(raw_registry, list):
+                            todo["citation_registry"] = [item for item in raw_registry if isinstance(item, dict)]
                     if result.structured_result:
                         summary = rewrite_numbered_citations(
                             str(result.structured_result.get("summary") or "").strip(),

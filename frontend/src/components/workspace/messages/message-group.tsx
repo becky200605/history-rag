@@ -30,6 +30,7 @@ import {
   findToolCallResult,
 } from "@/core/messages/utils";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
+import type { KnowledgeCitationRegistryItem } from "@/core/threads";
 import { dispatchTodoSelected, type Todo } from "@/core/todos";
 import { getToolCallLabel } from "@/core/tools/utils";
 import { extractTitleFromMarkdown } from "@/core/utils/markdown";
@@ -46,10 +47,12 @@ export function MessageGroup({
   className,
   messages,
   isLoading = false,
+  citationRegistry,
 }: {
   className?: string;
   messages: Message[];
   isLoading?: boolean;
+  citationRegistry?: KnowledgeCitationRegistryItem[];
 }) {
   const { t } = useI18n();
   const [showAbove, setShowAbove] = useState(
@@ -123,6 +126,7 @@ export function MessageGroup({
                       content={step.reasoning ?? ""}
                       isLoading={isLoading}
                       rehypePlugins={rehypePlugins}
+                      citationRegistry={citationRegistry}
                     />
                   }
                 ></ChainOfThoughtStep>
@@ -175,6 +179,7 @@ export function MessageGroup({
                     content={lastReasoningStep.reasoning ?? ""}
                     isLoading={isLoading}
                     rehypePlugins={rehypePlugins}
+                    citationRegistry={citationRegistry}
                   />
                 }
               ></ChainOfThoughtStep>
@@ -307,13 +312,11 @@ function ToolCall({
   } else if (name === "knowledge_checkpoint") {
     const checkpointTitle = extractKnowledgeCheckpointTitle(args, result);
     return (
-      <ChainOfThoughtStep
-        key={id}
-        label={label}
-        icon={BookmarkIcon}
-      >
+      <ChainOfThoughtStep key={id} label={label} icon={BookmarkIcon}>
         {checkpointTitle && (
-          <ChainOfThoughtSearchResult>{checkpointTitle}</ChainOfThoughtSearchResult>
+          <ChainOfThoughtSearchResult>
+            {checkpointTitle}
+          </ChainOfThoughtSearchResult>
         )}
       </ChainOfThoughtStep>
     );
@@ -379,11 +382,7 @@ function ToolCall({
   } else if (name === "bash") {
     const command: string | undefined = (args as { command: string })?.command;
     return (
-      <ChainOfThoughtStep
-        key={id}
-        label={label}
-        icon={SquareTerminalIcon}
-      >
+      <ChainOfThoughtStep key={id} label={label} icon={SquareTerminalIcon}>
         {command && (
           <CodeBlock
             className="mx-0 cursor-pointer border-none px-0"
@@ -407,16 +406,14 @@ function ToolCall({
       ? ((args as { todos?: Todo[] }).todos ?? [])
       : [];
     return (
-      <ChainOfThoughtStep
-        key={id}
-        label={label}
-        icon={ListTodoIcon}
-      >
+      <ChainOfThoughtStep key={id} label={label} icon={ListTodoIcon}>
         {todos.length > 0 && (
           <div className="mt-1 flex flex-col gap-1.5">
             {todos.map((todo, index) => (
               <button
-                key={todo.id ?? todo.task_id ?? `${index}:${todo.content ?? ""}`}
+                key={
+                  todo.id ?? todo.task_id ?? `${index}:${todo.content ?? ""}`
+                }
                 type="button"
                 className="text-muted-foreground hover:bg-muted/40 hover:text-foreground flex w-full items-start rounded-md px-2 py-1.5 text-left text-sm transition-colors"
                 onClick={() => dispatchTodoSelected({ todo })}
@@ -432,7 +429,11 @@ function ToolCall({
     );
   } else {
     return (
-      <ChainOfThoughtStep key={id} label={label} icon={WrenchIcon}></ChainOfThoughtStep>
+      <ChainOfThoughtStep
+        key={id}
+        label={label}
+        icon={WrenchIcon}
+      ></ChainOfThoughtStep>
     );
   }
 }

@@ -8,13 +8,17 @@ import {
   type MessageResponseProps,
 } from "@/components/ai-elements/message";
 import { streamdownPlugins } from "@/core/streamdown";
+import type { KnowledgeCitationRegistryItem } from "@/core/threads";
 
 import { CitationLink } from "../citations/citation-link";
 
 const CITATION_LINK_PATTERN = /\[citation:[^\]]+\]\((?:<[^>\n]+>|[^)\n]+)\)/gi;
+const NUMBERED_CITATION_PATTERN = /\[citation:\s*(\d+)\s*\](?!\()/gi;
 
 function extractCitationHref(citation: string): string | null {
-  const match = /^\[citation:[^\]]+\]\((<[^>\n]+>|[^)\n]+)\)$/i.exec(citation.trim());
+  const match = /^\[citation:[^\]]+\]\((<[^>\n]+>|[^)\n]+)\)$/i.exec(
+    citation.trim(),
+  );
   if (!match) {
     return null;
   }
@@ -42,7 +46,11 @@ function normalizeInternalCitationHref(href: string | null): string | null {
 
 function isDisplayableCitationHref(href: string | null): boolean {
   const normalizedHref = normalizeInternalCitationHref(href);
-  if (!normalizedHref || /\s/.test(normalizedHref) || /^citations?:/i.test(normalizedHref)) {
+  if (
+    !normalizedHref ||
+    /\s/.test(normalizedHref) ||
+    /^citations?:/i.test(normalizedHref)
+  ) {
     return false;
   }
   try {
@@ -68,8 +76,50 @@ function stripInvalidCitations(content: string): string {
     if (!href || !normalizedHref || href === normalizedHref) {
       return citation;
     }
-    const wrappedHref = citation.includes("(<") ? `<${normalizedHref}>` : normalizedHref;
+    const wrappedHref = citation.includes("(<")
+      ? `<${normalizedHref}>`
+      : normalizedHref;
     return citation.replace(/\((<[^>\n]+>|[^)\n]+)\)$/i, `(${wrappedHref})`);
+  });
+}
+
+function escapeMarkdownLinkLabel(label: string): string {
+  return label.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
+}
+
+function linkifyNumberedCitations(
+  content: string,
+  citationRegistry?: KnowledgeCitationRegistryItem[],
+): string {
+  if (!content || !citationRegistry?.length) {
+    return content;
+  }
+
+  const citationsById = new Map<string, KnowledgeCitationRegistryItem>();
+  for (const item of citationRegistry) {
+    const id = String(item.id ?? "").trim();
+    const url = String(item.url ?? "").trim();
+    if (!id || !isDisplayableCitationHref(normalizeInternalCitationHref(url))) {
+      continue;
+    }
+    citationsById.set(id, item);
+  }
+  if (citationsById.size === 0) {
+    return content;
+  }
+
+  return content.replace(NUMBERED_CITATION_PATTERN, (marker, id) => {
+    const item = citationsById.get(String(id).trim());
+    if (!item) {
+      return marker;
+    }
+    const rawUrl = String(item.url ?? "").trim();
+    const href = normalizeInternalCitationHref(rawUrl);
+    if (!href) {
+      return marker;
+    }
+    const label = String(item.label ?? "").trim() || `citation:${id}`;
+    return `[citation:${escapeMarkdownLinkLabel(label)}](<${href}>)`;
   });
 }
 
@@ -80,6 +130,7 @@ export type MarkdownContentProps = {
   className?: string;
   remarkPlugins?: MessageResponseProps["remarkPlugins"];
   components?: MessageResponseProps["components"];
+  citationRegistry?: KnowledgeCitationRegistryItem[];
 };
 
 /** Renders markdown content. */
@@ -89,6 +140,7 @@ export function MarkdownContent({
   className,
   remarkPlugins = streamdownPlugins.remarkPlugins,
   components: componentsFromProps,
+  citationRegistry,
 }: MarkdownContentProps) {
   const components = useMemo(() => {
     return {
@@ -108,7 +160,11 @@ export function MarkdownContent({
           const match = /^citation:(.+)$/.exec(props.children);
           if (match) {
             const [, text] = match;
-            return <CitationLink {...props} href={normalizedHref ?? props.href}>{text}</CitationLink>;
+            return (
+              <CitationLink {...props} href={normalizedHref ?? props.href}>
+                {text}
+              </CitationLink>
+            );
           }
         }
         return <a {...props} href={normalizedHref ?? props.href} />;
@@ -118,7 +174,9 @@ export function MarkdownContent({
   }, [componentsFromProps]);
 
   if (!content) return null;
-  const sanitizedContent = stripInvalidCitations(content);
+  const sanitizedContent = stripInvalidCitations(
+    linkifyNumberedCitations(content, citationRegistry),
+  );
   if (!sanitizedContent.trim()) return null;
 
   return (

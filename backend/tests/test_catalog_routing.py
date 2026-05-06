@@ -264,6 +264,7 @@ def test_book_search_tool_accepts_uncategorized_folder(monkeypatch) -> None:
 
     assert "Error:" not in output
     assert "doc_id=uncategorized-doc" in output
+    assert 'next: knowledge_locate(doc_id="uncategorized-doc")' in output
 
 
 def test_search_book_catalog_broad_query_keeps_core_and_specialized_books(tmp_path, monkeypatch) -> None:
@@ -434,6 +435,10 @@ def test_book_search_tool_groups_candidates_by_layer(monkeypatch) -> None:
     assert "### 专题支撑书" in output
     assert "### 补充材料 / 参考工具书" in output
     assert "- User Book | doc_id=user-1 | 相关度=5.00" in output
+    assert 'next: knowledge_locate(doc_id="user-1")' in output
+    assert 'next: knowledge_locate(doc_id="core-1")' in output
+    assert 'next: knowledge_locate(doc_id="spec-1")' in output
+    assert 'next: knowledge_locate(doc_id="ref-1")' in output
     assert "语言=繁体中文 (zh-Hant)" in output
     assert 'user doc_ids: ["user-1"]' in output
     assert 'core doc_ids: ["core-1"]' in output

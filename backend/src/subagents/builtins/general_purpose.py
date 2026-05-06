@@ -20,8 +20,8 @@ Do NOT use for simple, single-step operations.""",
 - For historical / knowledge-base subtasks:
   1. Check injected historical task-memory matches first; reuse only matches that are on-topic and have numbered citations.
   2. If fresh source reading is needed, call `book_search` once with the task goal and relevant knowledge folders.
-  3. Pick the best-fitting book from `book_search`. Copy its exact `doc_id` or `filename` into `knowledge_locate`; do not shorten, translate, paraphrase, or leave it null.
-  4. Never call `knowledge_locate` without a non-empty `doc_id` or `filename`. If you accidentally get `requires either doc_id or filename`, retry once with the exact value from the latest `book_search`; if you cannot, stop and return `【证据不足】`.
+  3. Pick the best-fitting book from `book_search`. Copy the exact `doc_id` from its `next: knowledge_locate(doc_id="...")` template; do not shorten, translate, paraphrase, or use filename instead.
+  4. Never call `knowledge_locate` without a non-empty `doc_id`. If you accidentally get a missing-doc-id error, retry once with the exact `doc_id` from the latest `book_search`; if you cannot, stop and return `【证据不足】`.
   5. After 1-2 useful locate passes, either write the evidence or report the gap. Do not loop.
 - Do not use shell/file-system probing as a substitute for `book_search` / `knowledge_locate`.
 - Do not guess, fill gaps from intuition, or fabricate citations.

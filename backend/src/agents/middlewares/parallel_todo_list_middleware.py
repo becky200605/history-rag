@@ -189,8 +189,8 @@ def _build_default_task_prompt(todo: Todo) -> str:
         f"Todo: {todo['content']}\n\n"
         "要求：\n"
         "1. 只围绕这一项任务检索、分析或执行；\n"
-        "2. 历史 / 知识库任务按固定顺序执行：先判断历史匹配是否可复用；不足时调用 `book_search` 选源；选定某书后，把 `book_search` 返回的原样 `doc_id` 或 `filename` 复制到 `knowledge_locate`；\n"
-        "3. `knowledge_locate` 禁止空调用。每次都必须带非空 `doc_id` 或 `filename`；如果漏传并收到 `requires either doc_id or filename`，只允许用刚才 `book_search` 结果里的原样值重试一次，仍拿不到就停止并写 `【证据不足】`；\n"
+        "2. 历史 / 知识库任务按固定顺序执行：先判断历史匹配是否可复用；不足时调用 `book_search` 选源；选定某书后，复制 `book_search` 返回的 `next: knowledge_locate(doc_id=\"...\")` 模板里的原样 `doc_id` 到 `knowledge_locate`；\n"
+        "3. `knowledge_locate` 禁止空调用。每次都必须带非空 `doc_id`；不要用书名或 filename 代替。如果漏传并收到 missing-doc-id 错误，只允许用刚才 `book_search` 结果里的原样 `doc_id` 重试一次，仍拿不到就停止并写 `【证据不足】`；\n"
         "4. 不要用 bash/find/ls 扫本地文件系统替代知识库检索；\n"
         "5. 读到足够证据后停止检索，保留工具返回的编号 citation；\n"
         "6. 最终输出必须使用固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
@@ -212,8 +212,8 @@ def _build_task_prompt(todo: Todo) -> str:
         "主代理给你的具体任务说明如下：\n"
         f"{custom_prompt}\n\n"
         "强制检索规则：\n"
-        "1. 先用 `book_search` 选源；决定读哪本书后，逐字复制该书原样 `doc_id` 或 `filename` 到 `knowledge_locate`。\n"
-        "2. 禁止空调 `knowledge_locate`。如果收到 `requires either doc_id or filename`，只用刚才 `book_search` 的原样值重试一次；仍拿不到就停止并写 `【证据不足】`。\n"
+        "1. 先用 `book_search` 选源；决定读哪本书后，逐字复制 `next: knowledge_locate(doc_id=\"...\")` 模板里的原样 `doc_id` 到 `knowledge_locate`。\n"
+        "2. 禁止空调 `knowledge_locate`，也不要用书名或 filename 代替 `doc_id`。如果收到 missing-doc-id 错误，只用刚才 `book_search` 的原样 `doc_id` 重试一次；仍拿不到就停止并写 `【证据不足】`。\n"
         "3. 输出固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；citation 必须复制工具返回的编号标记。"
     )
 

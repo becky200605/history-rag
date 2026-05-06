@@ -165,8 +165,8 @@ def test_write_todos_wraps_custom_task_prompt_with_knowledge_locate_guardrails(m
     launched_prompt = next(iter(launched_prompts.values()))
     assert "检索海防相关奏折。" in launched_prompt
     assert "强制检索规则" in launched_prompt
-    assert "逐字复制该书原样 `doc_id` 或 `filename` 到 `knowledge_locate`" in launched_prompt
-    assert "requires either doc_id or filename" in launched_prompt
+    assert "逐字复制 `next: knowledge_locate(doc_id=\"...\")` 模板里的原样 `doc_id`" in launched_prompt
+    assert "missing-doc-id" in launched_prompt
 
 
 def test_write_todos_auto_promotes_pending_queue_until_all_batches_finish(monkeypatch):

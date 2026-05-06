@@ -944,6 +944,10 @@ def _format_candidate_brief(candidate: BookCatalogEntry) -> str:
     return " | ".join(parts)
 
 
+def _format_locate_call_template(doc_id: str) -> str:
+    return f'next: knowledge_locate(doc_id="{doc_id}")'
+
+
 @tool("book_search", parse_docstring=True)
 def book_search_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
@@ -1087,6 +1091,7 @@ def book_search_tool(
         lines.append(f"### {title}")
         for candidate in items[:5]:
             lines.append(f"- {_format_candidate_brief(candidate)}")
+            lines.append(f"  {_format_locate_call_template(candidate.doc_id)}")
         if len(items) > 5:
             lines.append(f"- 其余 {len(items) - 5} 本已省略")
         lines.append(f"doc_ids: {_format_doc_ids_json([candidate.doc_id for candidate in items])}")
@@ -1101,7 +1106,7 @@ def book_search_tool(
     lines.append("---")
     lines.append("检索规则:")
     lines.append("1. `knowledge_search` 只检索历史主任务/子任务结果，不检索这些书的正文；不要把这里的 `doc_ids` 传给 `knowledge_search`。")
-    lines.append("2. 如果你是子任务，下一步应先判断候选书与任务目标是否适配；只对适配的 `doc_ids` 调用 `knowledge_locate` 读目录、章节页、命中页或连续页正文，不要强行覆盖离题书。")
+    lines.append("2. 如果你是子任务，下一步应先判断候选书与任务目标是否适配；只复制上方 `next: knowledge_locate(doc_id=\"...\")` 模板里的 `doc_id` 调用 `knowledge_locate`，不要用书名或 filename 代替。")
     lines.append("3. 如果问题涉及多本书且已启用子任务，不要由主任务继续串行深挖。")
     lines.append("4. 默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料。")
     lines.append("5. 检索前先看每本候选书的 metadata，尤其 `语言`、`目录`、`摘要` 等信号。")
@@ -1220,15 +1225,19 @@ def knowledge_locate_tool(
 ) -> str:
     """Locate full-page source context from a known document and page range.
 
-    Use this after `knowledge_search` when you already know the relevant `doc_id`
-    and need the full text of one page or a contiguous page range.
+    Use this after `book_search` when you already know the relevant `doc_id`
+    and need the full text of one page or a contiguous page range. Prefer
+    `doc_id` for model calls; copy it exactly from the `book_search` `next:
+    knowledge_locate(doc_id="...")` template.
     If you only know the relevant book but not the exact location yet, you may
-    call `knowledge_locate` with only `doc_id` (or `filename`) to get a
+    call `knowledge_locate` with only `doc_id` to get a
     navigation preview of likely目录/序言/开篇页，再据此继续按页定位正文。
 
     Args:
-        doc_id: Optional document ID returned by `book_search` or `knowledge_search`.
-        filename: Optional source filename if doc_id is unavailable.
+        doc_id: Preferred document ID copied exactly from `book_search`. Use
+            this for normal model calls.
+        filename: Internal fallback only. Do not use unless the system or user
+            explicitly gives a filename and no doc_id is available.
         page_no: Optional original-book page number to inspect.
         page_no_end: Optional inclusive ending original-book page number for contiguous reading.
         pdf_page_no: Optional physical PDF page number to inspect.
@@ -1259,10 +1268,10 @@ def knowledge_locate_tool(
             thread_id=runtime_context.get("thread_id"),
         )
         return (
-            "knowledge_locate requires either doc_id or filename. "
+            "knowledge_locate requires a doc_id. "
             "Your previous tool call omitted the document identifier. "
-            "Retry only if you can copy the exact original `doc_id` or `filename` "
-            "from the parent task or a prior tool result; otherwise stop and return "
+            "Retry only if you can copy the exact original `doc_id` from the "
+            "`book_search` `next: knowledge_locate(doc_id=\"...\")` template; otherwise stop and return "
             "`【证据不足】`. Do not call `knowledge_locate` again with empty args."
         )
 

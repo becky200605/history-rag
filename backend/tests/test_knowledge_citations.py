@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from src.community.knowledge_base.citations import (
     KNOWLEDGE_CITATION_REGISTRY_KEY,
+    build_citation_stable_key,
     merge_citation_registry,
     resolve_result_citation_context,
     rewrite_numbered_citations,
@@ -101,9 +102,11 @@ def test_build_citation_requires_state_for_numbered_marker() -> None:
 
 def test_build_citation_registers_numbered_marker_when_state_is_available() -> None:
     state = {}
+    label = "民国财政史 (杨荫溥) 原书第10页第1段"
+    url = "/api/knowledge/docs/book.pdf?page_no=10&paragraph_no=1"
     citation = _build_citation(
-        "民国财政史 (杨荫溥) 原书第10页第1段",
-        "/api/knowledge/docs/book.pdf?page_no=10&paragraph_no=1",
+        label,
+        url,
         state=state,
     )
 
@@ -111,35 +114,35 @@ def test_build_citation_registers_numbered_marker_when_state_is_available() -> N
     assert state[KNOWLEDGE_CITATION_REGISTRY_KEY] == [
         {
             "id": "1",
-            "label": "民国财政史 (杨荫溥) 原书第10页第1段",
-            "url": "/api/knowledge/docs/book.pdf?page_no=10&paragraph_no=1",
+            "label": label,
+            "url": url,
+            "stable_key": build_citation_stable_key(citation_label=label, citation_link=url),
         }
     ]
 
 
 def test_merge_citation_registry_returns_mapping_for_global_renumbering() -> None:
-    state = {
-        KNOWLEDGE_CITATION_REGISTRY_KEY: [
-            {
-                "id": "1",
-                "label": "既有书 原书第1页第1段",
-                "url": "/api/knowledge/docs/existing.pdf?page_no=1&paragraph_no=1",
-            }
-        ]
-    }
+    existing_label = "既有书 原书第1页第1段"
+    existing_url = "/api/knowledge/docs/existing.pdf?page_no=1&paragraph_no=1"
+    new_label = "甲书 原书第12页第3段"
+    new_url = "/api/knowledge/docs/a.pdf?page_no=12&paragraph_no=3"
+    state = {}
+    assert _build_citation(existing_label, existing_url, state=state) == "[citation:1]"
 
     mapping = merge_citation_registry(
         state,
         [
             {
                 "id": "1",
-                "label": "甲书 原书第12页第3段",
-                "url": "/api/knowledge/docs/a.pdf?page_no=12&paragraph_no=3",
+                "label": new_label,
+                "url": new_url,
+                "stable_key": build_citation_stable_key(citation_label=new_label, citation_link=new_url),
             },
             {
                 "id": "2",
-                "label": "既有书 原书第1页第1段",
-                "url": "/api/knowledge/docs/existing.pdf?page_no=1&paragraph_no=1",
+                "label": existing_label,
+                "url": existing_url,
+                "stable_key": build_citation_stable_key(citation_label=existing_label, citation_link=existing_url),
             },
         ],
     )
@@ -149,12 +152,14 @@ def test_merge_citation_registry_returns_mapping_for_global_renumbering() -> Non
     assert state[KNOWLEDGE_CITATION_REGISTRY_KEY] == [
         {
             "id": "1",
-            "label": "既有书 原书第1页第1段",
-            "url": "/api/knowledge/docs/existing.pdf?page_no=1&paragraph_no=1",
+            "label": existing_label,
+            "url": existing_url,
+            "stable_key": build_citation_stable_key(citation_label=existing_label, citation_link=existing_url),
         },
         {
             "id": "2",
-            "label": "甲书 原书第12页第3段",
-            "url": "/api/knowledge/docs/a.pdf?page_no=12&paragraph_no=3",
+            "label": new_label,
+            "url": new_url,
+            "stable_key": build_citation_stable_key(citation_label=new_label, citation_link=new_url),
         },
     ]

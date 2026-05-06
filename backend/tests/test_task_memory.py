@@ -24,6 +24,10 @@ sys.modules.setdefault("src.community.knowledge_base.retriever", retriever_stub)
 
 from src.agents.middlewares import task_memory_middleware  # noqa: E402
 from src.community.knowledge_base import task_memory  # noqa: E402
+from src.community.knowledge_base.citations import (  # noqa: E402
+    KNOWLEDGE_CITATION_REGISTRY_KEY,
+    build_citation_stable_key,
+)
 
 
 class _FakeVectorStore:
@@ -125,6 +129,157 @@ def test_task_memory_upsert_skips_insufficient_evidence_result(monkeypatch: Any)
 
     assert record_id is None
     assert _FakeVectorStore.added_documents == []
+
+
+def test_task_memory_upsert_persists_citation_registry_subset(monkeypatch: Any) -> None:
+    _patch_vector_store(monkeypatch)
+
+    first_label = "盛宣怀档案 第12页第2段"
+    first_url = "/api/knowledge/docs/sheng.pdf?page_no=12&paragraph_no=2"
+    second_label = "招商局档案 第8页第1段"
+    second_url = "/api/knowledge/docs/merchants.pdf?page_no=8&paragraph_no=1"
+    unused_label = "无关材料 第3页第1段"
+    unused_url = "/api/knowledge/docs/unused.pdf?page_no=3&paragraph_no=1"
+
+    record_id = task_memory.upsert_task_memory_record(
+        title="盛宣怀与招商局关系",
+        query="盛宣怀与招商局是什么关系？",
+        summary="盛宣怀深度参与招商局经营调整。[citation:2]",
+        findings=["档案显示其参与了具体制度安排。[citation:1]"],
+        citations=["[citation:1]", "[citation:2]"],
+        open_questions=["仍需核对更早时期的董事会记录。[citation:2]"],
+        citation_registry=[
+            {
+                "id": "1",
+                "label": first_label,
+                "url": first_url,
+                "stable_key": build_citation_stable_key(citation_label=first_label, citation_link=first_url),
+            },
+            {
+                "id": "2",
+                "label": second_label,
+                "url": second_url,
+                "stable_key": build_citation_stable_key(citation_label=second_label, citation_link=second_url),
+            },
+            {
+                "id": "3",
+                "label": unused_label,
+                "url": unused_url,
+                "stable_key": build_citation_stable_key(citation_label=unused_label, citation_link=unused_url),
+            },
+        ],
+        task_level="subtask",
+        thread_id="thread-1",
+        user_id="user-1",
+        task_id="task-1",
+        raw_result="完整子任务最终输出",
+    )
+
+    assert record_id is not None
+    assert len(_FakeVectorStore.added_documents) == 1
+    document = _FakeVectorStore.added_documents[0]
+    assert document.metadata["citation_registry"] == [
+        {
+            "id": "1",
+            "label": first_label,
+            "url": first_url,
+            "stable_key": build_citation_stable_key(citation_label=first_label, citation_link=first_url),
+        },
+        {
+            "id": "2",
+            "label": second_label,
+            "url": second_url,
+            "stable_key": build_citation_stable_key(citation_label=second_label, citation_link=second_url),
+        },
+    ]
+
+
+def test_prepare_task_memory_matches_for_injection_merges_registry_and_rewrites_markers() -> None:
+    existing_label = "既有档案 第1页第1段"
+    existing_url = "/api/knowledge/docs/existing.pdf?page_no=1&paragraph_no=1"
+    new_label = "新增档案 第5页第2段"
+    new_url = "/api/knowledge/docs/new.pdf?page_no=5&paragraph_no=2"
+    target_state = {
+        KNOWLEDGE_CITATION_REGISTRY_KEY: [
+            {
+                "id": "1",
+                "label": existing_label,
+                "url": existing_url,
+                "stable_key": build_citation_stable_key(citation_label=existing_label, citation_link=existing_url),
+            }
+        ]
+    }
+
+    prepared = task_memory.prepare_task_memory_matches_for_injection(
+        [
+            {
+                "metadata": {
+                    "summary": "历史摘要[citation:1] 和既有事实[citation:2]",
+                    "findings": ["发现[citation:1]", "旧证据[citation:2]"],
+                    "citations": ["[citation:1]", "[citation:2]"],
+                    "open_questions": ["待核对[citation:1]"],
+                    "citation_registry": [
+                        {
+                            "id": "1",
+                            "label": new_label,
+                            "url": new_url,
+                            "stable_key": build_citation_stable_key(citation_label=new_label, citation_link=new_url),
+                        },
+                        {
+                            "id": "2",
+                            "label": existing_label,
+                            "url": existing_url,
+                            "stable_key": build_citation_stable_key(citation_label=existing_label, citation_link=existing_url),
+                        },
+                    ],
+                }
+            }
+        ],
+        target_state=target_state,
+    )
+
+    metadata = prepared[0]["metadata"]
+    assert metadata["summary"] == "历史摘要[citation:2] 和既有事实[citation:1]"
+    assert metadata["findings"] == ["发现[citation:2]", "旧证据[citation:1]"]
+    assert metadata["citations"] == ["[citation:2]", "[citation:1]"]
+    assert metadata["open_questions"] == ["待核对[citation:2]"]
+    assert target_state[KNOWLEDGE_CITATION_REGISTRY_KEY] == [
+        {
+            "id": "1",
+            "label": existing_label,
+            "url": existing_url,
+            "stable_key": build_citation_stable_key(citation_label=existing_label, citation_link=existing_url),
+        },
+        {
+            "id": "2",
+            "label": new_label,
+            "url": new_url,
+            "stable_key": build_citation_stable_key(citation_label=new_label, citation_link=new_url),
+        },
+    ]
+
+
+def test_prepare_task_memory_matches_for_injection_strips_orphan_citations_without_registry() -> None:
+    prepared = task_memory.prepare_task_memory_matches_for_injection(
+        [
+            {
+                "metadata": {
+                    "summary": "历史摘要[citation:9]",
+                    "findings": ["发现[citation:9]"],
+                    "citations": ["[citation:9]"],
+                    "open_questions": ["待核对[citation:9]"],
+                }
+            }
+        ],
+        target_state={},
+    )
+
+    metadata = prepared[0]["metadata"]
+    assert metadata["summary"] == "历史摘要"
+    assert metadata["findings"] == ["发现"]
+    assert metadata["citations"] == []
+    assert metadata["open_questions"] == ["待核对"]
+    assert metadata["citation_registry"] == []
 
 
 class _DecisionModel:
@@ -239,6 +394,57 @@ def test_task_memory_middleware_updates_qdrant_when_model_says_update(monkeypatc
     assert len(calls) == 1
     assert calls[0]["title"] == "张之洞汉阳铁厂研究"
     assert calls[0]["task_level"] == "main"
+
+
+
+def test_task_memory_middleware_extracts_numbered_citations_from_answer(monkeypatch: Any) -> None:
+    middleware = task_memory_middleware.TaskMemoryMiddleware()
+    calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        task_memory_middleware,
+        "create_chat_model",
+        lambda **_kwargs: _DecisionModel('{"action":"add","title":"张之洞铁路建设"}'),
+    )
+    monkeypatch.setattr(
+        task_memory_middleware,
+        "upsert_task_memory_record",
+        lambda **kwargs: calls.append(kwargs) or "record-1",
+    )
+
+    citation_label = "铁路档案 第21页第1段"
+    citation_url = "/api/knowledge/docs/railway.pdf?page_no=21&paragraph_no=1"
+    state = {
+        "messages": [
+            HumanMessage(content="张之洞在铁路建设上做了什么？"),
+            AIMessage(
+                content=(
+                    "张之洞推动铁路建设，并把路权问题提升到跨省协作与保利权层面。[citation:21]\n\n"
+                    "参考文献\n"
+                    "1. [citation:21]\n\n"
+                    "建议问题\n"
+                    "1. 后续问题？"
+                )
+            ),
+        ],
+        "current_task_title": "张之洞铁路建设",
+        "current_task_human_index": 0,
+        KNOWLEDGE_CITATION_REGISTRY_KEY: [
+            {
+                "id": "21",
+                "label": citation_label,
+                "url": citation_url,
+                "stable_key": build_citation_stable_key(citation_label=citation_label, citation_link=citation_url),
+            }
+        ],
+    }
+
+    result = middleware.after_agent(state, SimpleNamespace(context={"thread_id": "t1", "user_id": "u1"}))
+
+    assert result == {"task_memory_saved_human_index": 0}
+    assert len(calls) == 1
+    assert calls[0]["citations"] == ["[citation:21]"]
+    assert calls[0]["citation_registry"] == state[KNOWLEDGE_CITATION_REGISTRY_KEY]
 
 
 def test_task_memory_middleware_skips_update_when_target_is_not_matched(monkeypatch: Any) -> None:

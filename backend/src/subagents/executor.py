@@ -581,6 +581,7 @@ class SubagentExecutor:
                 findings=findings,
                 citations=citations,
                 open_questions=open_questions,
+                citation_registry=result.citation_registry,
                 task_level=task_level,
                 thread_id=self.thread_id,
                 user_id=self.user_id,

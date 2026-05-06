@@ -261,6 +261,12 @@ Knowledge-base metadata helpers live in `src/community/knowledge_base/book_metad
 4. Applies updates atomically (temp file + rename) with cache invalidation
 5. Next interaction injects top 15 facts + context into `<memory>` tags in system prompt
 
+**Task-memory citation replay**:
+- `src/community/knowledge_base/task_memory.py` now stores the minimal `citation_registry` subset referenced by each task-memory record
+- Saved citation entries can include a deterministic `stable_key` generated from normalized citation URLs/labels
+- `prepare_task_memory_matches_for_injection()` merges saved registry entries back into the current turn state before rewriting historical `[citation:N]` markers
+- Historical task-memory matches without a saved registry have unsupported numbered citations stripped during injection to avoid orphan markers
+
 **Configuration** (`config.yaml` → `memory`):
 - `enabled` / `injection_enabled` - Master switches
 - `storage_path` - Path to memory.json

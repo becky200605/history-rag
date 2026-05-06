@@ -137,14 +137,20 @@ def _strip_generated_sections(content: str) -> str:
     return content[:start].rstrip()
 
 
+def _normalize_numbered_citation_marker(citation: str) -> str | None:
+    match = re.match(r"\[citation:\s*(\d+)\s*\](?:\((?:<[^>\n]+>|[^)\n]+)\))?", citation.strip(), re.IGNORECASE)
+    if not match:
+        return None
+    return f"[citation:{match.group(1)}]"
+
+
+
 def _extract_citations(content: str) -> list[str]:
     seen: set[str] = set()
     citations: list[str] = []
-    for citation in CITATION_PATTERN.findall(content):
-        normalized_citation = _normalize_citation_markdown(citation)
-        if not _is_valid_citation_markdown(normalized_citation):
-            continue
-        if normalized_citation in seen:
+    for citation in NUMBERED_CITATION_PATTERN.findall(content):
+        normalized_citation = _normalize_numbered_citation_marker(citation)
+        if not normalized_citation or normalized_citation in seen:
             continue
         seen.add(normalized_citation)
         citations.append(normalized_citation)
@@ -255,10 +261,9 @@ def _build_registry_citation_candidates(state: dict | None) -> list[_CitationCan
             continue
         citation_id = str(item.get("id") or "").strip()
         label = str(item.get("label") or "").strip()
-        url = str(item.get("url") or "").strip()
-        if not citation_id or not label or not url:
+        if not citation_id:
             continue
-        full_citation = f"[citation:{label}](<{url}>)"
+        full_citation = f"[citation:{citation_id}]"
         normalized_label = _normalize_citation_text(citation_id)
         if normalized_label in seen:
             continue
@@ -268,15 +273,50 @@ def _build_registry_citation_candidates(state: dict | None) -> list[_CitationCan
                 label=citation_id,
                 full_citation=full_citation,
                 normalized_label=normalized_label,
-                display_label=label,
+                display_label=label or citation_id,
             )
         )
     return candidates
 
 
-def _build_citation_candidates(messages: list, state: dict | None = None) -> list[_CitationCandidate]:
-    return _build_registry_citation_candidates(state)
 
+def _build_tool_message_citation_candidates(messages: list) -> list[_CitationCandidate]:
+    candidates: list[_CitationCandidate] = []
+    seen: set[str] = set()
+    for message in messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        content = _stringify_content(message.content)
+        for match in re.finditer(r"citation:\s*\[citation:\s*(\d+)\s*\](?:\s*\(([^)\n]+)\))?", content, re.IGNORECASE):
+            citation_id = str(match.group(1) or "").strip()
+            if not citation_id:
+                continue
+            normalized_label = _normalize_citation_text(citation_id)
+            if normalized_label in seen:
+                continue
+            seen.add(normalized_label)
+            display_label = str(match.group(2) or "").strip() or citation_id
+            candidates.append(
+                _CitationCandidate(
+                    label=citation_id,
+                    full_citation=f"[citation:{citation_id}]",
+                    normalized_label=normalized_label,
+                    display_label=display_label,
+                )
+            )
+    return candidates
+
+
+
+def _build_citation_candidates(messages: list, state: dict | None = None) -> list[_CitationCandidate]:
+    merged: list[_CitationCandidate] = []
+    seen: set[str] = set()
+    for candidate in [*_build_registry_citation_candidates(state), *_build_tool_message_citation_candidates(messages)]:
+        if candidate.normalized_label in seen:
+            continue
+        seen.add(candidate.normalized_label)
+        merged.append(candidate)
+    return merged
 
 def _available_citation_lines(messages: list, state: dict | None = None) -> list[str]:
     lines: list[str] = []
@@ -332,54 +372,30 @@ def _consume_optional_markdown_link_target(text: str, start_index: int) -> int:
     return index
 
 
-def _replace_numbered_candidate_mentions(
-    answer_body: str,
-    candidates: list[_CitationCandidate],
-    replacements: dict[str, str],
-) -> str:
-    repaired_body = answer_body
-    for index, candidate in enumerate(candidates):
-        label_token = f"[citation:{candidate.label}]"
-        if label_token not in repaired_body:
-            continue
-        placeholder = f"@@KNOWLEDGE_CITATION_{index}@@"
-        replacements[placeholder] = candidate.full_citation
+def _replace_numbered_citation_mentions(answer_body: str, replacements: dict[str, str]) -> str:
+    replacement_index = len(replacements)
 
-        parts: list[str] = []
-        cursor = 0
-        label_length = len(label_token)
-        while True:
-            match_index = repaired_body.find(label_token, cursor)
-            if match_index < 0:
-                parts.append(repaired_body[cursor:])
-                break
-            parts.append(repaired_body[cursor:match_index])
-            end_index = _consume_optional_markdown_link_target(
-                repaired_body,
-                match_index + label_length,
-            )
-            if end_index == match_index + label_length:
-                end_index = match_index + label_length
-            parts.append(placeholder)
-            cursor = end_index
+    def _replace(match: re.Match[str]) -> str:
+        nonlocal replacement_index
+        normalized_citation = _normalize_numbered_citation_marker(match.group(0))
+        if not normalized_citation:
+            return match.group(0)
+        placeholder = f"@@KNOWLEDGE_CITATION_{replacement_index}@@"
+        replacement_index += 1
+        replacements[placeholder] = normalized_citation
+        return placeholder
 
-        repaired_body = "".join(parts)
-    return repaired_body
+    return NUMBERED_CITATION_PATTERN.sub(_replace, answer_body)
+
 
 
 def _normalize_answer_citations(answer_body: str, messages: list, state: dict | None = None) -> str:
-    candidates = _build_citation_candidates(messages, state)
     replacements: dict[str, str] = {}
-    repaired_body = (
-        _replace_numbered_candidate_mentions(answer_body, candidates, replacements)
-        if candidates
-        else answer_body
-    )
+    repaired_body = _replace_numbered_citation_mentions(answer_body, replacements)
     repaired_body = CITATION_PATTERN.sub("", repaired_body)
     for placeholder, full_citation in replacements.items():
         repaired_body = repaired_body.replace(placeholder, full_citation)
     return repaired_body
-
 
 def _has_supported_body_citation(answer_body: str, messages: list, state: dict | None = None) -> bool:
     citations = _extract_citations(answer_body)

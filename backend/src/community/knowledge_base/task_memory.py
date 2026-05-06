@@ -9,6 +9,12 @@ from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client.models import Distance, VectorParams
 
+from src.community.knowledge_base.citations import (
+    collect_citation_registry_entries,
+    extract_numbered_citation_ids,
+    merge_citation_registry,
+    rewrite_numbered_citations,
+)
 from src.community.knowledge_base.retriever import get_embedding_model, get_qdrant_client
 from src.config.knowledge_base_config import get_knowledge_base_config
 
@@ -83,6 +89,95 @@ def is_non_reusable_failure_summary(text: str) -> bool:
             continue
         return bool(INSUFFICIENT_EVIDENCE_PATTERN.search(stripped))
     return False
+
+
+
+def _strip_unsupported_numbered_citations(text: str) -> str:
+    stripped = NUMBERED_CITATION_PATTERN.sub("", str(text or ""))
+    stripped = re.sub(r"[ \t]+\n", "\n", stripped)
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped)
+    stripped = re.sub(r"\s{2,}", " ", stripped)
+    return stripped.strip()
+
+
+
+def _collect_citation_ids_from_task_memory_payload(
+    *,
+    summary: str,
+    findings: list[str],
+    citations: list[str],
+    open_questions: list[str],
+) -> list[str]:
+    combined_ids: list[str] = []
+    for text in [summary, *findings, *citations, *open_questions]:
+        combined_ids.extend(extract_numbered_citation_ids(text))
+    seen: set[str] = set()
+    ordered_ids: list[str] = []
+    for citation_id in combined_ids:
+        if citation_id in seen:
+            continue
+        seen.add(citation_id)
+        ordered_ids.append(citation_id)
+    return ordered_ids
+
+
+
+def build_task_memory_citation_registry(
+    *,
+    summary: str,
+    findings: list[str] | None,
+    citations: list[str] | None,
+    open_questions: list[str] | None,
+    citation_registry: list[dict[str, Any]] | None,
+) -> list[dict[str, str]]:
+    return collect_citation_registry_entries(
+        citation_registry,
+        citation_ids=_collect_citation_ids_from_task_memory_payload(
+            summary=summary,
+            findings=_normalize_string_list(findings),
+            citations=_normalize_string_list(citations),
+            open_questions=_normalize_string_list(open_questions),
+        ),
+    )
+
+
+
+def prepare_task_memory_matches_for_injection(
+    results: list[dict[str, Any]],
+    *,
+    target_state: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    prepared: list[dict[str, Any]] = []
+    for item in results:
+        metadata = dict(item.get("metadata") or {})
+        summary = str(metadata.get("summary") or "").strip()
+        findings = _normalize_string_list(metadata.get("findings"))
+        citations = _normalize_string_list(metadata.get("citations"))
+        open_questions = _normalize_string_list(metadata.get("open_questions"))
+        citation_registry = build_task_memory_citation_registry(
+            summary=summary,
+            findings=findings,
+            citations=citations,
+            open_questions=open_questions,
+            citation_registry=metadata.get("citation_registry") if isinstance(metadata.get("citation_registry"), list) else None,
+        )
+
+        if citation_registry and target_state is not None:
+            citation_id_mapping = merge_citation_registry(target_state, citation_registry)
+            metadata["summary"] = rewrite_numbered_citations(summary, citation_id_mapping)
+            metadata["findings"] = [rewrite_numbered_citations(value, citation_id_mapping) for value in findings]
+            metadata["citations"] = [rewrite_numbered_citations(value, citation_id_mapping) for value in citations]
+            metadata["open_questions"] = [rewrite_numbered_citations(value, citation_id_mapping) for value in open_questions]
+            metadata["citation_registry"] = citation_registry
+        else:
+            metadata["summary"] = _strip_unsupported_numbered_citations(summary)
+            metadata["findings"] = [_strip_unsupported_numbered_citations(value) for value in findings]
+            metadata["citations"] = []
+            metadata["open_questions"] = [_strip_unsupported_numbered_citations(value) for value in open_questions]
+            metadata["citation_registry"] = []
+
+        prepared.append({**item, "metadata": metadata})
+    return prepared
 
 
 def _compact_query_for_storage(query: str, *, task_level: str) -> str:
@@ -201,6 +296,7 @@ def upsert_task_memory_record(
     findings: list[str] | None = None,
     citations: list[str] | None = None,
     open_questions: list[str] | None = None,
+    citation_registry: list[dict[str, Any]] | None = None,
     task_level: str,
     thread_id: str | None,
     user_id: str | None,
@@ -219,6 +315,13 @@ def upsert_task_memory_record(
     normalized_findings = _normalize_string_list(findings)
     normalized_citations = _normalize_string_list(citations)
     normalized_open_questions = _normalize_string_list(open_questions)
+    normalized_citation_registry = build_task_memory_citation_registry(
+        summary=normalized_summary,
+        findings=normalized_findings,
+        citations=normalized_citations,
+        open_questions=normalized_open_questions,
+        citation_registry=citation_registry,
+    )
 
     try:
         client, embeddings, collection_name = _ensure_task_memory_collection()
@@ -252,6 +355,7 @@ def upsert_task_memory_record(
             "findings": normalized_findings,
             "citations": normalized_citations,
             "open_questions": normalized_open_questions,
+            "citation_registry": normalized_citation_registry,
             "task_level": task_level,
             "thread_id": thread_id,
             "user_id": user_id,

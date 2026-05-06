@@ -97,6 +97,8 @@ LLM-powered persistent context retention across conversations:
 - **Debounced updates**: Batches updates to minimize LLM calls (configurable wait time)
 - **System prompt injection**: Top facts + context injected into agent prompts
 - **Storage**: JSON file with mtime-based cache invalidation
+- **Task-memory citations**: Historical task-memory records persist the minimal numbered-citation registry they actually use
+- **Stable citation replay**: Re-injected task-memory matches merge saved registry entries back into the current turn and renumber citations before reuse
 
 ### Tool Ecosystem
 

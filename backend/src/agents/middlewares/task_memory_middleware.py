@@ -13,6 +13,7 @@ from src.agents.middlewares.title_middleware import generate_title_candidate
 from src.community.knowledge_base.task_memory import (
     build_task_memory_injection_message,
     is_non_reusable_failure_summary,
+    prepare_task_memory_matches_for_injection,
     search_task_memory,
     upsert_task_memory_record,
 )
@@ -82,7 +83,8 @@ def _strip_generated_sections(text: str) -> str:
 def _extract_citations(text: str) -> list[str]:
     seen: set[str] = set()
     citations: list[str] = []
-    for citation in re.findall(r"\[citation:[^\]]+\]\((?:<[^>\n]+>|[^)\n]+)\)", text):
+    for match in re.finditer(r"\[citation:\s*(\d+)\s*\](?:\((?:<[^>\n]+>|[^)\n]+)\))?", text, re.IGNORECASE):
+        citation = f"[citation:{match.group(1)}]"
         if citation in seen:
             continue
         seen.add(citation)
@@ -241,13 +243,14 @@ class TaskMemoryMiddleware(AgentMiddleware[TaskMemoryMiddlewareState]):
             matches = search_task_memory(query, title=current_task_title, top_k=3)
         except Exception:
             matches = []
-        match_candidates = _memory_match_candidates(matches)
+        prepared_matches = prepare_task_memory_matches_for_injection(matches, target_state=state)
+        match_candidates = _memory_match_candidates(prepared_matches)
         updates["current_task_memory_matches"] = match_candidates
         updates["current_task_memory_match_titles"] = [
             candidate["title"] for candidate in match_candidates if candidate.get("title")
         ]
         updates["task_memory_injected_human_index"] = human_index
-        if not matches:
+        if not prepared_matches:
             return updates or None
 
         updates["messages"] = [
@@ -255,7 +258,7 @@ class TaskMemoryMiddleware(AgentMiddleware[TaskMemoryMiddlewareState]):
                 content=build_task_memory_injection_message(
                     title=current_task_title,
                     query=query,
-                    results=matches,
+                    results=prepared_matches,
                 )
             )
         ]
@@ -319,6 +322,7 @@ class TaskMemoryMiddleware(AgentMiddleware[TaskMemoryMiddlewareState]):
                 citations=_extract_citations(summary),
                 findings=[],
                 open_questions=[],
+                citation_registry=state.get("knowledge_citation_registry") if isinstance(state.get("knowledge_citation_registry"), list) else None,
                 task_level="main",
                 thread_id=runtime.context.get("thread_id"),
                 user_id=runtime.context.get("user_id"),

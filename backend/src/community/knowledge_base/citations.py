@@ -3,12 +3,53 @@ from __future__ import annotations
 import re
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from uuid import NAMESPACE_URL, uuid5
 
 from src.community.knowledge_base.locator import locate_document
 from src.community.knowledge_base.user_store import build_user_doc_public_url
 
 KNOWLEDGE_CITATION_REGISTRY_KEY = "knowledge_citation_registry"
 NUMBERED_CITATION_REFERENCE_PATTERN = re.compile(r"\[citation:\s*(\d+)\s*\]", re.IGNORECASE)
+
+
+def _normalize_citation_label(label: str | None) -> str:
+    cleaned = str(label or "").strip()
+    return re.sub(r"\s+", " ", cleaned)
+
+
+
+def _normalize_citation_url_for_key(url: str | None) -> str:
+    if not url:
+        return ""
+
+    parts = urlsplit(url)
+    normalized_query = urlencode(sorted(parse_qsl(parts.query, keep_blank_values=True)))
+    normalized_path = re.sub(r"/+", "/", parts.path or "")
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            normalized_path,
+            normalized_query,
+            parts.fragment,
+        )
+    )
+
+
+
+def build_citation_stable_key(
+    *,
+    citation_label: str,
+    citation_link: str | None,
+) -> str | None:
+    normalized_url = _normalize_citation_url_for_key(citation_link)
+    normalized_label = _normalize_citation_label(citation_label)
+    if not normalized_url and not normalized_label:
+        return None
+
+    stable_seed = normalized_url or normalized_label
+    return str(uuid5(NAMESPACE_URL, f"knowledge-citation:{stable_seed}"))
+
 
 
 def register_citation_marker(
@@ -23,6 +64,12 @@ def register_citation_marker(
     if state is None:
         return None
 
+    normalized_label = _normalize_citation_label(citation_label)
+    stable_key = build_citation_stable_key(
+        citation_label=normalized_label,
+        citation_link=citation_link,
+    )
+
     raw_registry = state.setdefault(KNOWLEDGE_CITATION_REGISTRY_KEY, [])
     if not isinstance(raw_registry, list):
         raw_registry = []
@@ -31,19 +78,24 @@ def register_citation_marker(
     for item in raw_registry:
         if not isinstance(item, dict):
             continue
-        if item.get("label") == citation_label and item.get("url") == citation_link:
-            citation_id = str(item.get("id") or "").strip()
-            if citation_id:
-                return f"[citation:{citation_id}]"
+        item_id = str(item.get("id") or "").strip()
+        if not item_id:
+            continue
+        item_stable_key = str(item.get("stable_key") or "").strip()
+        if stable_key and item_stable_key and item_stable_key == stable_key:
+            return f"[citation:{item_id}]"
+        if item.get("label") == normalized_label and item.get("url") == citation_link:
+            return f"[citation:{item_id}]"
 
     citation_id = str(len(raw_registry) + 1)
-    raw_registry.append(
-        {
-            "id": citation_id,
-            "label": citation_label,
-            "url": citation_link,
-        }
-    )
+    entry = {
+        "id": citation_id,
+        "label": normalized_label,
+        "url": citation_link,
+    }
+    if stable_key:
+        entry["stable_key"] = stable_key
+    raw_registry.append(entry)
     return f"[citation:{citation_id}]"
 
 
@@ -61,7 +113,7 @@ def merge_citation_registry(
         if not isinstance(item, dict):
             continue
         source_id = str(item.get("id") or "").strip()
-        label = str(item.get("label") or "").strip()
+        label = _normalize_citation_label(str(item.get("label") or "").strip())
         url = str(item.get("url") or "").strip()
         if not source_id or not label or not url:
             continue
@@ -90,6 +142,60 @@ def rewrite_numbered_citations(text: str, citation_id_mapping: dict[str, str]) -
         return f"[citation:{new_id}]" if new_id else match.group(0)
 
     return NUMBERED_CITATION_REFERENCE_PATTERN.sub(replace, text)
+
+
+
+def extract_numbered_citation_ids(text: str) -> list[str]:
+    if not text:
+        return []
+
+    seen: set[str] = set()
+    citation_ids: list[str] = []
+    for match in NUMBERED_CITATION_REFERENCE_PATTERN.finditer(text):
+        citation_id = str(match.group(1) or "").strip()
+        if not citation_id or citation_id in seen:
+            continue
+        seen.add(citation_id)
+        citation_ids.append(citation_id)
+    return citation_ids
+
+
+
+def collect_citation_registry_entries(
+    citation_registry: list[dict[str, Any]] | None,
+    *,
+    citation_ids: list[str] | None = None,
+) -> list[dict[str, str]]:
+    if not citation_registry:
+        return []
+
+    allowed_ids = {str(item).strip() for item in citation_ids or [] if str(item).strip()}
+    collected: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in citation_registry:
+        if not isinstance(item, dict):
+            continue
+        citation_id = str(item.get("id") or "").strip()
+        label = _normalize_citation_label(str(item.get("label") or "").strip())
+        url = str(item.get("url") or "").strip()
+        stable_key = str(item.get("stable_key") or "").strip()
+        if allowed_ids and citation_id not in allowed_ids:
+            continue
+        if not citation_id or not label or not url:
+            continue
+        dedupe_key = stable_key or f"{label}\n{_normalize_citation_url_for_key(url)}"
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        entry = {
+            "id": citation_id,
+            "label": label,
+            "url": url,
+        }
+        if stable_key:
+            entry["stable_key"] = stable_key
+        collected.append(entry)
+    return collected
 
 
 def encode_source_url(url: str | None) -> str | None:

@@ -91,10 +91,11 @@ class TestCitationEnforcementMiddleware:
         content = str(final_response.result[-1].content)
         retry_system = str(seen_requests[1].system_message.content)
 
-        assert "[citation:史料 第7页第2段](</api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2>)" in content
-        assert "1. [citation:史料 第7页第2段](</api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2>)" in content
+        assert "根据现有资料，可以得出相关结论。[citation:1]" in content
+        assert "1. [citation:1]" in content
         assert "citation: [citation:1] (史料 第7页第2段)" in retry_system
         assert "/api/knowledge/docs/book.pdf" not in retry_system
+        assert "[citation:史料 第7页第2段](</api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2>)" not in content
 
     def test_old_linked_citation_is_not_accepted_or_repaired(self):
         middleware = CitationEnforcementMiddleware()
@@ -138,9 +139,10 @@ class TestCitationEnforcementMiddleware:
         assert "[citation:旧引用](/old)" not in content
         assert "旧问题？" not in content
         assert "参考文献" in content
-        assert "1. [citation:史料 第7页第2段](</api/knowledge/docs/book.pdf?page_no=7&paragraph_no=2>)" in content
+        assert "1. [citation:1]" in content
         assert "建议问题" in content
         assert "1. 新问题一？" in content
+        assert "/api/knowledge/docs/book.pdf" not in content
 
     def test_stage_three_feeds_current_findings_context_to_suggestion_model(self):
         middleware = CitationEnforcementMiddleware()

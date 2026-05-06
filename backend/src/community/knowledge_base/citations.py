@@ -59,9 +59,13 @@ def register_citation_marker(
     citation_link: str | None,
 ) -> str | None:
     """Register a real citation URL in state and return a model-safe numbered marker."""
+    import logging
+    _logger = logging.getLogger(__name__)
     if not citation_link:
+        _logger.debug("register_citation_marker skipped: no citation_link")
         return None
     if state is None:
+        _logger.debug("register_citation_marker skipped: no state")
         return None
 
     normalized_label = _normalize_citation_label(citation_label)
@@ -83,8 +87,10 @@ def register_citation_marker(
             continue
         item_stable_key = str(item.get("stable_key") or "").strip()
         if stable_key and item_stable_key and item_stable_key == stable_key:
+            _logger.debug("register_citation_marker reuse by stable_key: %s -> %s", stable_key, item_id)
             return f"[citation:{item_id}]"
         if item.get("label") == normalized_label and item.get("url") == citation_link:
+            _logger.debug("register_citation_marker reuse by label+url: %s -> %s", normalized_label, item_id)
             return f"[citation:{item_id}]"
 
     citation_id = str(len(raw_registry) + 1)
@@ -96,6 +102,13 @@ def register_citation_marker(
     if stable_key:
         entry["stable_key"] = stable_key
     raw_registry.append(entry)
+    _logger.info(
+        "register_citation_marker new entry: id=%s label=%s url=%s registry_count=%s",
+        citation_id,
+        normalized_label,
+        citation_link,
+        len(raw_registry),
+    )
     return f"[citation:{citation_id}]"
 
 
@@ -104,18 +117,25 @@ def merge_citation_registry(
     source_registry: list[dict[str, Any]] | None,
 ) -> dict[str, str]:
     """Merge a child citation registry into target state and return old-id to new-id mapping."""
+    import logging
+    _logger = logging.getLogger(__name__)
 
     if target_state is None or not source_registry:
+        _logger.debug("merge_citation_registry skipped: target_state=%s source_registry_count=%s", target_state is not None, len(source_registry) if source_registry else 0)
         return {}
 
     mapping: dict[str, str] = {}
+    skipped = 0
     for item in source_registry:
         if not isinstance(item, dict):
+            skipped += 1
             continue
         source_id = str(item.get("id") or "").strip()
         label = _normalize_citation_label(str(item.get("label") or "").strip())
         url = str(item.get("url") or "").strip()
         if not source_id or not label or not url:
+            _logger.debug("merge_citation_registry skip item: missing field source_id=%s label=%s url=%s", bool(source_id), bool(label), bool(url))
+            skipped += 1
             continue
         marker = register_citation_marker(
             target_state,
@@ -123,10 +143,20 @@ def merge_citation_registry(
             citation_link=url,
         )
         if not marker:
+            _logger.debug("merge_citation_registry skip item: register_citation_marker returned None for source_id=%s", source_id)
+            skipped += 1
             continue
         match = NUMBERED_CITATION_REFERENCE_PATTERN.fullmatch(marker)
         if match:
             mapping[source_id] = match.group(1)
+    _logger.info(
+        "merge_citation_registry done: source_count=%s merged=%s skipped=%s mapping=%s target_registry_count=%s",
+        len(source_registry),
+        len(mapping),
+        skipped,
+        mapping,
+        len(target_state.get(KNOWLEDGE_CITATION_REGISTRY_KEY, [])) if target_state else "N/A",
+    )
     return mapping
 
 

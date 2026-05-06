@@ -192,6 +192,7 @@ export function MessageList({
                     key={"task-group-" + taskId}
                     taskId={taskId!}
                     isLoading={thread.isLoading}
+                    citationRegistry={citationRegistry}
                   />,
                 );
               }

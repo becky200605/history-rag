@@ -25,6 +25,7 @@ import { extractTextFromMessage, hasToolCalls } from "@/core/messages/utils";
 import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
 import { useSubtask } from "@/core/tasks/context";
 import type { Todo } from "@/core/todos";
+import { useThread } from "./messages/context";
 import { explainLastToolCall } from "@/core/tools/utils";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +75,7 @@ export function SubtaskDetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useI18n();
+  const { thread } = useThread();
   const linkedSubtask = useSubtask(todo?.task_id ?? "");
   const rehypePlugins = useRehypeSplitWordsIntoSpans(false);
   const fallbackLatestMessage =
@@ -89,7 +91,11 @@ export function SubtaskDetailSheet({
   const fallbackOpenQuestions =
     linkedSubtask?.openQuestions ?? todo?.structured_gaps ?? [];
   const fallbackError = linkedSubtask?.error ?? todo?.error;
-  const citationRegistry = todo?.citation_registry;
+  const threadCitationRegistry = thread.values.knowledge_citation_registry as
+    | import("@/core/threads").KnowledgeCitationRegistryItem[]
+    | undefined;
+  const citationRegistry =
+    todo?.citation_registry ?? threadCitationRegistry;
 
   const detailStatus = linkedSubtask?.status ?? todo?.status;
   const liveAction =

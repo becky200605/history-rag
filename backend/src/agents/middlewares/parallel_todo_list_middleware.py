@@ -619,12 +619,27 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                         runtime.state if isinstance(getattr(runtime, "state", None), dict) else None,
                         getattr(result, "citation_registry", None),
                     )
+                    logger.info(
+                        "[trace=%s] Todo subtask %s citation merge: source_count=%s, mapping=%s, target_registry_count=%s",
+                        trace_id,
+                        task_id,
+                        len(result.citation_registry) if result.citation_registry else 0,
+                        citation_id_mapping,
+                        len(runtime.state.get("knowledge_citation_registry", [])) if isinstance(getattr(runtime, "state", None), dict) else "N/A",
+                    )
                     if result.result:
                         todo["result"] = rewrite_numbered_citations(result.result, citation_id_mapping)
                     if isinstance(getattr(runtime, "state", None), dict):
                         raw_registry = runtime.state.get("knowledge_citation_registry")
                         if isinstance(raw_registry, list):
                             todo["citation_registry"] = [item for item in raw_registry if isinstance(item, dict)]
+                    logger.info(
+                        "[trace=%s] Todo subtask %s todo citation_registry set: count=%s, ids=%s",
+                        trace_id,
+                        task_id,
+                        len(todo.get("citation_registry", [])) if todo.get("citation_registry") else 0,
+                        [str(item.get("id")) for item in (todo.get("citation_registry") or [])],
+                    )
                     if result.structured_result:
                         summary = rewrite_numbered_citations(
                             str(result.structured_result.get("summary") or "").strip(),

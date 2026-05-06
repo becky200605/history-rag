@@ -820,6 +820,14 @@ class SubagentExecutor:
                 raw_registry = final_state.get(KNOWLEDGE_CITATION_REGISTRY_KEY)
                 if isinstance(raw_registry, list):
                     result.citation_registry = [item for item in raw_registry if isinstance(item, dict)]
+                logger.info(
+                    "[trace=%s] Subagent %s citation_registry: count=%s, ids=%s, sample=%s",
+                    self.trace_id,
+                    self.config.name,
+                    len(result.citation_registry) if result.citation_registry else 0,
+                    [str(item.get("id")) for item in (result.citation_registry or [])],
+                    result.citation_registry[:3] if result.citation_registry else None,
+                )
 
             self._raise_if_cancelled(result, cancel_event)
             result.status = SubagentStatus.COMPLETED

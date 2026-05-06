@@ -22,6 +22,7 @@ import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
 import { streamdownPluginsWithWordAnimation } from "@/core/streamdown";
 import { useSubtask } from "@/core/tasks/context";
 import { explainLastToolCall } from "@/core/tools/utils";
+import type { KnowledgeCitationRegistryItem } from "@/core/threads";
 import { cn } from "@/lib/utils";
 
 import { CitationLink } from "../citations/citation-link";
@@ -33,10 +34,12 @@ export function SubtaskCard({
   className,
   taskId,
   isLoading,
+  citationRegistry,
 }: {
   className?: string;
   taskId: string;
   isLoading: boolean;
+  citationRegistry?: KnowledgeCitationRegistryItem[];
 }) {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(true);
@@ -158,6 +161,7 @@ export function SubtaskCard({
                       content={task.result}
                       isLoading={false}
                       rehypePlugins={rehypePlugins}
+                      citationRegistry={citationRegistry}
                     />
                   ) : null
                 }

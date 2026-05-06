@@ -36,6 +36,7 @@ export function MessageList({
   threadId,
   thread,
   messagesOverride,
+  citationRegistryOverride,
   paddingBottom = 160,
 }: {
   className?: string;
@@ -43,6 +44,8 @@ export function MessageList({
   thread: UseStream<AgentThreadState>;
   /** When set (e.g. from onFinish), use instead of thread.messages so SSE end shows complete state. */
   messagesOverride?: Message[];
+  /** Keep messages and citation registry from the same completed state snapshot. */
+  citationRegistryOverride?: KnowledgeCitationRegistryItem[];
   paddingBottom?: number;
 }) {
   const { t } = useI18n();
@@ -50,6 +53,7 @@ export function MessageList({
   const updateSubtask = useUpdateSubtask();
   const messages = messagesOverride ?? thread.messages;
   const citationRegistry =
+    citationRegistryOverride ??
     (thread.values.knowledge_citation_registry as
       | KnowledgeCitationRegistryItem[]
       | undefined) ?? [];

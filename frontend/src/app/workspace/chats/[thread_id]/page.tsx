@@ -1046,6 +1046,11 @@ function ChatPageContent({
                         ? (finalState.messages as Message[])
                         : undefined
                     }
+                    citationRegistryOverride={
+                      !thread.isLoading && finalState?.knowledge_citation_registry
+                        ? finalState.knowledge_citation_registry
+                        : undefined
+                    }
                     paddingBottom={todoListCollapsed ? 140 : 400}
                   />
                 </div>

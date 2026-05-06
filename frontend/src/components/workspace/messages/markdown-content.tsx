@@ -87,7 +87,7 @@ function escapeMarkdownLinkLabel(label: string): string {
   return label.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
 }
 
-function linkifyNumberedCitations(
+export function linkifyNumberedCitations(
   content: string,
   citationRegistry?: KnowledgeCitationRegistryItem[],
 ): string {

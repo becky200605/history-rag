@@ -1322,14 +1322,17 @@ def test_knowledge_locate_tool_emits_citations_and_page_level_followup_guidance(
         },
     )
 
+    state = {}
     output = tools_module.knowledge_locate_tool.func(
-        SimpleNamespace(context={}),
+        SimpleNamespace(context={}, state=state),
         doc_id="global-doc",
         pdf_page_no=12,
     )
 
-    assert "citation: [citation:财政史 原书第12页第3段]" in output
-    assert "citation: [citation:财政史 原书第12页第4段]" in output
+    assert "citation: [citation:1]" in output
+    assert "citation: [citation:2]" in output
+    assert state["knowledge_citation_registry"][0]["label"] == "财政史 原书第12页第3段"
+    assert state["knowledge_citation_registry"][1]["label"] == "财政史 原书第12页第4段"
     assert "如果同一主题明显跨相邻多页" in output
     assert "`page_no_end` / `pdf_page_no_end`" in output
 

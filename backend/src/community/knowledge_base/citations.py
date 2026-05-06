@@ -6,6 +6,44 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from src.community.knowledge_base.locator import locate_document
 from src.community.knowledge_base.user_store import build_user_doc_public_url
 
+KNOWLEDGE_CITATION_REGISTRY_KEY = "knowledge_citation_registry"
+
+
+def register_citation_marker(
+    state: dict[str, Any] | None,
+    *,
+    citation_label: str,
+    citation_link: str | None,
+) -> str | None:
+    """Register a real citation URL in state and return a model-safe numbered marker."""
+    if not citation_link:
+        return None
+    if state is None:
+        return None
+
+    raw_registry = state.setdefault(KNOWLEDGE_CITATION_REGISTRY_KEY, [])
+    if not isinstance(raw_registry, list):
+        raw_registry = []
+        state[KNOWLEDGE_CITATION_REGISTRY_KEY] = raw_registry
+
+    for item in raw_registry:
+        if not isinstance(item, dict):
+            continue
+        if item.get("label") == citation_label and item.get("url") == citation_link:
+            citation_id = str(item.get("id") or "").strip()
+            if citation_id:
+                return f"[citation:{citation_id}]"
+
+    citation_id = str(len(raw_registry) + 1)
+    raw_registry.append(
+        {
+            "id": citation_id,
+            "label": citation_label,
+            "url": citation_link,
+        }
+    )
+    return f"[citation:{citation_id}]"
+
 
 def encode_source_url(url: str | None) -> str | None:
     if not url:

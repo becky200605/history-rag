@@ -4,7 +4,6 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from typing import override
 from urllib.parse import quote, urlsplit
 
@@ -13,6 +12,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY
 from src.models.minimax_thinking import sanitize_minimax_anthropic_thinking_text
 
 logger = logging.getLogger(__name__)
@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 GROUNDING_TOOL_NAMES = {"knowledge_search", "knowledge_locate"}
 CITATION_SOURCE_TOOL_NAMES = GROUNDING_TOOL_NAMES | {"knowledge_checkpoint", "write_todos"}
-LINKED_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\((?:<[^>\n]+>|[^)\n]+)\)", re.IGNORECASE)
 CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\](?:\((?:<[^>\n]+>|[^)\n]+)\))?", re.IGNORECASE)
+NUMBERED_CITATION_PATTERN = re.compile(r"\[citation:\s*\d+\s*\](?:\((?:<[^>\n]+>|[^)\n]+)\))?", re.IGNORECASE)
 REFUSAL_PREFIX_PATTERN = re.compile(r"^\s*【无法回答】", re.IGNORECASE)
 REFERENCE_SECTION_PATTERNS = (
     re.compile(r"(?im)^\s{0,3}(?:#{1,6}\s*)?参考文献\s*$"),
@@ -36,9 +36,9 @@ RETRY_APPENDIX = (
     "Your previous draft was blocked because it used grounded knowledge results (`knowledge_search` / `knowledge_locate`) without the required body citations.\n"
     "Regenerate the full answer from scratch.\n"
     "Requirements:\n"
-    "1. If you use any knowledge from `knowledge_search` or `knowledge_locate`, every grounded factual claim in the answer body must carry full Markdown citation links in the form `[citation:Title](URL)`.\n"
+    "1. If you use any knowledge from `knowledge_search` or `knowledge_locate`, every grounded factual claim in the answer body must carry citation markers copied from the available citation lines, such as `[citation:1]`.\n"
     "2. Place citations immediately after the supported sentence, clause, bullet, or table-related claim they justify. Do not postpone citations to the end of the paragraph or only to `参考文献`.\n"
-    "3. If you use bullet points, each bullet that contains grounded evidence must end with one or more citation links.\n"
+    "3. If you use bullet points, each bullet that contains grounded evidence must end with one or more citation markers.\n"
     "4. Do not add `参考文献` or `建议问题` sections. The system will generate them in later stages.\n"
     "5. If you cannot support the answer with citations, refuse using the exact prefix `【无法回答】` followed by a brief reason.\n"
     "6. Do not mention this enforcement message in the final answer."
@@ -48,9 +48,9 @@ RETRY_APPENDIX_FINAL = (
     "Your previous retry still missed the required body citations.\n"
     "Regenerate the full answer from scratch one more time.\n"
     "Additional requirements:\n"
-    "1. Reuse the exact `citation:` lines returned by `knowledge_search` / `knowledge_locate` whenever possible; do not rewrite citation links manually.\n"
-    "2. Every grounded sentence, bullet, numeric statement, table summary, or scoped conclusion must be immediately followed by one or more exact citation links from this turn.\n"
-    "3. If you cite a source, the answer body must contain the full `[citation:Title](URL)` markdown link, not only a plain-text mention and not a bare `[citation:Title]` label.\n"
+    "1. Reuse the exact numbered `citation:` lines returned by `knowledge_search` / `knowledge_locate` whenever possible; do not rewrite citation links manually.\n"
+    "2. Every grounded sentence, bullet, numeric statement, table summary, or scoped conclusion must be immediately followed by one or more exact citation markers from this turn.\n"
+    "3. If you cite a source, the answer body must contain the numbered citation marker from this turn, not a plain-text source mention.\n"
     "4. An uncited overview paragraph is not acceptable if it relies on grounded retrieval.\n"
     "5. Do not add `参考文献` or `建议问题` sections. The system will generate them separately.\n"
     "6. If you still cannot produce a fully cited answer, refuse explicitly using the exact prefix `【无法回答】`.\n"
@@ -152,13 +152,7 @@ def _extract_citations(content: str) -> list[str]:
 
 
 def _tool_message_contains_citations(message: ToolMessage) -> bool:
-    return bool(LINKED_CITATION_PATTERN.search(_stringify_content(message.content)))
-
-
-def _citation_label(citation: str) -> str:
-    if "](" in citation:
-        return citation.split("](", 1)[0] + "]"
-    return citation
+    return bool(NUMBERED_CITATION_PATTERN.search(_stringify_content(message.content)))
 
 
 def _extract_citation_inner_label(citation: str) -> str:
@@ -234,114 +228,75 @@ def _normalize_citation_text(text: str) -> str:
     return re.sub(r"\s+", "", translated).strip().lower()
 
 
-def _extract_location_parts(label: str) -> tuple[str, int | None, int | None, int | None]:
-    normalized = label.translate(str.maketrans({"（": "(", "）": ")", "：": ":"}))
-    title = normalized
-    page_no = None
-    pdf_page_no = None
-    paragraph_no = None
-
-    location_match = re.search(r"(原书第\s*\d+\s*页|PDF第\s*\d+\s*页)", normalized, re.IGNORECASE)
-    if location_match:
-        title = normalized[: location_match.start()].strip()
-
-    page_match = re.search(r"原书第\s*(\d+)\s*页", normalized, re.IGNORECASE)
-    if page_match:
-        page_no = int(page_match.group(1))
-
-    pdf_page_match = re.search(r"PDF第\s*(\d+)\s*页", normalized, re.IGNORECASE)
-    if pdf_page_match:
-        pdf_page_no = int(pdf_page_match.group(1))
-
-    paragraph_match = re.search(r"第\s*(\d+)\s*段", normalized, re.IGNORECASE)
-    if paragraph_match:
-        paragraph_no = int(paragraph_match.group(1))
-
-    return title, page_no, pdf_page_no, paragraph_no
-
-
 @dataclass(frozen=True)
 class _CitationCandidate:
     label: str
     full_citation: str
     normalized_label: str
-    normalized_title: str
-    page_no: int | None
-    pdf_page_no: int | None
-    paragraph_no: int | None
+    display_label: str | None = None
 
 
-def _build_citation_candidates(messages: list) -> list[_CitationCandidate]:
-    start = _latest_human_index(messages)
+def _request_state(messages_or_request: object) -> dict | None:
+    state = getattr(messages_or_request, "state", None)
+    return state if isinstance(state, dict) else None
+
+
+def _build_registry_citation_candidates(state: dict | None) -> list[_CitationCandidate]:
+    if not state:
+        return []
+    raw_registry = state.get(KNOWLEDGE_CITATION_REGISTRY_KEY)
+    if not isinstance(raw_registry, list):
+        return []
+
     candidates: list[_CitationCandidate] = []
     seen: set[str] = set()
-    for message in messages[start:]:
-        if not isinstance(message, ToolMessage) or getattr(message, "name", None) not in CITATION_SOURCE_TOOL_NAMES:
+    for item in raw_registry:
+        if not isinstance(item, dict):
             continue
-        content = _stringify_content(message.content)
-        for citation in LINKED_CITATION_PATTERN.findall(content):
-            label = _extract_citation_inner_label(citation)
-            normalized_label = _normalize_citation_text(label)
-            if normalized_label in seen:
-                continue
-            seen.add(normalized_label)
-            title, page_no, pdf_page_no, paragraph_no = _extract_location_parts(label)
-            candidates.append(
-                _CitationCandidate(
-                    label=label,
-                    full_citation=citation,
-                    normalized_label=normalized_label,
-                    normalized_title=_normalize_citation_text(title),
-                    page_no=page_no,
-                    pdf_page_no=pdf_page_no,
-                    paragraph_no=paragraph_no,
-                )
+        citation_id = str(item.get("id") or "").strip()
+        label = str(item.get("label") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if not citation_id or not label or not url:
+            continue
+        full_citation = f"[citation:{label}](<{url}>)"
+        normalized_label = _normalize_citation_text(citation_id)
+        if normalized_label in seen:
+            continue
+        seen.add(normalized_label)
+        candidates.append(
+            _CitationCandidate(
+                label=citation_id,
+                full_citation=full_citation,
+                normalized_label=normalized_label,
+                display_label=label,
             )
+        )
     return candidates
 
 
-def _available_citation_lines(messages: list) -> list[str]:
-    return [f"citation: {candidate.full_citation}" for candidate in _build_citation_candidates(messages)]
+def _build_citation_candidates(messages: list, state: dict | None = None) -> list[_CitationCandidate]:
+    return _build_registry_citation_candidates(state)
 
 
-def _resolve_citation_from_candidates(citation: str, messages: list) -> str | None:
+def _available_citation_lines(messages: list, state: dict | None = None) -> list[str]:
+    lines: list[str] = []
+    for candidate in _build_citation_candidates(messages, state):
+        if candidate.display_label:
+            lines.append(f"citation: [citation:{candidate.label}] ({candidate.display_label})")
+    return lines
+
+
+def _resolve_citation_from_candidates(citation: str, messages: list, state: dict | None = None) -> str | None:
     label = _extract_citation_inner_label(citation)
     normalized_label = _normalize_citation_text(label)
-    candidates = _build_citation_candidates(messages)
+    candidates = _build_citation_candidates(messages, state)
     if not candidates:
         return None
 
     for candidate in candidates:
         if candidate.normalized_label == normalized_label:
             return candidate.full_citation
-
-    title, page_no, pdf_page_no, paragraph_no = _extract_location_parts(label)
-    normalized_title = _normalize_citation_text(title)
-    scored: list[tuple[float, _CitationCandidate]] = []
-    for candidate in candidates:
-        score = 0.0
-        if normalized_title and candidate.normalized_title:
-            if normalized_title == candidate.normalized_title:
-                score += 100
-            elif normalized_title in candidate.normalized_title or candidate.normalized_title in normalized_title:
-                score += 80
-            else:
-                score += SequenceMatcher(None, normalized_title, candidate.normalized_title).ratio() * 40
-
-        if page_no is not None and candidate.page_no == page_no:
-            score += 20
-        if pdf_page_no is not None and candidate.pdf_page_no == pdf_page_no:
-            score += 15
-        if paragraph_no is not None and candidate.paragraph_no == paragraph_no:
-            score += 20
-        scored.append((score, candidate))
-
-    scored.sort(key=lambda item: item[0], reverse=True)
-    if not scored or scored[0][0] < 70:
-        return None
-    if len(scored) > 1 and scored[0][0] - scored[1][0] < 5:
-        return None
-    return scored[0][1].full_citation
+    return None
 
 
 def _consume_optional_markdown_link_target(text: str, start_index: int) -> int:
@@ -377,12 +332,18 @@ def _consume_optional_markdown_link_target(text: str, start_index: int) -> int:
     return index
 
 
-def _replace_exact_candidate_mentions(answer_body: str, candidates: list[_CitationCandidate]) -> str:
+def _replace_numbered_candidate_mentions(
+    answer_body: str,
+    candidates: list[_CitationCandidate],
+    replacements: dict[str, str],
+) -> str:
     repaired_body = answer_body
-    for candidate in candidates:
+    for index, candidate in enumerate(candidates):
         label_token = f"[citation:{candidate.label}]"
         if label_token not in repaired_body:
             continue
+        placeholder = f"@@KNOWLEDGE_CITATION_{index}@@"
+        replacements[placeholder] = candidate.full_citation
 
         parts: list[str] = []
         cursor = 0
@@ -399,39 +360,33 @@ def _replace_exact_candidate_mentions(answer_body: str, candidates: list[_Citati
             )
             if end_index == match_index + label_length:
                 end_index = match_index + label_length
-            parts.append(candidate.full_citation)
+            parts.append(placeholder)
             cursor = end_index
 
         repaired_body = "".join(parts)
     return repaired_body
 
 
-def _normalize_answer_citations(answer_body: str, messages: list) -> str:
-    candidates = _build_citation_candidates(messages)
-    candidate_set = {candidate.full_citation for candidate in candidates}
-    repaired_body = _replace_exact_candidate_mentions(answer_body, candidates) if candidates else answer_body
-
-    def _replace(match: re.Match[str]) -> str:
-        citation = match.group(0)
-        normalized_citation = _normalize_citation_markdown(citation)
-        if normalized_citation in candidate_set:
-            return normalized_citation
-        resolved = _resolve_citation_from_candidates(citation, messages)
-        if resolved:
-            return resolved
-        if _is_valid_citation_markdown(normalized_citation):
-            return normalized_citation
-        return ""
-
-    return CITATION_PATTERN.sub(_replace, repaired_body)
+def _normalize_answer_citations(answer_body: str, messages: list, state: dict | None = None) -> str:
+    candidates = _build_citation_candidates(messages, state)
+    replacements: dict[str, str] = {}
+    repaired_body = (
+        _replace_numbered_candidate_mentions(answer_body, candidates, replacements)
+        if candidates
+        else answer_body
+    )
+    repaired_body = CITATION_PATTERN.sub("", repaired_body)
+    for placeholder, full_citation in replacements.items():
+        repaired_body = repaired_body.replace(placeholder, full_citation)
+    return repaired_body
 
 
-def _has_supported_body_citation(answer_body: str, messages: list) -> bool:
+def _has_supported_body_citation(answer_body: str, messages: list, state: dict | None = None) -> bool:
     citations = _extract_citations(answer_body)
     if not citations:
         return False
 
-    candidates = _build_citation_candidates(messages)
+    candidates = _build_citation_candidates(messages, state)
     if not candidates:
         return True
 
@@ -439,7 +394,7 @@ def _has_supported_body_citation(answer_body: str, messages: list) -> bool:
     for citation in citations:
         if citation in candidate_set:
             return True
-        if _resolve_citation_from_candidates(citation, messages):
+        if _resolve_citation_from_candidates(citation, messages, state):
             return True
     return False
 
@@ -578,7 +533,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
                 return True
         return False
 
-    def _needs_enforcement(self, response: ModelResponse, messages: list) -> bool:
+    def _needs_enforcement(self, response: ModelResponse, messages: list, state: dict | None = None) -> bool:
         if not self._turn_used_grounding_tools(messages):
             return False
 
@@ -591,19 +546,24 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
             return False
 
         content = _stringify_content(final_message.content)
-        answer_body = _normalize_answer_citations(_strip_generated_sections(content), messages)
+        answer_body = _normalize_answer_citations(
+            _strip_generated_sections(content),
+            messages,
+            state,
+        )
         if _is_refusal(answer_body):
             return False
-        return not _has_supported_body_citation(answer_body, messages)
+        return not _has_supported_body_citation(answer_body, messages, state)
 
     def _build_retry_request(self, request: ModelRequest, appendix: str) -> ModelRequest:
         current_system = _stringify_content(request.system_message.content) if request.system_message else ""
-        available_citations = _available_citation_lines(request.messages)
+        state = _request_state(request)
+        available_citations = _available_citation_lines(request.messages, state)
         citation_hint = ""
         if available_citations:
             joined = "\n".join(f"- {line}" for line in available_citations)
             citation_hint = (
-                "\n\nAvailable citation lines from this turn. Copy these exact markdown links into the answer body:\n"
+                "\n\nAvailable citation lines from this turn. Copy these exact citation markers into the answer body:\n"
                 f"{joined}\n"
                 "Use them inline, immediately after the factual sentence, bullet, or table-related claim they support."
             )
@@ -636,7 +596,8 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         response: ModelResponse,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        if not self._needs_enforcement(response, request.messages):
+        state = _request_state(request)
+        if not self._needs_enforcement(response, request.messages, state):
             return response
 
         retry_request = request
@@ -644,7 +605,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         for appendix in RETRY_APPENDICES:
             retry_request = self._build_retry_request(retry_request, appendix)
             retry_response = handler(retry_request)
-            if not self._needs_enforcement(retry_response, request.messages):
+            if not self._needs_enforcement(retry_response, request.messages, state):
                 return retry_response
 
         return self._fallback_response(retry_response)
@@ -655,7 +616,8 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         response: ModelResponse,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        if not self._needs_enforcement(response, request.messages):
+        state = _request_state(request)
+        if not self._needs_enforcement(response, request.messages, state):
             return response
 
         retry_request = request
@@ -663,7 +625,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         for appendix in RETRY_APPENDICES:
             retry_request = self._build_retry_request(retry_request, appendix)
             retry_response = await handler(retry_request)
-            if not self._needs_enforcement(retry_response, request.messages):
+            if not self._needs_enforcement(retry_response, request.messages, state):
                 return retry_response
 
         return self._fallback_response(retry_response)
@@ -748,7 +710,11 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
             return _fallback_suggested_questions(user_question=user_question, refusal=refusal)
 
     def _compose_content_sync(self, request: ModelRequest, content: str) -> str:
-        answer_body = _normalize_answer_citations(_strip_generated_sections(content), request.messages)
+        answer_body = _normalize_answer_citations(
+            _strip_generated_sections(content),
+            request.messages,
+            _request_state(request),
+        )
         if not answer_body:
             return content
 
@@ -768,7 +734,11 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         return "\n\n".join(parts)
 
     async def _compose_content_async(self, request: ModelRequest, content: str) -> str:
-        answer_body = _normalize_answer_citations(_strip_generated_sections(content), request.messages)
+        answer_body = _normalize_answer_citations(
+            _strip_generated_sections(content),
+            request.messages,
+            _request_state(request),
+        )
         if not answer_body:
             return content
 

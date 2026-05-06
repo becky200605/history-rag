@@ -5,8 +5,10 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Any, Generic, TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
 from pydantic import BaseModel, Field, field_validator
+
 try:
     from langchain.tools import ToolRuntime, tool
 except ImportError:  # pragma: no cover - compatibility with older LangChain layouts
@@ -17,6 +19,7 @@ except ImportError:  # pragma: no cover - compatibility with older LangChain lay
 
     class ToolRuntime(Generic[_ToolRuntimeContextT, _ToolRuntimeStateT]):  # type: ignore[no-redef]
         pass
+
 try:
     from langgraph.typing import ContextT
 except ImportError:  # pragma: no cover - compatibility with older LangGraph layouts
@@ -26,20 +29,21 @@ if TYPE_CHECKING:
     from src.agents.thread_state import ThreadState
 else:  # pragma: no cover - runtime fallback for import-light utility modules
     ThreadState = Any  # type: ignore[assignment]
+
+from src.community.knowledge_base.book_metadata import normalize_folder_path
 from src.community.knowledge_base.catalog import (
-    CORE_TYPE,
     BOOK_LAYER_ORDER,
+    CORE_TYPE,
     REFERENCE_TYPE,
     SPECIALIZED_TYPE,
-    BookCatalogEntry,
     UNFILED_FOLDER_NAME,
+    BookCatalogEntry,
     filter_book_catalog_entries,
     list_book_catalog,
     render_book_catalog_directory_tree,
     search_book_catalog,
 )
-from src.community.knowledge_base.book_metadata import normalize_folder_path
-from src.community.knowledge_base.citations import resolve_result_citation_context
+from src.community.knowledge_base.citations import register_citation_marker, resolve_result_citation_context
 from src.community.knowledge_base.common import tokenize_search_text
 from src.community.knowledge_base.locator import LocatedDocument, extract_document_context, locate_document
 from src.community.knowledge_base.reading_state import (
@@ -710,10 +714,17 @@ def _build_citation_label(
     return " ".join(parts)
 
 
-def _build_citation(citation_label: str, citation_link: str | None) -> str | None:
-    if not citation_link:
-        return None
-    return f"[citation:{citation_label}](<{citation_link}>)"
+def _build_citation(
+    citation_label: str,
+    citation_link: str | None,
+    *,
+    state: dict[str, Any] | None = None,
+) -> str | None:
+    return register_citation_marker(
+        state,
+        citation_label=citation_label,
+        citation_link=citation_link,
+    )
 
 
 def _build_locate_excerpt_citation(
@@ -722,6 +733,7 @@ def _build_locate_excerpt_citation(
     excerpt: dict[str, Any],
     thread_id: str | None,
     user_id: str | None,
+    state: dict[str, Any] | None = None,
 ) -> str | None:
     citation_context = resolve_result_citation_context(
         {
@@ -748,6 +760,7 @@ def _build_locate_excerpt_citation(
     return _build_citation(
         citation_label,
         citation_context.get("citation_url") or citation_context.get("source_url"),
+        state=state,
     )
 
 
@@ -1380,6 +1393,7 @@ def knowledge_locate_tool(
         return "No matching page context found in the structured document."
 
     _mark_runtime_covered_doc_ids(runtime, [str(document.doc_id)])
+    state = _tool_runtime_state(runtime)
 
     lines = ["## 原文定位结果", ""]
     lines.append(f"标题: {document.title}")
@@ -1403,6 +1417,7 @@ def knowledge_locate_tool(
             excerpt=excerpt,
             thread_id=thread_id,
             user_id=user_id,
+            state=state,
         )
         if citation:
             lines.append(f"citation: {citation}")
@@ -1416,7 +1431,7 @@ def knowledge_locate_tool(
         )
     else:
         lines.append("如果同一主题明显跨相邻多页，优先直接用 `page_no_end` / `pdf_page_no_end` 一次展开连续页。")
-    lines.append("使用答案时，优先直接复制上面的 `citation:` 行，不要自己重写。")
+    lines.append("使用答案时，优先直接复制上面的编号 `citation:` 行，不要自己重写。")
     lines.append(
         "IMPORTANT: Use these excerpts as the follow-up source context. "
         "Do not inspect raw PDFs or `.structured.json` files directly."

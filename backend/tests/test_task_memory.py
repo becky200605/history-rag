@@ -63,7 +63,7 @@ def test_subtask_memory_embeds_result_not_delegated_prompt(monkeypatch: Any) -> 
         query=delegated_prompt,
         summary="盛宣怀参与轮船招商局相关事务，并在制度和经营层面产生影响。",
         findings=["其作用需要结合招商局档案继续核对。"],
-        citations=["[citation:招商局史料](http://example.test/source)"],
+        citations=["[citation:1]"],
         open_questions=["缺少可核验页码。"],
         task_level="subtask",
         thread_id="thread-1",

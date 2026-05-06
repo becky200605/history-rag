@@ -17,6 +17,7 @@ TASK_MEMORY_TOP_K = 5
 TASK_MEMORY_TITLE_MATCH_BOOST = 0.15
 TASK_MEMORY_TITLE_PARTIAL_BOOST = 0.05
 LINKED_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\((?:<[^>\n]+>|[^)\n]*)\)", re.IGNORECASE)
+NUMBERED_CITATION_PATTERN = re.compile(r"\[citation:\s*\d+\s*\]", re.IGNORECASE)
 BARE_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\](?!\()", re.IGNORECASE)
 EMPTY_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\(\s*\)", re.IGNORECASE)
 
@@ -48,13 +49,7 @@ def _normalize_string_list(value: list[str] | None) -> list[str]:
 
 
 def _is_complete_citation(text: str) -> bool:
-    match = re.fullmatch(r"\[citation:[^\]]+\]\((<[^>\n]+>|[^)\n]+)\)", text.strip(), re.IGNORECASE)
-    if not match:
-        return False
-    url = match.group(1).strip()
-    if url.startswith("<") and url.endswith(">"):
-        url = url[1:-1].strip()
-    return bool(url)
+    return bool(NUMBERED_CITATION_PATTERN.fullmatch(text.strip()))
 
 
 def _complete_citations(value: list[str] | None) -> list[str]:
@@ -66,12 +61,8 @@ def _sanitize_injected_text(text: str) -> str:
 
     sanitized = EMPTY_CITATION_PATTERN.sub("", text)
 
-    def _drop_empty_link(match: re.Match[str]) -> str:
-        citation = match.group(0)
-        return citation if _is_complete_citation(citation) else ""
-
-    sanitized = LINKED_CITATION_PATTERN.sub(_drop_empty_link, sanitized)
-    sanitized = BARE_CITATION_PATTERN.sub("", sanitized)
+    sanitized = LINKED_CITATION_PATTERN.sub("", sanitized)
+    sanitized = BARE_CITATION_PATTERN.sub(lambda match: match.group(0) if _is_complete_citation(match.group(0)) else "", sanitized)
     sanitized = re.sub(r"[ \t]+\n", "\n", sanitized)
     sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
     return sanitized.strip()
@@ -382,9 +373,9 @@ def render_task_memory_matches(
     lines.append("---")
     lines.append("这些历史主任务/子任务结果是当前任务的强制证据包，不等于当前问题已经自动完成，但也不能被忽略。")
     lines.append("后续行动必须先完成三类判断：`可直接复用`、`需要补充`、`应该纠正/弃用`。")
-    lines.append("如果某条历史结果与当前问题高度重合，且已经包含可用结论和完整 citation，默认优先复用它；只把缺口部分交给新检索或子任务。")
-    lines.append("如果复用历史结果中的事实、数字、分期、判断或缺口，最终回答必须把对应的完整 `[citation:...](...)` 链接一并带上。")
-    lines.append("严禁把历史结果里的 citation 改写成空链接、裸 `[citation:...]`、普通书名或无 URL 的括号；无法确认完整链接时，把它列为证据缺口，不要当作有效引文。")
+    lines.append("如果某条历史结果与当前问题高度重合，且已经包含可用结论和编号 citation，默认优先复用它；只把缺口部分交给新检索或子任务。")
+    lines.append("如果复用历史结果中的事实、数字、分期、判断或缺口，最终回答必须把对应 citation 一并带上。")
+    lines.append("严禁把历史结果里的 citation 改写成空链接、普通书名或空括号；无法确认可用 citation 时，把它列为证据缺口，不要当作有效引文。")
     return "\n".join(lines).strip()
 
 
@@ -406,7 +397,7 @@ def build_task_memory_injection_message(
         "1. 先逐条判断历史结果是 `可直接复用`、`需要补充`，还是 `应该纠正/弃用`；不要跳过这一步。\n"
         "2. 若历史结果已覆盖当前问题的大部分内容，不要重复派发同题子任务；只补查未解决缺口或疑似错误点。\n"
         "3. 综合回答时，必须显式吸收所有与当前问题高度相关的历史结论、关键发现、关键引文和未解决缺口。\n"
-        "4. 复用历史结果时，只能复制完整 `[citation:标题](URL)` 链接；不完整、无 URL、空括号或格式损坏的 citation 不能输出为有效引文。\n"
-        "5. 输出前自检：凡是引用历史结果中的事实、数字、页码、分期或因果判断，都必须在该句或该要点后带上对应完整 citation。\n"
+        "4. 复用历史结果时，只能复制可用 citation；空括号或格式损坏的 citation 不能输出为有效引文。\n"
+        "5. 输出前自检：凡是引用历史结果中的事实、数字、页码、分期或因果判断，都必须在该句或该要点后带上对应 citation。\n"
         "</task_memory_matches>"
     )

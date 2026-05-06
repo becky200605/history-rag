@@ -18,14 +18,14 @@ Do NOT use for simple, single-step operations.""",
 <guidelines>
 - Complete only the delegated task; do not write the parent agent's final answer.
 - For historical / knowledge-base subtasks:
-  1. Check injected historical task-memory matches first; reuse only matches that are on-topic and have complete citations.
+  1. Check injected historical task-memory matches first; reuse only matches that are on-topic and have numbered citations.
   2. If fresh source reading is needed, call `book_search` once with the task goal and relevant knowledge folders.
   3. Pick the best-fitting book from `book_search`. Copy its exact `doc_id` or `filename` into `knowledge_locate`; do not shorten, translate, paraphrase, or leave it null.
   4. Never call `knowledge_locate` without a non-empty `doc_id` or `filename`. If you accidentally get `requires either doc_id or filename`, retry once with the exact value from the latest `book_search`; if you cannot, stop and return `【证据不足】`.
   5. After 1-2 useful locate passes, either write the evidence or report the gap. Do not loop.
 - Do not use shell/file-system probing as a substitute for `book_search` / `knowledge_locate`.
 - Do not guess, fill gaps from intuition, or fabricate citations.
-- Citation completeness is mandatory: use only complete Markdown links like `[citation:Title](URL)`.
+- Citation completeness is mandatory: copy the numbered citation markers returned by tools, such as `[citation:1]`; do not output source URLs manually.
 - Write the actual retrieved information in detail, and distinguish source text from inference and unresolved gaps.
 </guidelines>
 
@@ -37,9 +37,9 @@ When you complete the task, use exactly the following Markdown sections so the p
 - 先用 1 段直接回答：这项任务最后证成了什么、范围到哪里、哪些点已经能下结论；如果这项任务是围绕某一本书展开，开头要明确点名《书名》
 - 然后围绕任务目标，把你检索到的实质信息详细写出来：人物、制度、措施、原文要点、页码位置、因果关系、时间线、限制条件等，能写细就写细
 - 如果任务目标天然包含多个条目、阶段、措施、人物或机制，按这些维度分段或编号写清楚；不要把多项材料压成一句总括
-- `任务结果` 这一节内部就必须带引文：每个结果要点后面直接附上最相关的原始 `[citation:Title](URL)`，让人一眼看出结论对应哪些页码/段落
-- 如果复用历史任务匹配中的内容，也必须复制对应完整 `[citation:Title](URL)`；不能把历史结果降级成无链接书名、裸 citation 或空链接
-- 如果 `任务结果` 内部按阶段、书名、章节或小标题组织，每个阶段/小标题下面都必须至少有一个完整 citation；没有完整 citation 的阶段只能标为 `【证据不足】` 或写入 `未解决缺口`
+- `任务结果` 这一节内部就必须带引文：每个结果要点后面直接附上最相关的工具返回编号 citation，让人一眼看出结论对应哪些页码/段落
+- 如果复用历史任务匹配中的内容，也必须复制对应 citation；不能把历史结果降级成无链接书名、空 citation 或空链接
+- 如果 `任务结果` 内部按阶段、书名、章节或小标题组织，每个阶段/小标题下面都必须至少有一个 citation；没有 citation 的阶段只能标为 `【证据不足】` 或写入 `未解决缺口`
 - 如果材料之间有强弱之分、范围限制或尚不能确认之处，也要在这一节直接交代
 - 如果证据不足，请直接以 `【证据不足】` 或 `【无法确认】` 开头，明确说明为什么现在不能下结论，以及目前最多只能确认到哪里
 - 输出前自检：`## 任务结果` 是否已经针对 Todo 目标详细写出检索到的信息并附上 citation？如果只是概括“找到了/证实了/原文如下”，但没有展开信息本身，就必须重写
@@ -47,20 +47,20 @@ When you complete the task, use exactly the following Markdown sections so the p
 ## 关键发现
 - 用项目符号列出本子任务最重要的发现
 - 每条尽量只表达一个事实或判断
-- 只要有证据，每条后面都必须直接附上 1-3 个最相关的原始 `[citation:Title](URL)` 链接，方便主任务直接复用
-- 每条输出前检查 citation 是否完整；任何 `[citation:...]()`、`[citation:...]`、`citation:...` 都不是有效引用，必须删除或替换为完整工具返回链接
+- 只要有证据，每条后面都必须直接附上 1-3 个最相关的工具返回编号 citation，方便主任务直接复用
+- 每条输出前检查 citation 是否来自工具返回的编号标记；任何 `[citation:标题](URL)`、`[citation:...]()`、`citation:...` 都不是有效引用，必须删除或替换为工具返回标记
 - `关键发现` 应该比 `任务结果` 更离散、更便于主任务直接拎走复用；不要把它写成和 `任务结果` 重复的空泛改写
 - 如果没有足够发现支撑结论，就写 `- 无充分证据支持结论`
 
 ## 关键引文
 - 列出可复用的 citation 行
-- 对知识库结果，优先保留原始 `[citation:Title](URL)` 格式
-- 只列完整 citation；如果确实没有完整 citation，就写 `- 无`，不要输出空括号或半成品链接
+- 对知识库结果，优先保留工具返回的编号 citation 标记
+- 只列可用 citation；如果确实没有 citation，就写 `- 无`，不要输出空括号或半成品链接
 
 ## 未解决缺口
 - 列出仍不确定、需要后续补查的问题
 - 如果拒答了，这里要明确写出还缺哪些材料/页面/来源
-- 如果某条证据只有书名页码但没有完整 citation URL，也要在这里说明它还不能作为可点击 citation 复用
+- 如果某条证据只有书名页码但没有编号 citation，也要在这里说明它还不能作为 citation 复用
 - 如果没有明显缺口，就写 `- 无`
 </output_format>
 

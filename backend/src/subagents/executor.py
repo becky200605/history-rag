@@ -183,7 +183,7 @@ def _extract_bullets(block: str) -> list[str]:
 
 
 def _extract_citations(text: str) -> list[str]:
-    citations = re.findall(r"\[citation:[^\]]+\]\((?:<[^>\n]+>|[^)\n]+)\)", text)
+    citations = re.findall(r"\[citation:\s*\d+\s*\]", text)
     return _dedupe_strings(citations)
 
 

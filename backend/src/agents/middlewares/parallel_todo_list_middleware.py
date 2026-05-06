@@ -21,6 +21,7 @@ from typing_extensions import NotRequired, TypedDict, cast, override
 
 from src.agents.lead_agent.prompt import get_skills_prompt_section
 from src.agents.thread_state import ThreadState
+from src.community.knowledge_base.citations import merge_citation_registry, rewrite_numbered_citations
 from src.community.knowledge_base.reading_state import (
     COVERED_DOC_IDS_KEY,
     get_active_reading_state,
@@ -48,6 +49,7 @@ class Todo(TypedDict):
     structured_findings: NotRequired[list[str]]
     structured_citations: NotRequired[list[str]]
     structured_gaps: NotRequired[list[str]]
+    citation_registry: NotRequired[list[dict[str, Any]]]
     error: NotRequired[str]
 
 
@@ -190,7 +192,7 @@ def _build_default_task_prompt(todo: Todo) -> str:
         "要求：\n"
         "1. 只围绕这一项任务检索、分析或执行；\n"
         "2. 历史 / 知识库任务按固定顺序执行：先判断历史匹配是否可复用；不足时调用 `book_search` 选源；选定某书后，复制 `book_search` 返回的 `next: knowledge_locate(doc_id=\"...\")` 模板里的原样 `doc_id` 到 `knowledge_locate`；\n"
-        "3. `knowledge_locate` 禁止空调用。每次都必须带非空 `doc_id`；不要用书名或 filename 代替。如果漏传并收到 missing-doc-id 错误，只允许用刚才 `book_search` 结果里的原样 `doc_id` 重试一次，仍拿不到就停止并写 `【证据不足】`；\n"
+        "3. `knowledge_locate` 禁止空调用。每次都必须带非空 `doc_id`；不要用书名代替。如果漏传并收到 missing-doc-id 错误，只允许用刚才 `book_search` 结果里的原样 `doc_id` 重试一次，仍拿不到就停止并写 `【证据不足】`；\n"
         "4. 不要用 bash/find/ls 扫本地文件系统替代知识库检索；\n"
         "5. 读到足够证据后停止检索，保留工具返回的编号 citation；\n"
         "6. 最终输出必须使用固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
@@ -213,7 +215,7 @@ def _build_task_prompt(todo: Todo) -> str:
         f"{custom_prompt}\n\n"
         "强制检索规则：\n"
         "1. 先用 `book_search` 选源；决定读哪本书后，逐字复制 `next: knowledge_locate(doc_id=\"...\")` 模板里的原样 `doc_id` 到 `knowledge_locate`。\n"
-        "2. 禁止空调 `knowledge_locate`，也不要用书名或 filename 代替 `doc_id`。如果收到 missing-doc-id 错误，只用刚才 `book_search` 的原样 `doc_id` 重试一次；仍拿不到就停止并写 `【证据不足】`。\n"
+        "2. 禁止空调 `knowledge_locate`，也不要用书名代替 `doc_id`。如果收到 missing-doc-id 错误，只用刚才 `book_search` 的原样 `doc_id` 重试一次；仍拿不到就停止并写 `【证据不足】`。\n"
         "3. 输出固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；citation 必须复制工具返回的编号标记。"
     )
 
@@ -254,6 +256,14 @@ def _render_todo_evidence_block(todo: Todo) -> str:
         lines.append(f"错误: {error}")
 
     return "\n".join(lines)
+
+
+def _rewrite_citation_list(items: list[Any], citation_id_mapping: dict[str, str]) -> list[str]:
+    return [
+        rewrite_numbered_citations(str(item).strip(), citation_id_mapping)
+        for item in items
+        if str(item).strip()
+    ]
 
 
 def _should_preserve_bound_task_status(
@@ -605,25 +615,31 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
 
                 if result.status == SubagentStatus.COMPLETED:
                     todo["status"] = "completed"
+                    citation_id_mapping = merge_citation_registry(
+                        runtime.state if isinstance(getattr(runtime, "state", None), dict) else None,
+                        getattr(result, "citation_registry", None),
+                    )
                     if result.result:
-                        todo["result"] = result.result
+                        todo["result"] = rewrite_numbered_citations(result.result, citation_id_mapping)
+                    if getattr(result, "citation_registry", None):
+                        todo["citation_registry"] = getattr(result, "citation_registry")
                     if result.structured_result:
-                        summary = str(result.structured_result.get("summary") or "").strip()
-                        findings = [
-                            str(item).strip()
-                            for item in cast(list[Any], result.structured_result.get("findings") or [])
-                            if str(item).strip()
-                        ]
-                        citations = [
-                            str(item).strip()
-                            for item in cast(list[Any], result.structured_result.get("citations") or [])
-                            if str(item).strip()
-                        ]
-                        gaps = [
-                            str(item).strip()
-                            for item in cast(list[Any], result.structured_result.get("open_questions") or [])
-                            if str(item).strip()
-                        ]
+                        summary = rewrite_numbered_citations(
+                            str(result.structured_result.get("summary") or "").strip(),
+                            citation_id_mapping,
+                        )
+                        findings = _rewrite_citation_list(
+                            cast(list[Any], result.structured_result.get("findings") or []),
+                            citation_id_mapping,
+                        )
+                        citations = _rewrite_citation_list(
+                            cast(list[Any], result.structured_result.get("citations") or []),
+                            citation_id_mapping,
+                        )
+                        gaps = _rewrite_citation_list(
+                            cast(list[Any], result.structured_result.get("open_questions") or []),
+                            citation_id_mapping,
+                        )
                         if summary:
                             todo["structured_summary"] = summary
                         if findings:
@@ -652,7 +668,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                         {
                             "type": "task_completed",
                             "task_id": task_id,
-                            "result": result.result,
+                            "result": todo.get("result"),
                             "summary": todo.get("structured_summary"),
                             "findings": todo.get("structured_findings"),
                             "citations": todo.get("structured_citations"),

@@ -1096,6 +1096,7 @@ def test_knowledge_locate_tool_schema_requires_non_nullable_doc_id() -> None:
     doc_id_field = tools_module.knowledge_locate_tool.args_schema.model_fields["doc_id"]
     assert doc_id_field.is_required()
     assert doc_id_field.annotation is str
+    assert "filename" not in tools_module.knowledge_locate_tool.args_schema.model_fields
 
 
 def test_knowledge_search_tool_allows_mixed_layer_doc_ids(monkeypatch) -> None:

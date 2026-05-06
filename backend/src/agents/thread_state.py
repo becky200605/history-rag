@@ -72,3 +72,4 @@ class ThreadState(AgentState):
     knowledge_covered_doc_ids: NotRequired[list[str] | None]
     knowledge_reading_set_query: NotRequired[str | None]
     knowledge_reading_set_human_index: NotRequired[int | None]
+    knowledge_citation_registry: NotRequired[list[dict] | None]

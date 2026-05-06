@@ -1,6 +1,11 @@
 from types import SimpleNamespace
 
-from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY, resolve_result_citation_context
+from src.community.knowledge_base.citations import (
+    KNOWLEDGE_CITATION_REGISTRY_KEY,
+    merge_citation_registry,
+    resolve_result_citation_context,
+    rewrite_numbered_citations,
+)
 from src.community.knowledge_base.tools import _build_citation
 
 
@@ -109,4 +114,47 @@ def test_build_citation_registers_numbered_marker_when_state_is_available() -> N
             "label": "民国财政史 (杨荫溥) 原书第10页第1段",
             "url": "/api/knowledge/docs/book.pdf?page_no=10&paragraph_no=1",
         }
+    ]
+
+
+def test_merge_citation_registry_returns_mapping_for_global_renumbering() -> None:
+    state = {
+        KNOWLEDGE_CITATION_REGISTRY_KEY: [
+            {
+                "id": "1",
+                "label": "既有书 原书第1页第1段",
+                "url": "/api/knowledge/docs/existing.pdf?page_no=1&paragraph_no=1",
+            }
+        ]
+    }
+
+    mapping = merge_citation_registry(
+        state,
+        [
+            {
+                "id": "1",
+                "label": "甲书 原书第12页第3段",
+                "url": "/api/knowledge/docs/a.pdf?page_no=12&paragraph_no=3",
+            },
+            {
+                "id": "2",
+                "label": "既有书 原书第1页第1段",
+                "url": "/api/knowledge/docs/existing.pdf?page_no=1&paragraph_no=1",
+            },
+        ],
+    )
+
+    assert mapping == {"1": "2", "2": "1"}
+    assert rewrite_numbered_citations("A[citation:1] B[citation:2]", mapping) == "A[citation:2] B[citation:1]"
+    assert state[KNOWLEDGE_CITATION_REGISTRY_KEY] == [
+        {
+            "id": "1",
+            "label": "既有书 原书第1页第1段",
+            "url": "/api/knowledge/docs/existing.pdf?page_no=1&paragraph_no=1",
+        },
+        {
+            "id": "2",
+            "label": "甲书 原书第12页第3段",
+            "url": "/api/knowledge/docs/a.pdf?page_no=12&paragraph_no=3",
+        },
     ]

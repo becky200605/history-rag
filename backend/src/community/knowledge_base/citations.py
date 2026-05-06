@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -7,6 +8,7 @@ from src.community.knowledge_base.locator import locate_document
 from src.community.knowledge_base.user_store import build_user_doc_public_url
 
 KNOWLEDGE_CITATION_REGISTRY_KEY = "knowledge_citation_registry"
+NUMBERED_CITATION_REFERENCE_PATTERN = re.compile(r"\[citation:\s*(\d+)\s*\]", re.IGNORECASE)
 
 
 def register_citation_marker(
@@ -43,6 +45,51 @@ def register_citation_marker(
         }
     )
     return f"[citation:{citation_id}]"
+
+
+def merge_citation_registry(
+    target_state: dict[str, Any] | None,
+    source_registry: list[dict[str, Any]] | None,
+) -> dict[str, str]:
+    """Merge a child citation registry into target state and return old-id to new-id mapping."""
+
+    if target_state is None or not source_registry:
+        return {}
+
+    mapping: dict[str, str] = {}
+    for item in source_registry:
+        if not isinstance(item, dict):
+            continue
+        source_id = str(item.get("id") or "").strip()
+        label = str(item.get("label") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if not source_id or not label or not url:
+            continue
+        marker = register_citation_marker(
+            target_state,
+            citation_label=label,
+            citation_link=url,
+        )
+        if not marker:
+            continue
+        match = NUMBERED_CITATION_REFERENCE_PATTERN.fullmatch(marker)
+        if match:
+            mapping[source_id] = match.group(1)
+    return mapping
+
+
+def rewrite_numbered_citations(text: str, citation_id_mapping: dict[str, str]) -> str:
+    """Rewrite bare numbered citation markers according to a registry id mapping."""
+
+    if not text or not citation_id_mapping:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        old_id = match.group(1).strip()
+        new_id = citation_id_mapping.get(old_id)
+        return f"[citation:{new_id}]" if new_id else match.group(0)
+
+    return NUMBERED_CITATION_REFERENCE_PATTERN.sub(replace, text)
 
 
 def encode_source_url(url: str | None) -> str | None:

@@ -21,6 +21,7 @@ from langchain_core.messages.utils import message_chunk_to_message
 from langchain_core.runnables import RunnableConfig
 
 from src.agents.thread_state import SandboxState, ThreadDataState, ThreadState
+from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY
 from src.community.knowledge_base.task_memory import (
     build_task_memory_injection_message,
     search_task_memory,
@@ -59,6 +60,7 @@ class SubagentResult:
         completed_at: When execution completed.
         ai_messages: List of complete AI messages (as dicts) generated during execution.
         structured_result: Parsed structured sections extracted from the final result.
+        citation_registry: Numbered citation registry collected inside this subagent.
     """
 
     task_id: str
@@ -70,6 +72,7 @@ class SubagentResult:
     completed_at: datetime | None = None
     ai_messages: list[dict[str, Any]] | None = None
     structured_result: dict[str, Any] | None = None
+    citation_registry: list[dict[str, Any]] | None = None
 
     def __post_init__(self):
         """Initialize mutable defaults."""
@@ -811,6 +814,10 @@ class SubagentExecutor:
                     result.result = "No response generated"
 
             result.structured_result = _parse_structured_subtask_result(result.result)
+            if final_state is not None:
+                raw_registry = final_state.get(KNOWLEDGE_CITATION_REGISTRY_KEY)
+                if isinstance(raw_registry, list):
+                    result.citation_registry = [item for item in raw_registry if isinstance(item, dict)]
 
             self._raise_if_cancelled(result, cancel_event)
             result.status = SubagentStatus.COMPLETED
@@ -985,6 +992,7 @@ class SubagentExecutor:
                         _background_tasks[task_id].completed_at = datetime.now(UTC)
                         _background_tasks[task_id].ai_messages = exec_result.ai_messages
                         _background_tasks[task_id].structured_result = exec_result.structured_result
+                        _background_tasks[task_id].citation_registry = exec_result.citation_registry
                     log_subtask_event(
                         "subtask_async_finished",
                         trace_id=self.trace_id,

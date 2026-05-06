@@ -72,7 +72,6 @@ HISTORICAL_PERIOD_ALIASES = {
 HISTORICAL_TOPIC_RETRY_HINTS = ("情况", "概况", "变化", "变迁", "问题", "状况")
 FINANCE_RETRY_FACETS = ("财政收入结构", "财政支出结构", "财政政策")
 _TASK_PROMPT_DOC_ID_PATTERN = re.compile(r"doc_id\s*=\s*['\"]([^'\"]+)['\"]")
-_TASK_PROMPT_FILENAME_PATTERN = re.compile(r"filename\s*=\s*['\"]([^'\"]+)['\"]")
 logger = logging.getLogger(__name__)
 
 
@@ -131,40 +130,6 @@ def _message_content_as_text(message: Any) -> str:
                     parts.append(text)
         return "\n".join(parts)
     return ""
-
-
-def _infer_document_identifier_from_runtime(
-    runtime: ToolRuntime[ContextT, ThreadState],
-) -> tuple[str | None, str | None]:
-    state = _tool_runtime_state(runtime)
-    if state is None:
-        return None, None
-
-    messages = state.get("messages")
-    if not isinstance(messages, list) or not messages:
-        return None, None
-
-    human_texts: list[str] = []
-    for message in reversed(messages):
-        message_type = getattr(message, "type", None)
-        if message_type != "human":
-            continue
-        text = _message_content_as_text(message).strip()
-        if text:
-            human_texts.append(text)
-        if len(human_texts) >= 2:
-            break
-
-    if not human_texts:
-        return None, None
-
-    combined_text = "\n\n".join(human_texts)
-    doc_ids = {match.strip() for match in _TASK_PROMPT_DOC_ID_PATTERN.findall(combined_text) if match.strip()}
-    filenames = {match.strip() for match in _TASK_PROMPT_FILENAME_PATTERN.findall(combined_text) if match.strip()}
-
-    inferred_doc_id = next(iter(doc_ids)) if len(doc_ids) == 1 else None
-    inferred_filename = next(iter(filenames)) if len(filenames) == 1 else None
-    return inferred_doc_id, inferred_filename
 
 
 def _list_book_catalog_for_tools(
@@ -536,31 +501,6 @@ def _resolve_requested_doc_ids(
         missing.append(requested_doc_id)
 
     return resolved, missing, ambiguous
-
-
-def _resolve_requested_filename(
-    requested_filename: str | None,
-    *,
-    visible_entries: list[BookCatalogEntry],
-) -> tuple[str | None, bool]:
-    if not requested_filename:
-        return None, False
-
-    exact_filenames = {entry.filename: entry.filename for entry in visible_entries}
-    if requested_filename in exact_filenames:
-        return exact_filenames[requested_filename], False
-
-    normalized_requested = _normalize_doc_id_match_key(requested_filename)
-    normalized_matches = [
-        entry.filename
-        for entry in visible_entries
-        if _normalize_doc_id_match_key(entry.filename) == normalized_requested
-    ]
-    if len(normalized_matches) == 1:
-        return normalized_matches[0], False
-    if len(normalized_matches) > 1:
-        return None, True
-    return None, False
 
 
 def _normalize_retry_query(query: str) -> str:
@@ -1106,7 +1046,7 @@ def book_search_tool(
     lines.append("---")
     lines.append("检索规则:")
     lines.append("1. `knowledge_search` 只检索历史主任务/子任务结果，不检索这些书的正文；不要把这里的 `doc_ids` 传给 `knowledge_search`。")
-    lines.append("2. 如果你是子任务，下一步应先判断候选书与任务目标是否适配；只复制上方 `next: knowledge_locate(doc_id=\"...\")` 模板里的 `doc_id` 调用 `knowledge_locate`，不要用书名或 filename 代替。")
+    lines.append("2. 如果你是子任务，下一步应先判断候选书与任务目标是否适配；只复制上方 `next: knowledge_locate(doc_id=\"...\")` 模板里的 `doc_id` 调用 `knowledge_locate`，不要用书名代替。")
     lines.append("3. 如果问题涉及多本书且已启用子任务，不要由主任务继续串行深挖。")
     lines.append("4. 默认顺序：用户书籍 -> 当前线程书籍 -> 核心通用书 -> 专题支撑书 -> 补充材料。")
     lines.append("5. 检索前先看每本候选书的 metadata，尤其 `语言`、`目录`、`摘要` 等信号。")
@@ -1217,7 +1157,6 @@ def knowledge_search_tool(
 def knowledge_locate_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     doc_id: str,
-    filename: str | None = None,
     page_no: int | None = None,
     page_no_end: int | None = None,
     pdf_page_no: int | None = None,
@@ -1236,8 +1175,6 @@ def knowledge_locate_tool(
     Args:
         doc_id: Required document ID copied exactly from `book_search`. Use
             this for all model calls; do not pass null or an empty string.
-        filename: Internal fallback only. Do not use unless the system or user
-            explicitly gives a filename and no doc_id is available.
         page_no: Optional original-book page number to inspect.
         page_no_end: Optional inclusive ending original-book page number for contiguous reading.
         pdf_page_no: Optional physical PDF page number to inspect.
@@ -1253,7 +1190,6 @@ def knowledge_locate_tool(
         subagent_name=runtime_context.get("subagent_name"),
         thread_id=runtime_context.get("thread_id"),
         doc_id=doc_id,
-        filename=filename,
         page_no=page_no,
         page_no_end=page_no_end,
         pdf_page_no=pdf_page_no,
@@ -1307,34 +1243,16 @@ def knowledge_locate_tool(
             )
         resolved_doc_id = resolved_doc_ids[0] if resolved_doc_ids else doc_id
 
-    resolved_filename = filename
-    if filename:
-        resolved_filename, filename_ambiguous = _resolve_requested_filename(
-            filename,
-            visible_entries=visible_entries,
-        )
-        if filename_ambiguous:
-            return (
-                "Error: 当前 `knowledge_locate` 传入的 `filename` 去除空格后匹配到多个候选。"
-                "请改用更精确的原样文件名或直接传 `doc_id`。"
-            )
-        if resolved_filename is None:
-            return (
-                "Error: 当前 `knowledge_locate` 传入的 `filename` 在可见资料范围内不存在。"
-                "请使用系统返回的原样 `filename` 或改传 `doc_id`。"
-            )
-
     try:
         document = locate_document(
             thread_id,
             user_id=user_id,
             doc_id=resolved_doc_id,
-            filename=resolved_filename,
         )
     except Exception as e:
         return f"Error locating document: {e}"
     if not document:
-        return "No structured document found for the requested doc_id or filename."
+        return "No structured document found for the requested doc_id."
 
     navigation_mode = (
         page_no is None

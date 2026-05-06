@@ -24,6 +24,7 @@ from src.agents.thread_state import SandboxState, ThreadDataState, ThreadState
 from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY
 from src.community.knowledge_base.task_memory import (
     build_task_memory_injection_message,
+    prepare_task_memory_matches_for_injection,
     search_task_memory,
     upsert_task_memory_record,
 )
@@ -528,19 +529,19 @@ class SubagentExecutor:
         """
         messages: list[HumanMessage] = [HumanMessage(content=task)]
         normalized_title = str(task_title or "").strip()
+        state: dict[str, Any] = {"messages": messages}
         matches = search_task_memory(task, title=normalized_title or None, top_k=3)
-        if matches:
+        prepared_matches = prepare_task_memory_matches_for_injection(matches, target_state=state)
+        if prepared_matches:
             messages.append(
                 HumanMessage(
                     content=build_task_memory_injection_message(
                         title=normalized_title or task,
                         query=task,
-                        results=matches,
+                        results=prepared_matches,
                     )
                 )
             )
-
-        state: dict[str, Any] = {"messages": messages}
 
         # Pass through sandbox and thread data from parent
         if self.sandbox_state is not None:

@@ -1092,6 +1092,12 @@ def test_tool_schema_marks_knowledge_folders_as_required() -> None:
     assert not tools_module.knowledge_search_tool.args_schema.model_fields["knowledge_folders"].is_required()
 
 
+def test_knowledge_locate_tool_schema_requires_non_nullable_doc_id() -> None:
+    doc_id_field = tools_module.knowledge_locate_tool.args_schema.model_fields["doc_id"]
+    assert doc_id_field.is_required()
+    assert doc_id_field.annotation is str
+
+
 def test_knowledge_search_tool_allows_mixed_layer_doc_ids(monkeypatch) -> None:
     class _DummyRetriever:
         def search(self, query, thread_id=None, user_id=None, doc_ids=None, scopes=None, folder_paths=None):

@@ -64,7 +64,7 @@ def knowledge_checkpoint_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
     title: str,
     summary: str,
-    citations: list[str] | str | None,
+    citations: list[str] | str,
     tool_call_id: Annotated[str, InjectedToolCallId],
     covered_scope: str | None = None,
     open_questions: list[str] | str | None = None,
@@ -102,12 +102,28 @@ def knowledge_checkpoint_tool(
     Args:
         title: Short label for this retrieval block, such as `北洋政府时期财政`.
         summary: Faithful detailed summary of findings from the completed retrieval block.
-        citations: Supporting citation lines copied from `knowledge_search` / `knowledge_locate`.
+        citations: Required supporting citation lines copied from `knowledge_search` / `knowledge_locate`.
         covered_scope: Optional one-line description of what this checkpoint covers.
         open_questions: Optional list of gaps or next retrieval targets that still remain.
     """
     normalized_citations = _normalize_string_list(citations)
     normalized_open_questions = _normalize_string_list(open_questions)
+    if not title.strip() or not summary.strip() or not normalized_citations:
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(
+                        content=(
+                            "Error: knowledge_checkpoint requires non-empty `title`, `summary`, and `citations`. "
+                            "Do not checkpoint unsupported or citation-free retrieval. Continue with "
+                            "`book_search` / `knowledge_locate(doc_id=\"...\")`, or stop with `【证据不足】`."
+                        ),
+                        tool_call_id=tool_call_id,
+                        name="knowledge_checkpoint",
+                    )
+                ]
+            }
+        )
 
     sections = [f"# 检索检查点：{title.strip()}"]
     if covered_scope and covered_scope.strip():
@@ -117,7 +133,7 @@ def knowledge_checkpoint_tool(
         _render_list_section(
             "关键引文",
             normalized_citations,
-            fallback="（本次检查点未附引文；后续继续使用时请优先补齐 citation。）",
+            fallback="（无）",
         )
     )
     sections.append(

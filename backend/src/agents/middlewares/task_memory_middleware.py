@@ -12,6 +12,7 @@ from langgraph.runtime import Runtime
 from src.agents.middlewares.title_middleware import generate_title_candidate
 from src.community.knowledge_base.task_memory import (
     build_task_memory_injection_message,
+    is_non_reusable_failure_summary,
     search_task_memory,
     upsert_task_memory_record,
 )
@@ -155,6 +156,8 @@ def _decide_task_memory_action(
         return {"action": "skip", "title": title, "reason": "content too short"}
     if TASK_MEMORY_DECISION_CONTAMINATION_PATTERN.search(clean_query):
         return {"action": "skip", "title": title, "reason": "injected context only"}
+    if is_non_reusable_failure_summary(clean_summary):
+        return {"action": "skip", "title": title, "reason": "insufficient evidence"}
 
     try:
         model = create_chat_model(thinking_enabled=False)

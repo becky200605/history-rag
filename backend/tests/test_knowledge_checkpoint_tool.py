@@ -1,4 +1,4 @@
-from src.tools.builtins.knowledge_checkpoint_tool import _normalize_string_list
+from src.tools.builtins.knowledge_checkpoint_tool import _normalize_string_list, knowledge_checkpoint_tool
 
 
 def test_normalize_string_list_accepts_json_array_string() -> None:
@@ -23,3 +23,9 @@ def test_normalize_string_list_falls_back_to_single_string() -> None:
     raw = "single item"
 
     assert _normalize_string_list(raw) == ["single item"]
+
+
+def test_checkpoint_schema_requires_non_nullable_citations() -> None:
+    citations_field = knowledge_checkpoint_tool.args_schema.model_fields["citations"]
+    assert citations_field.is_required()
+    assert citations_field.annotation == list[str] | str

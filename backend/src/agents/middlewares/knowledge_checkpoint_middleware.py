@@ -123,7 +123,24 @@ class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
             return False
 
         tool_names = [tool_call.get("name") for tool_call in final_message.tool_calls]
-        return bool(tool_names) and all(name == CHECKPOINT_TOOL_NAME for name in tool_names)
+        return bool(tool_names) and all(
+            name == CHECKPOINT_TOOL_NAME and self._checkpoint_args_are_substantive(tool_call.get("args"))
+            for name, tool_call in zip(tool_names, final_message.tool_calls, strict=True)
+        )
+
+    def _checkpoint_args_are_substantive(self, args: object) -> bool:
+        if not isinstance(args, dict):
+            return False
+        title = str(args.get("title") or "").strip()
+        summary = str(args.get("summary") or "").strip()
+        citations = args.get("citations")
+        if isinstance(citations, list):
+            normalized_citations = [str(item).strip() for item in citations if str(item).strip()]
+        elif isinstance(citations, str):
+            normalized_citations = [citations.strip()] if citations.strip() else []
+        else:
+            normalized_citations = []
+        return bool(title and summary and normalized_citations)
 
     def _build_retry_request(self, request: ModelRequest, appendix: str) -> ModelRequest:
         reminder = HumanMessage(content=appendix)

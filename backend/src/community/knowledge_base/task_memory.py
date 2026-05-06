@@ -20,6 +20,7 @@ LINKED_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\((?:<[^>\n]+>|[^)\n]*
 NUMBERED_CITATION_PATTERN = re.compile(r"\[citation:\s*\d+\s*\]", re.IGNORECASE)
 BARE_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\](?!\()", re.IGNORECASE)
 EMPTY_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\(\s*\)", re.IGNORECASE)
+INSUFFICIENT_EVIDENCE_PATTERN = re.compile(r"^\s*(?:[#>*\-\s\d.、:：`]+)?【(?:证据不足|无法确认|无法回答|信息不足)】")
 
 
 def _utc_now() -> str:
@@ -66,6 +67,22 @@ def _sanitize_injected_text(text: str) -> str:
     sanitized = re.sub(r"[ \t]+\n", "\n", sanitized)
     sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
     return sanitized.strip()
+
+
+def is_non_reusable_failure_summary(text: str) -> bool:
+    """Return True when a result is an explicit failed/insufficient-evidence answer."""
+
+    cleaned = _sanitize_injected_text(str(text or "")).strip()
+    if not cleaned:
+        return False
+    if INSUFFICIENT_EVIDENCE_PATTERN.search(cleaned):
+        return True
+    for line in cleaned.splitlines():
+        stripped = line.strip()
+        if not stripped or re.match(r"^#{1,6}\s+", stripped):
+            continue
+        return bool(INSUFFICIENT_EVIDENCE_PATTERN.search(stripped))
+    return False
 
 
 def _compact_query_for_storage(query: str, *, task_level: str) -> str:
@@ -194,6 +211,8 @@ def upsert_task_memory_record(
     normalized_title = normalize_task_title(title)
     normalized_summary = str(summary or "").strip()
     if not normalized_title or not normalized_summary:
+        return None
+    if is_non_reusable_failure_summary(normalized_summary) or is_non_reusable_failure_summary(str(raw_result or "")):
         return None
 
     normalized_query = _compact_query_for_storage(str(query or ""), task_level=task_level)

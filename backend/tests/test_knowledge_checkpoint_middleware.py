@@ -38,6 +38,30 @@ def _tool_call_response(name: str) -> ModelResponse:
             )
         ]
     )
+
+
+def _empty_checkpoint_response() -> ModelResponse:
+    return ModelResponse(
+        result=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "knowledge_checkpoint-call-empty",
+                        "name": "knowledge_checkpoint",
+                        "args": {
+                            "title": "北洋政府财政",
+                            "summary": "已整理本板块发现",
+                            "citations": None,
+                        },
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+
+
 def test_replaces_grounding_payloads_before_latest_checkpoint_only():
     middleware = KnowledgeCheckpointMiddleware()
     seen_messages: list = []
@@ -113,6 +137,36 @@ def test_retries_until_model_calls_checkpoint_after_grounding_threshold():
     final_ai = final_response.result[-1]
     assert isinstance(final_ai, AIMessage)
     assert final_ai.tool_calls[0]["name"] == "knowledge_checkpoint"
+
+
+def test_retries_when_checkpoint_args_are_empty():
+    middleware = KnowledgeCheckpointMiddleware()
+    request = _build_request(
+        [
+            HumanMessage(content="请继续整理表格"),
+            ToolMessage(content="substantive search result 1", tool_call_id="ks-1", name="knowledge_search"),
+            ToolMessage(content="substantive locate result 2", tool_call_id="kl-1", name="knowledge_locate"),
+            ToolMessage(content="substantive search result 3", tool_call_id="ks-2", name="knowledge_search"),
+            ToolMessage(content="substantive locate result 4", tool_call_id="kl-2", name="knowledge_locate"),
+            ToolMessage(content="substantive search result 5", tool_call_id="ks-3", name="knowledge_search"),
+        ]
+    )
+    seen_requests: list[ModelRequest] = []
+    responses = [
+        _empty_checkpoint_response(),
+        _tool_call_response("knowledge_checkpoint"),
+    ]
+
+    def handler(current_request: ModelRequest) -> ModelResponse:
+        seen_requests.append(current_request)
+        return responses[len(seen_requests) - 1]
+
+    final_response = middleware.wrap_model_call(request, handler)
+
+    assert len(seen_requests) == 2
+    final_ai = final_response.result[-1]
+    assert isinstance(final_ai, AIMessage)
+    assert final_ai.tool_calls[0]["args"]["citations"] == ["citation: ..."]
 
 
 def test_does_not_enforce_checkpoint_for_non_substantive_grounding_results():

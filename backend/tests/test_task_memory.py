@@ -106,6 +106,27 @@ def test_main_task_memory_still_embeds_user_query(monkeypatch: Any) -> None:
     assert "查询: 盛宣怀如何参与近代企业建设？" in document.page_content
 
 
+def test_task_memory_upsert_skips_insufficient_evidence_result(monkeypatch: Any) -> None:
+    _patch_vector_store(monkeypatch)
+
+    record_id = task_memory.upsert_task_memory_record(
+        title="张之洞铁路借款考证",
+        query="张之洞铁路借款有哪些确证？",
+        summary="【证据不足】目前没有找到可核验 citation，不能下结论。",
+        findings=[],
+        citations=[],
+        open_questions=["缺少原始页码。"],
+        task_level="subtask",
+        thread_id="thread-1",
+        user_id="user-1",
+        task_id="task-1",
+        raw_result="## 任务结果\n【证据不足】目前没有找到可核验 citation，不能下结论。",
+    )
+
+    assert record_id is None
+    assert _FakeVectorStore.added_documents == []
+
+
 class _DecisionModel:
     def __init__(self, payload: str) -> None:
         self.payload = payload
@@ -135,6 +156,36 @@ def test_task_memory_middleware_skips_qdrant_write_when_model_says_skip(monkeypa
             AIMessage(content="这是因为当前建议问题生成阶段误读了系统注入文本。"),
         ],
         "current_task_title": "建议问题异常",
+        "current_task_human_index": 0,
+    }
+
+    result = middleware.after_agent(state, SimpleNamespace(context={"thread_id": "t1", "user_id": "u1"}))
+
+    assert result == {"task_memory_saved_human_index": 0}
+    assert calls == []
+
+
+def test_task_memory_middleware_skips_insufficient_evidence_without_decision_model(monkeypatch: Any) -> None:
+    middleware = task_memory_middleware.TaskMemoryMiddleware()
+    calls: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        task_memory_middleware,
+        "create_chat_model",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("decision model should not be called")),
+    )
+    monkeypatch.setattr(
+        task_memory_middleware,
+        "upsert_task_memory_record",
+        lambda **kwargs: calls.append(kwargs) or "record-1",
+    )
+
+    state = {
+        "messages": [
+            HumanMessage(content="张之洞某项借款有没有确证？"),
+            AIMessage(content="## 任务结果\n【证据不足】目前没有找到可核验 citation，不能下结论。"),
+        ],
+        "current_task_title": "张之洞借款考证",
         "current_task_human_index": 0,
     }
 

@@ -1216,7 +1216,7 @@ def knowledge_search_tool(
 @tool("knowledge_locate", parse_docstring=True)
 def knowledge_locate_tool(
     runtime: ToolRuntime[ContextT, ThreadState],
-    doc_id: str | None = None,
+    doc_id: str,
     filename: str | None = None,
     page_no: int | None = None,
     page_no_end: int | None = None,
@@ -1234,8 +1234,8 @@ def knowledge_locate_tool(
     navigation preview of likely目录/序言/开篇页，再据此继续按页定位正文。
 
     Args:
-        doc_id: Preferred document ID copied exactly from `book_search`. Use
-            this for normal model calls.
+        doc_id: Required document ID copied exactly from `book_search`. Use
+            this for all model calls; do not pass null or an empty string.
         filename: Internal fallback only. Do not use unless the system or user
             explicitly gives a filename and no doc_id is available.
         page_no: Optional original-book page number to inspect.
@@ -1259,7 +1259,8 @@ def knowledge_locate_tool(
         pdf_page_no=pdf_page_no,
         pdf_page_no_end=pdf_page_no_end,
     )
-    if not doc_id and not filename:
+    doc_id = str(doc_id or "").strip()
+    if not doc_id:
         log_subtask_event(
             "knowledge_locate_missing_document_id",
             trace_id=runtime_context.get("trace_id"),

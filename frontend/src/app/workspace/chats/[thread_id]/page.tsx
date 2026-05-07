@@ -37,7 +37,11 @@ import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useLocalSettings } from "@/core/settings";
 import { type AgentThread, type AgentThreadState } from "@/core/threads";
-import { useSubmitThread, useThreadStream } from "@/core/threads/hooks";
+import {
+  useSubmitThread,
+  useThreadStream,
+} from "@/core/threads/hooks";
+import { useUpdateSubtask } from "@/core/tasks/context";
 import {
   buildThreadDisplayMetadata,
   pathOfThread,
@@ -581,6 +585,7 @@ function ChatPageContent({
     }),
     [persistedContext, settings.context],
   );
+  const updateSubtask = useUpdateSubtask();
   const [liveTodos, setLiveTodos] = useState<Todo[] | null>(null);
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
   const [selectedTodoDraft, setSelectedTodoDraft] = useState<Todo | null>(null);
@@ -995,6 +1000,185 @@ function ChatPageContent({
     setTodoListCollapsed(false);
   }, [selectTodo]);
 
+  const injectMockCitationFlow = useCallback(() => {
+    const MOCK_CITATION_REGISTRY = [
+      {
+        id: "1",
+        label: "《张之洞全集·公牍·咨札》第五册，第10页",
+        url: "/api/knowledge/docs/张之洞全集.pdf?page_no=10&pdf_page_no=10",
+      },
+      {
+        id: "2",
+        label: "《近代中国经济政策演变史稿》第45页",
+        url: "/api/knowledge/docs/近代中国经济政策演变史稿.pdf?page_no=45&pdf_page_no=45",
+      },
+      {
+        id: "5",
+        label: "《张之洞全集·公牍·咨札》第六册，第88页",
+        url: "/api/knowledge/docs/张之洞全集.pdf?page_no=88&pdf_page_no=88",
+      },
+      {
+        id: "9",
+        label: "《湖北枪炮厂档案》光绪二十二年",
+        url: "/api/knowledge/docs/湖北枪炮厂档案.pdf?page_no=5&pdf_page_no=5",
+      },
+      {
+        id: "30",
+        label: "《粤汉铁路史》第120页",
+        url: "/api/knowledge/docs/粤汉铁路史.pdf?page_no=120&pdf_page_no=120",
+      },
+    ];
+
+    const mockTodoId = "mock-todo-1";
+    const mockTaskId = "mock-task-1";
+
+    const mockSubtaskResult = `## 任务结果
+本任务围绕张之洞在洋务运动与实业建设中的具体贡献展开系统检索，以《张之洞全集》公牍·咨札（第五册光绪八年至二十二年、第六册光绪二十三年至三十三年）与《近代中国经济政策演变史稿》为核心来源，系统梳理出张之洞创办或推动的企业、矿务、铁路等完整时间线与关键制度措施。
+
+## 关键发现
+- 张之洞在光绪十六年（1890）调任湖广总督后即启动湖北近代工业化，优先布局汉阳铁厂、大冶铁矿及荆当煤务，形成完整的钢铁工业链[citation:1]
+- 汉阳铁厂于光绪二十二年（1896）正式招商，由盛宣怀督办、郑观应总办，完成从官办到官商合办的转型[citation:1]
+- 湖北枪炮厂于光绪二十二年首次出现在公牍中，刘祖桂为首任提调，钱守恂继任；光绪二十四年派人赴北洋考察学习先进军火制造技术[citation:1][citation:9]
+- 布局（纺织局）于光绪十八年（1892）由赵毓楠担任总监工，光绪十九年获拨款七八万两扩建，光绪二十三年改为官办[citation:1][citation:2]
+- 张之洞系统勘查大冶铁山、萍乡煤矿、荆当煤务、兴国州鑛铁、竹山铜矿、蕲水煤矿等资源，构建资源支撑体系[citation:1][citation:5]
+- 铁路方面，张之洞主持芦汉铁路勘线，推动汉口至保定铁路走向；主导粤汉铁路赎回，以美金六百七十万元收回商办，为近代中国收回利权的重要标志[citation:1][citation:2][citation:30]
+
+## 关键引文
+- [citation:1]
+- [citation:2]
+- [citation:5]
+- [citation:9]
+- [citation:30]
+
+## 未解决缺口
+- 张之洞全集电牍部分（第十册光绪二十五年至二十八年）仅完成了目录页的检索，涉及铁路、企业、电报的具体电文内容尚未详细展开阅读
+- 汉阳铁厂创办章程的具体条款、招商合同详细文本尚未逐条展开`;
+
+    const mockTodo: Todo = {
+      id: mockTodoId,
+      content: "检索张之洞在洋务运动与实业建设中的具体贡献",
+      status: "completed",
+      task_id: mockTaskId,
+      subagent_type: "general-purpose",
+      result: mockSubtaskResult,
+      result_summary:
+        "梳理张之洞创办的企业、矿务、铁路时间线与关键制度措施",
+      structured_summary: mockSubtaskResult.split("## 关键发现")[0]?.trim() ?? "",
+      structured_findings: [
+        "张之洞在光绪十六年（1890）调任湖广总督后即启动湖北近代工业化，优先布局汉阳铁厂、大冶铁矿及荆当煤务，形成完整的钢铁工业链[citation:1]",
+        "汉阳铁厂于光绪二十二年（1896）正式招商，由盛宣怀督办、郑观应总办，完成从官办到官商合办的转型[citation:1]",
+        "湖北枪炮厂于光绪二十二年首次出现在公牍中，刘祖桂为首任提调，钱守恂继任；光绪二十四年派人赴北洋考察学习先进军火制造技术[citation:1][citation:9]",
+        "布局（纺织局）于光绪十八年（1892）由赵毓楠担任总监工，光绪十九年获拨款七八万两扩建，光绪二十三年改为官办[citation:1][citation:2]",
+        "张之洞系统勘查大冶铁山、萍乡煤矿、荆当煤务、兴国州鑛铁、竹山铜矿、蕲水煤矿等资源，构建资源支撑体系[citation:1][citation:5]",
+        "铁路方面，张之洞主持芦汉铁路勘线，推动汉口至保定铁路走向；主导粤汉铁路赎回，以美金六百七十万元收回商办，为近代中国收回利权的重要标志[citation:1][citation:2][citation:30]",
+      ],
+      structured_citations: [
+        "[citation:1]",
+        "[citation:2]",
+        "[citation:5]",
+        "[citation:9]",
+        "[citation:30]",
+      ],
+      structured_gaps: [
+        "张之洞全集电牍部分（第十册光绪二十五年至二十八年）仅完成了目录页的检索，涉及铁路、企业、电报的具体电文内容尚未详细展开阅读",
+        "汉阳铁厂创办章程的具体条款、招商合同详细文本尚未逐条展开",
+      ],
+      citation_registry: MOCK_CITATION_REGISTRY,
+    };
+
+    // 1. 注入子任务
+    updateSubtask({
+      id: mockTaskId,
+      status: "completed",
+      description: "检索张之洞在洋务运动与实业建设中的具体贡献",
+      result: mockSubtaskResult,
+      summary: mockTodo.structured_summary,
+      findings: mockTodo.structured_findings,
+      citations: mockTodo.structured_citations,
+      openQuestions: mockTodo.structured_gaps,
+    });
+
+    // 2. 注入 todo board
+    setLiveTodos((prev) => {
+      const next = prev ? prev.filter((t) => t.id !== mockTodoId) : [];
+      return [...next, mockTodo];
+    });
+
+    // 3. 注入最终状态（让 MessageList 通过 override 显示）
+    const mockMessages = [
+      {
+        type: "human",
+        id: "mock-human-1",
+        content: "请帮我检索张之洞在洋务运动与实业建设中的具体贡献",
+      },
+      {
+        type: "ai",
+        id: "mock-ai-1",
+        content: "我来帮你分步骤检索这个问题。",
+        tool_calls: [
+          {
+            id: "mock-tool-call-1",
+            name: "write_todos",
+            args: {
+              todos: [
+                {
+                  id: mockTodoId,
+                  content:
+                    "检索张之洞在洋务运动与实业建设中的具体贡献",
+                  status: "in_progress",
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        type: "tool",
+        id: "mock-tool-1",
+        tool_call_id: "mock-tool-call-1",
+        content: "Updated todo board.\nCurrent todos:\n- [in_progress] 检索张之洞在洋务运动与实业建设中的具体贡献",
+      },
+      {
+        type: "ai",
+        id: "mock-ai-final",
+        content: `根据检索结果，张之洞在湖广总督任内推动了多项实业建设[citation:1]。
+
+具体包括：
+- 汉阳铁厂于光绪二十二年正式招商，由盛宣怀督办、郑观应总办[citation:1]
+- 系统勘查大冶铁山、萍乡煤矿、荆当煤务等资源，构建资源支撑体系[citation:1][citation:5]
+- 布局（纺织局）于光绪十八年（1892）由赵毓楠担任总监工[citation:1][citation:2]
+
+铁路方面，张之洞主持芦汉铁路勘线，推动汉口至保定铁路走向；主导粤汉铁路赎回，以美金六百七十万元收回商办[citation:1][citation:2][citation:30]。
+
+参考文献
+1. [citation:1]
+2. [citation:2]
+3. [citation:5]
+4. [citation:9]
+5. [citation:30]
+
+建议问题
+1. 张之洞在汉阳铁厂招商过程中与盛宣怀的具体分工是什么？
+2. 湖北枪炮厂的技术引进细节还有哪些可以补充？
+3. 粤汉铁路赎回过程中遇到了哪些阻力？`,
+      },
+    ];
+
+    setFinalState({
+      messages: mockMessages as unknown as AgentThreadState["messages"],
+      knowledge_citation_registry: MOCK_CITATION_REGISTRY,
+      todos: [mockTodo],
+      title: "Mock: 张之洞洋务运动检索",
+    } as AgentThreadState);
+
+    // eslint-disable-next-line no-console
+    console.info("[MockCitationFlow] Injected mock data", {
+      registryCount: MOCK_CITATION_REGISTRY.length,
+      todoId: mockTodoId,
+      taskId: mockTaskId,
+    });
+  }, [updateSubtask, setLiveTodos, setFinalState]);
+
   if (!threadId) {
     return null;
   }
@@ -1017,7 +1201,17 @@ function ChatPageContent({
                   <ThreadTitle threadId={threadId} threadTitle={title} />
                 )}
               </div>
-              <div>
+              <div className="flex items-center gap-2">
+                {process.env.NODE_ENV === "development" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    onClick={injectMockCitationFlow}
+                  >
+                    Mock Citation
+                  </Button>
+                )}
                 {artifacts?.length > 0 && !artifactsOpen && (
                   <Tooltip content="Show artifacts of this conversation">
                     <Button

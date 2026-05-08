@@ -31,5 +31,5 @@ class CitationRegistrySyncMiddleware(AgentMiddleware[ThreadState]):
         return None
 
     @override
-    def aafter_model(self, state: ThreadState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
+    async def aafter_model(self, state: ThreadState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
         return self.after_model(state, runtime)

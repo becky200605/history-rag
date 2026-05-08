@@ -21,7 +21,7 @@ from typing_extensions import NotRequired, TypedDict, cast, override
 
 from src.agents.lead_agent.prompt import get_skills_prompt_section
 from src.agents.thread_state import ThreadState
-from src.community.knowledge_base.citations import merge_citation_registry, rewrite_numbered_citations
+from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY, merge_citation_registry, rewrite_numbered_citations
 from src.community.knowledge_base.reading_state import (
     COVERED_DOC_IDS_KEY,
     get_active_reading_state,

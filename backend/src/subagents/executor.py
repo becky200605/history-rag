@@ -499,6 +499,7 @@ class SubagentExecutor:
 
         # Subagents need minimal middlewares to ensure tools can access sandbox and thread_data
         # These middlewares will reuse the sandbox/thread_data from parent agent
+        from src.agents.middlewares.citation_registry_sync_middleware import CitationRegistrySyncMiddleware
         from src.agents.middlewares.knowledge_checkpoint_middleware import KnowledgeCheckpointMiddleware
         from src.agents.middlewares.thread_data_middleware import ThreadDataMiddleware
         from src.sandbox.middleware import SandboxMiddleware
@@ -507,6 +508,7 @@ class SubagentExecutor:
             ThreadDataMiddleware(lazy_init=True),  # Compute thread paths
             SandboxMiddleware(lazy_init=True),  # Reuse parent's sandbox (no re-acquisition)
             KnowledgeCheckpointMiddleware(),  # Enforce checkpoint cadence during raw retrieval loops
+            CitationRegistrySyncMiddleware(),  # Ensure citation registry survives LangGraph checkpoints
         ]
 
         return create_agent(

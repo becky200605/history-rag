@@ -840,16 +840,20 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 0,
                 "已忽略总结/整合类 todo；最终综合由主任务在子任务结果返回后自行完成。",
             )
-        return Command(
-            update={
-                "todos": normalized,
-                "todo_orchestration": self._build_todo_orchestration_state(
-                    tool_call_id=tool_call_id,
-                    dispatch_state=dispatch_state,
-                ),
-                "messages": [ToolMessage(self._build_tool_message(normalized, summary_lines), tool_call_id=tool_call_id)],
-            },
-        )
+        update_payload: dict[str, Any] = {
+            "todos": normalized,
+            "todo_orchestration": self._build_todo_orchestration_state(
+                tool_call_id=tool_call_id,
+                dispatch_state=dispatch_state,
+            ),
+            "messages": [ToolMessage(self._build_tool_message(normalized, summary_lines), tool_call_id=tool_call_id)],
+        }
+        # Explicitly sync citation registry so LangGraph channel update fires.
+        if runtime is not None and isinstance(getattr(runtime, "state", None), dict):
+            raw_registry = runtime.state.get(KNOWLEDGE_CITATION_REGISTRY_KEY)
+            if isinstance(raw_registry, list) and raw_registry:
+                update_payload[KNOWLEDGE_CITATION_REGISTRY_KEY] = list(raw_registry)
+        return Command(update=update_payload)
 
     @override
     def wrap_model_call(self, request, handler):

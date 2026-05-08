@@ -6,6 +6,7 @@ from langchain_core.runnables import RunnableConfig
 from src.agents.lead_agent.prompt import apply_prompt_template
 from src.agents.middlewares.book_coverage_middleware import BookCoverageMiddleware
 from src.agents.middlewares.citation_enforcement_middleware import CitationEnforcementMiddleware
+from src.agents.middlewares.citation_registry_sync_middleware import CitationRegistrySyncMiddleware
 from src.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from src.agents.middlewares.dangling_tool_call_middleware import DanglingToolCallMiddleware
 from src.agents.middlewares.knowledge_checkpoint_middleware import KnowledgeCheckpointMiddleware
@@ -273,6 +274,7 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
         DanglingToolCallMiddleware(),
         KnowledgeCheckpointMiddleware(),
         CitationEnforcementMiddleware(),
+        CitationRegistrySyncMiddleware(),
     ]
     if not subagent_enabled:
         middlewares.insert(3, BookCoverageMiddleware())

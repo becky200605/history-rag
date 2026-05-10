@@ -58,6 +58,10 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     assert "Recommended Report Shape" in prompt
     assert "Suggested Questions Rule" in prompt
     assert "建议问题" in prompt
+    assert "Task-Memory Gap Dispatch Rule" in prompt
+    assert "下一步行动" in prompt
+    assert "拟下发子任务" in prompt
+    assert "Outputting a `建议问题` section signals that the answer is substantively complete" in prompt
     assert "Noise Filtering Rule" in prompt
     assert "Knowledge Checkpoint Rule" in prompt
     assert "knowledge_checkpoint` is mandatory" in prompt

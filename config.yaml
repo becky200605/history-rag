@@ -253,7 +253,7 @@ subagents:
   # Default timeout in seconds for all subagents (default: 900 = 15 minutes)
   timeout_seconds: 900
   # Optional default model for all subagents.
-  model_name: Minimax-M2.7
+  model_name: MiniMax-M2.7
   # Optional default thinking mode for all subagents.
   thinking_enabled: true
 #

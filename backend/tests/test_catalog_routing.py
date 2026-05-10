@@ -869,8 +869,10 @@ def test_knowledge_search_tool_schema_exposes_doc_ids_as_array() -> None:
 
 def test_knowledge_search_tool_invoke_does_not_require_runtime(monkeypatch) -> None:
     task_memory_stub = ModuleType("src.community.knowledge_base.task_memory")
-    task_memory_stub.search_task_memory = (
-        lambda query, *, title=None, top_k=None: [{"content": "命中", "metadata": {}, "score": 1.0}]
+    task_memory_stub.search_and_prepare_task_memory = (
+        lambda *, query, title=None, target_state=None, top_k=None, task_level=None: [
+            {"content": "命中", "metadata": {}, "score": 1.0}
+        ]
     )
     task_memory_stub.render_task_memory_matches = lambda results, *, heading: f"{heading}\n\nok"
     monkeypatch.setitem(sys.modules, "src.community.knowledge_base.task_memory", task_memory_stub)
@@ -883,7 +885,9 @@ def test_knowledge_search_tool_invoke_does_not_require_runtime(monkeypatch) -> N
 
 def test_knowledge_search_tool_no_result_stops_task_memory_loop(monkeypatch) -> None:
     task_memory_stub = ModuleType("src.community.knowledge_base.task_memory")
-    task_memory_stub.search_task_memory = lambda query, *, title=None, top_k=None: []
+    task_memory_stub.search_and_prepare_task_memory = (
+        lambda *, query, title=None, target_state=None, top_k=None, task_level=None: []
+    )
     task_memory_stub.render_task_memory_matches = (
         lambda results, *, heading: f"{heading}\n\n本轮没有命中可直接复用的历史主任务/子任务结果。"
     )

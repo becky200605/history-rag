@@ -180,6 +180,27 @@ def prepare_task_memory_matches_for_injection(
     return prepared
 
 
+def search_and_prepare_task_memory(
+    *,
+    query: str,
+    title: str | None,
+    target_state: dict[str, Any] | None,
+    top_k: int = TASK_MEMORY_TOP_K,
+    task_level: str | None = None,
+) -> list[dict[str, Any]]:
+    """Search task memory and merge any saved citation registries into ``target_state``.
+
+    This bundles the two atomic steps every caller needs: vector search over historical
+    main-task/subtask records, and merging the saved citation registry of each match
+    into the live state so that ``[citation:N]`` markers in the rendered text point at
+    valid IDs in ``state["knowledge_citation_registry"]``. Skipping the second step
+    leaves the model with orphan citation numbers that the frontend cannot resolve.
+    """
+
+    matches = search_task_memory(query, title=title, top_k=top_k, task_level=task_level)
+    return prepare_task_memory_matches_for_injection(matches, target_state=target_state)
+
+
 def _compact_query_for_storage(query: str, *, task_level: str) -> str:
     cleaned = str(query or "").strip()
     if not cleaned:

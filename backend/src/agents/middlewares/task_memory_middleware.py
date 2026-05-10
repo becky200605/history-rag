@@ -13,8 +13,7 @@ from src.agents.middlewares.title_middleware import generate_title_candidate
 from src.community.knowledge_base.task_memory import (
     build_task_memory_injection_message,
     is_non_reusable_failure_summary,
-    prepare_task_memory_matches_for_injection,
-    search_task_memory,
+    search_and_prepare_task_memory,
     upsert_task_memory_record,
 )
 from src.models import create_chat_model
@@ -240,10 +239,14 @@ class TaskMemoryMiddleware(AgentMiddleware[TaskMemoryMiddlewareState]):
             return updates or None
 
         try:
-            matches = search_task_memory(query, title=current_task_title, top_k=3)
+            prepared_matches = search_and_prepare_task_memory(
+                query=query,
+                title=current_task_title,
+                target_state=state,
+                top_k=3,
+            )
         except Exception:
-            matches = []
-        prepared_matches = prepare_task_memory_matches_for_injection(matches, target_state=state)
+            prepared_matches = []
         match_candidates = _memory_match_candidates(prepared_matches)
         updates["current_task_memory_matches"] = match_candidates
         updates["current_task_memory_match_titles"] = [

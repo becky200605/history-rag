@@ -259,6 +259,110 @@ def test_prepare_task_memory_matches_for_injection_merges_registry_and_rewrites_
     ]
 
 
+def test_search_and_prepare_task_memory_merges_citations_into_target_state(monkeypatch: Any) -> None:
+    new_label = "新档案 第7页第3段"
+    new_url = "/api/knowledge/docs/new.pdf?page_no=7&paragraph_no=3"
+    target_state: dict[str, Any] = {}
+
+    def _fake_search(query: str, *, title: str | None = None, top_k: int = 5, task_level: str | None = None) -> list[dict[str, Any]]:
+        return [
+            {
+                "metadata": {
+                    "summary": "历史摘要[citation:5]",
+                    "findings": ["发现[citation:5]"],
+                    "citations": ["[citation:5]"],
+                    "open_questions": [],
+                    "citation_registry": [
+                        {
+                            "id": "5",
+                            "label": new_label,
+                            "url": new_url,
+                            "stable_key": build_citation_stable_key(citation_label=new_label, citation_link=new_url),
+                        }
+                    ],
+                }
+            }
+        ]
+
+    monkeypatch.setattr(task_memory, "search_task_memory", _fake_search)
+
+    prepared = task_memory.search_and_prepare_task_memory(
+        query="盛宣怀",
+        title=None,
+        target_state=target_state,
+        top_k=3,
+    )
+
+    assert prepared[0]["metadata"]["summary"] == "历史摘要[citation:1]"
+    assert target_state[KNOWLEDGE_CITATION_REGISTRY_KEY] == [
+        {
+            "id": "1",
+            "label": new_label,
+            "url": new_url,
+            "stable_key": build_citation_stable_key(citation_label=new_label, citation_link=new_url),
+        }
+    ]
+
+
+def test_knowledge_search_tool_merges_historical_citations_into_runtime_state(monkeypatch: Any) -> None:
+    """`knowledge_search` (the tool) must register historical citations into state.
+
+    Regression: before this fix the tool called ``search_task_memory`` + render
+    directly and skipped ``prepare_task_memory_matches_for_injection``, so the
+    LLM saw ``[citation:N]`` markers from past records that were not present in
+    ``state["knowledge_citation_registry"]`` — the frontend then could not
+    resolve them when the model copied them into its final answer.
+    """
+
+    from src.community.knowledge_base import tools as knowledge_tools
+
+    historical_label = "历史档案 第3页第2段"
+    historical_url = "/api/knowledge/docs/history.pdf?page_no=3&paragraph_no=2"
+
+    def _fake_search(query: str, *, title: str | None = None, top_k: int = 5, task_level: str | None = None) -> list[dict[str, Any]]:
+        return [
+            {
+                "metadata": {
+                    "summary": "历史结论[citation:7]",
+                    "findings": ["要点[citation:7]"],
+                    "citations": ["[citation:7]"],
+                    "open_questions": [],
+                    "citation_registry": [
+                        {
+                            "id": "7",
+                            "label": historical_label,
+                            "url": historical_url,
+                            "stable_key": build_citation_stable_key(citation_label=historical_label, citation_link=historical_url),
+                        }
+                    ],
+                    "title": "历史任务",
+                    "task_level": "main",
+                    "query": "历史问题",
+                }
+            }
+        ]
+
+    monkeypatch.setattr(task_memory, "search_task_memory", _fake_search)
+
+    runtime_state: dict[str, Any] = {"current_task_title": "当前任务"}
+    fake_runtime = SimpleNamespace(state=runtime_state)
+
+    output = knowledge_tools.knowledge_search_tool.func(runtime=fake_runtime, query="盛宣怀")
+
+    assert "## 检索结果" in output
+    # Historical id 7 must be rewritten to id 1 in the merged registry.
+    assert "[citation:1]" in output
+    assert "[citation:7]" not in output
+    assert runtime_state[KNOWLEDGE_CITATION_REGISTRY_KEY] == [
+        {
+            "id": "1",
+            "label": historical_label,
+            "url": historical_url,
+            "stable_key": build_citation_stable_key(citation_label=historical_label, citation_link=historical_url),
+        }
+    ]
+
+
 def test_prepare_task_memory_matches_for_injection_strips_orphan_citations_without_registry() -> None:
     prepared = task_memory.prepare_task_memory_matches_for_injection(
         [

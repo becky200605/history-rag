@@ -24,8 +24,7 @@ from src.agents.thread_state import SandboxState, ThreadDataState, ThreadState
 from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY
 from src.community.knowledge_base.task_memory import (
     build_task_memory_injection_message,
-    prepare_task_memory_matches_for_injection,
-    search_task_memory,
+    search_and_prepare_task_memory,
     upsert_task_memory_record,
 )
 from src.models import create_chat_model
@@ -532,8 +531,12 @@ class SubagentExecutor:
         messages: list[HumanMessage] = [HumanMessage(content=task)]
         normalized_title = str(task_title or "").strip()
         state: dict[str, Any] = {"messages": messages}
-        matches = search_task_memory(task, title=normalized_title or None, top_k=3)
-        prepared_matches = prepare_task_memory_matches_for_injection(matches, target_state=state)
+        prepared_matches = search_and_prepare_task_memory(
+            query=task,
+            title=normalized_title or None,
+            target_state=state,
+            top_k=3,
+        )
         if prepared_matches:
             messages.append(
                 HumanMessage(

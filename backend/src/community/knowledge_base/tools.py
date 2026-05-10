@@ -1111,11 +1111,15 @@ def knowledge_search_tool(
                 "子任务再自行用 `book_search` 选源，并用 `knowledge_locate(doc_id=...)` 读原文目录、章节页、命中页或连续页正文。"
             )
 
-        from src.community.knowledge_base.task_memory import render_task_memory_matches, search_task_memory
+        from src.community.knowledge_base.task_memory import (
+            render_task_memory_matches,
+            search_and_prepare_task_memory,
+        )
 
         current_task_title = ""
-        if runtime is not None and getattr(runtime, "state", None):
-            current_task_title = str(runtime.state.get("current_task_title") or "").strip()
+        target_state = _tool_runtime_state(runtime) if runtime is not None else None
+        if target_state is not None:
+            current_task_title = str(target_state.get("current_task_title") or "").strip()
 
         logger.info(
             "Knowledge task-memory search start: query=%r current_task_title=%r elapsed_ms=%.1f",
@@ -1123,9 +1127,10 @@ def knowledge_search_tool(
             current_task_title,
             (time.perf_counter() - started_at) * 1000,
         )
-        results = search_task_memory(
-            query,
+        results = search_and_prepare_task_memory(
+            query=query,
             title=current_task_title or None,
+            target_state=target_state,
             top_k=KNOWLEDGE_SEARCH_TOP_K,
         )
         logger.info(

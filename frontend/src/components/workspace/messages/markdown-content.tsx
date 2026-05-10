@@ -33,12 +33,25 @@ function extractCitationHref(citation: string): string | null {
   return rawHref;
 }
 
+// Encodes URI-unsafe characters (raw spaces, Chinese chars, etc.) without
+// touching characters that already participate in a valid `%xx` percent-escape.
+// Plain `encodeURI` would re-encode the `%` of an existing `%E4` into `%25E4`,
+// which compounds across multiple passes — and this helper is invoked at three
+// points along the markdown rendering pipeline (linkify → strip → <a>), so a
+// non-idempotent encode produced URLs with 3-4 levels of encoding by render
+// time. Backends already send single-encoded URLs, so detect existing escapes
+// and leave them alone.
+const VALID_PERCENT_ESCAPE = /%[0-9A-Fa-f]{2}/;
+
 function normalizeInternalCitationHref(href: string | null): string | null {
   if (!href) return null;
   if (
     href.startsWith("/api/knowledge/docs/") ||
     href.startsWith("/api/secure-knowledge/users/me/knowledge/docs/")
   ) {
+    if (VALID_PERCENT_ESCAPE.test(href)) {
+      return href;
+    }
     return encodeURI(href).replace(/%253A/g, "%3A");
   }
   return href;

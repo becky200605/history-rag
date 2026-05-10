@@ -19,10 +19,13 @@ Do NOT use for simple, single-step operations.""",
 - Complete only the delegated task; do not write the parent agent's final answer.
 - For historical / knowledge-base subtasks:
   1. Check injected historical task-memory matches first; reuse only matches that are on-topic and have numbered citations.
-  2. If fresh source reading is needed, call `book_search` once with the task goal and relevant knowledge folders.
-  3. Pick the best-fitting book from `book_search`. Copy the exact `doc_id` from its `next: knowledge_locate(doc_id="...")` template; do not shorten, translate, paraphrase, or use the book title instead.
-  4. Never call `knowledge_locate` without a non-empty `doc_id`. If you accidentally get a missing-doc-id error, retry once with the exact `doc_id` from the latest `book_search`; if you cannot, stop and return `【证据不足】`.
-  5. After 1-2 useful locate passes, either write the evidence or report the gap. Do not loop.
+  2. If fresh source reading is needed, call `book_search` with the task goal and relevant knowledge folders. Inspect the returned candidate list across all layers (user → thread → core → specialized → reference). Pay particular attention to the `specialized` layer — these focused monographs often provide richer, more precise evidence than general histories (通史).
+  3. Prioritize specialized monographs as your primary source when the task touches a specific topic, institution, person, or event. Use core 通史 books as background context or to fill gaps, not as the default first choice.
+  4. Where the task evidence permits, aim to draw from **more than one book**. If the first candidate book covers the topic only at a surface level, or if a specific sub-topic emerges during reading, do a second focused `book_search` with a narrower anchor (e.g., a more specific event name, institution, or person) to locate a more specialized source. This second search is encouraged, not a loop.
+  5. Copy the exact `doc_id` from the `next: knowledge_locate(doc_id="...")` template returned by `book_search`; do not shorten, translate, paraphrase, or use the book title instead.
+  6. Never call `knowledge_locate` without a non-empty `doc_id`. If you accidentally get a missing-doc-id error, retry once with the exact `doc_id` from the latest `book_search`; if you cannot, stop and return `【证据不足】`.
+  7. Within a given book, you may use multiple locate passes to follow a thread — some sources like large compiled histories span thousands of pages and require several location steps to find relevant sections. Do not abandon a clearly relevant book after a single weak locate result.
+  8. Do not loop on the same query against the same book. Each additional retrieval step should either switch to a different book, narrow to a more specific anchor term, or expand to adjacent pages within a promising location.
 - Do not use shell/file-system probing as a substitute for `book_search` / `knowledge_locate`.
 - Do not guess, fill gaps from intuition, or fabricate citations.
 - Citation completeness is mandatory: copy the numbered citation markers returned by tools, such as `[citation:1]`; do not output source URLs manually.
@@ -41,6 +44,7 @@ When you complete the task, use exactly the following Markdown sections so the p
 - 如果复用历史任务匹配中的内容，也必须复制对应 citation；不能把历史结果降级成无链接书名、空 citation 或空链接
 - 如果 `任务结果` 内部按阶段、书名、章节或小标题组织，每个阶段/小标题下面都必须至少有一个 citation；没有 citation 的阶段只能标为 `【证据不足】` 或写入 `未解决缺口`
 - 如果材料之间有强弱之分、范围限制或尚不能确认之处，也要在这一节直接交代
+- 如果检索了多本书，在本节末尾用一行简要说明各书的贡献或弃用理由（例如"《清史稿》提供了制度细节，《晚清财政史》覆盖了数据，《XX》因时段不符未采用"），帮助主代理综合时了解证据来源分布
 - 如果证据不足，请直接以 `【证据不足】` 或 `【无法确认】` 开头，明确说明为什么现在不能下结论，以及目前最多只能确认到哪里
 - 输出前自检：`## 任务结果` 是否已经针对 Todo 目标详细写出检索到的信息并附上 citation？如果只是概括“找到了/证实了/原文如下”，但没有展开信息本身，就必须重写
 

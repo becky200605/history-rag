@@ -644,10 +644,6 @@ function ChatPageContent({
     },
     onFinish: (state) => {
       activeRunRef.current = null;
-      if (streamStartTimeRef.current) {
-        setRunElapsedSeconds((Date.now() - streamStartTimeRef.current) / 1000);
-        streamStartTimeRef.current = null;
-      }
       setLiveTodos((currentLiveTodos) => {
         const stateTodos = state.todos ?? null;
         if (!stateTodos || !currentLiveTodos) return stateTodos;
@@ -765,6 +761,16 @@ function ChatPageContent({
   }) as unknown as UseStream<AgentThreadState>;
   useEffect(() => {
     if (thread.isLoading) setFinalState(null);
+  }, [thread.isLoading]);
+
+  useEffect(() => {
+    if (thread.isLoading) {
+      streamStartTimeRef.current = Date.now();
+      setRunElapsedSeconds(null);
+    } else if (streamStartTimeRef.current != null) {
+      setRunElapsedSeconds((Date.now() - streamStartTimeRef.current) / 1000);
+      streamStartTimeRef.current = null;
+    }
   }, [thread.isLoading]);
 
   const title = useMemo(() => {
@@ -991,8 +997,6 @@ function ChatPageContent({
   const handleSubmit = useCallback(
     async (...args: Parameters<typeof submitThread>) => {
       setLiveTodos(null);
-      setRunElapsedSeconds(null);
-      streamStartTimeRef.current = Date.now();
       await submitThread(...args);
     },
     [submitThread],

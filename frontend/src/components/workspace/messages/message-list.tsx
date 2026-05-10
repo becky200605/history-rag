@@ -227,9 +227,9 @@ export function MessageList({
         })}
         {thread.isLoading && <StreamingIndicator className="my-4" />}
         {!thread.isLoading && runElapsedSeconds != null && (
-          <div className="text-muted-foreground/50 flex items-center gap-1.5 pt-1 pb-2 text-xs">
-            <ClockIcon className="size-3" />
-            {formatDuration(runElapsedSeconds)}
+          <div className="text-muted-foreground flex items-center gap-1.5 py-1 text-xs">
+            <ClockIcon className="size-3.5" />
+            <span>耗时 {formatDuration(runElapsedSeconds)}</span>
           </div>
         )}
         <div style={{ height: `${paddingBottom}px` }} />

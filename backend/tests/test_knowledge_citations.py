@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from src.community.knowledge_base.citations import (
     KNOWLEDGE_CITATION_REGISTRY_KEY,
     build_citation_stable_key,
+    merge_citation_registries,
     merge_citation_registry,
     resolve_result_citation_context,
     rewrite_numbered_citations,
@@ -163,3 +164,62 @@ def test_merge_citation_registry_returns_mapping_for_global_renumbering() -> Non
             "stable_key": build_citation_stable_key(citation_label=new_label, citation_link=new_url),
         },
     ]
+
+
+def test_merge_citation_registries_unions_overlapping_branches_by_stable_key() -> None:
+    """Reducer for the LangGraph channel.
+
+    Regression: ``knowledge_citation_registry`` had no Annotated reducer, so
+    when the LLM emitted parallel tool calls in one step (e.g. two
+    ``knowledge_search`` calls or ``knowledge_search`` alongside a finishing
+    subagent) LangGraph raised INVALID_CONCURRENT_GRAPH_UPDATE because two
+    Commands wrote the same channel. The reducer must dedupe by stable_key
+    so overlapping shared entries collapse into one.
+    """
+
+    shared_label = "共享档案 第1页第1段"
+    shared_url = "/api/knowledge/docs/shared.pdf?page_no=1&paragraph_no=1"
+    branch_a_label = "甲分支档案 第2页第1段"
+    branch_a_url = "/api/knowledge/docs/a.pdf?page_no=2&paragraph_no=1"
+    branch_b_label = "乙分支档案 第3页第1段"
+    branch_b_url = "/api/knowledge/docs/b.pdf?page_no=3&paragraph_no=1"
+
+    shared_entry = {
+        "id": "1",
+        "label": shared_label,
+        "url": shared_url,
+        "stable_key": build_citation_stable_key(citation_label=shared_label, citation_link=shared_url),
+    }
+    branch_a_new = {
+        "id": "2",
+        "label": branch_a_label,
+        "url": branch_a_url,
+        "stable_key": build_citation_stable_key(citation_label=branch_a_label, citation_link=branch_a_url),
+    }
+    branch_b_new = {
+        "id": "2",
+        "label": branch_b_label,
+        "url": branch_b_url,
+        "stable_key": build_citation_stable_key(citation_label=branch_b_label, citation_link=branch_b_url),
+    }
+
+    # Branch A: existing shared + its new entry. Branch B: same shared entry +
+    # a different new entry. The reducer applies branch B on top of branch A.
+    branch_a_registry = [shared_entry, branch_a_new]
+    branch_b_registry = [shared_entry, branch_b_new]
+
+    merged = merge_citation_registries(branch_a_registry, branch_b_registry)
+
+    assert merged == [shared_entry, branch_a_new, branch_b_new]
+
+
+def test_merge_citation_registries_handles_none_branches() -> None:
+    sample = {
+        "id": "1",
+        "label": "档案",
+        "url": "/api/knowledge/docs/x.pdf",
+        "stable_key": build_citation_stable_key(citation_label="档案", citation_link="/api/knowledge/docs/x.pdf"),
+    }
+    assert merge_citation_registries(None, [sample]) == [sample]
+    assert merge_citation_registries([sample], None) == [sample]
+    assert merge_citation_registries(None, None) == []

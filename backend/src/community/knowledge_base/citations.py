@@ -160,6 +160,64 @@ def merge_citation_registry(
     return mapping
 
 
+def merge_citation_registries(
+    existing: list[dict[str, Any]] | None,
+    new: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """LangGraph reducer for ``knowledge_citation_registry``.
+
+    Required because multiple tool calls in a single step (e.g. two parallel
+    ``knowledge_search`` calls, or ``knowledge_search`` next to a subagent
+    finishing in the same step) can each emit a ``Command`` writing this key.
+    Without a reducer LangGraph raises ``INVALID_CONCURRENT_GRAPH_UPDATE``.
+
+    Strategy: union by ``stable_key`` (falling back to ``label|url``); the
+    existing list wins on dedupe so previously-assigned numeric IDs remain
+    stable across the merge. Branches that registered the same citation will
+    collapse cleanly. Branches that genuinely registered different new
+    citations may end up with id collisions (each branch numbered from the
+    same snapshot) — those new entries are still appended, which is better
+    than dropping them, but the in-message ``[citation:N]`` markers from one
+    of the branches will resolve to the wrong entry. Avoid relying on this
+    edge case; surface registrations through a single tool when possible.
+    """
+
+    if existing is None:
+        return [item for item in (new or []) if isinstance(item, dict)]
+    if new is None:
+        return [item for item in existing if isinstance(item, dict)]
+
+    def _dedupe_key(item: dict[str, Any]) -> str | None:
+        stable_key = str(item.get("stable_key") or "").strip()
+        if stable_key:
+            return f"sk:{stable_key}"
+        label = _normalize_citation_label(str(item.get("label") or "").strip())
+        url = _normalize_citation_url_for_key(str(item.get("url") or "").strip())
+        if not label and not url:
+            return None
+        return f"lu:{label}|{url}"
+
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in existing:
+        if not isinstance(item, dict):
+            continue
+        merged.append(item)
+        key = _dedupe_key(item)
+        if key:
+            seen.add(key)
+    for item in new:
+        if not isinstance(item, dict):
+            continue
+        key = _dedupe_key(item)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        merged.append(item)
+    return merged
+
+
 def citation_registry_update_fragment(state: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
     """Return a LangGraph update fragment that syncs the citation registry channel.
 

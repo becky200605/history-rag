@@ -2,6 +2,8 @@ from typing import Annotated, NotRequired, TypedDict
 
 from langchain.agents import AgentState
 
+from src.community.knowledge_base.citations import merge_citation_registries
+
 
 class SandboxState(TypedDict):
     sandbox_id: NotRequired[str | None]
@@ -72,4 +74,4 @@ class ThreadState(AgentState):
     knowledge_covered_doc_ids: NotRequired[list[str] | None]
     knowledge_reading_set_query: NotRequired[str | None]
     knowledge_reading_set_human_index: NotRequired[int | None]
-    knowledge_citation_registry: NotRequired[list[dict] | None]
+    knowledge_citation_registry: Annotated[list[dict], merge_citation_registries]

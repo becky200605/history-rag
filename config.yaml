@@ -23,18 +23,18 @@ models:
   #   max_tokens: 8192
   #   supports_vision: true  # Enable vision support for view_image tool
 
-  # - name: MiniMax-M2.7
-  #   display_name: MiniMax M2.7
-  #   use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
-  #   model: MiniMax-M2.7
-  #   base_url: https://api.minimaxi.com/v1
-  #   api_key: sk-cp-r1RLEOXiiPhLR7R_VNQE4CfaXSXAq9RcxsLnPUuQi9b2LUsW_hCogwwGPQ75WMcEhvVcbC3U4aoIRw-I5Z43jWVzV-TL_j_bd4mt3mASE7OZ4u9sOGPObGA
-  #   max_tokens: 8192
-  #   timeout: 18000
-  #   extra_body:
-  #     reasoning_split: true
-  #   supports_thinking: true
-  #   supports_vision: false
+  - name: MiniMax-M2.7
+    display_name: MiniMax M2.7
+    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
+    model: MiniMax-M2.7
+    base_url: https://api.minimaxi.com/v1
+    api_key: sk-cp-r1RLEOXiiPhLR7R_VNQE4CfaXSXAq9RcxsLnPUuQi9b2LUsW_hCogwwGPQ75WMcEhvVcbC3U4aoIRw-I5Z43jWVzV-TL_j_bd4mt3mASE7OZ4u9sOGPObGA
+    max_tokens: 8192
+    timeout: 18000
+    extra_body:
+      reasoning_split: true
+    supports_thinking: true
+    supports_vision: false
 
   - name: deepseek-v4-flash
     display_name: DeepSeek V4 Flash

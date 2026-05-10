@@ -148,7 +148,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
-            <SidebarMenuItem className="collapsed-stack-item group/menu-item">
+            {/* <SidebarMenuItem className="collapsed-stack-item group/menu-item">
               <SidebarMenuButton
                 isActive={isKnowledgeDebugActive}
                 asChild
@@ -171,7 +171,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
                   </span>
                 </Link>
               </SidebarMenuButton>
-            </SidebarMenuItem>
+            </SidebarMenuItem> */}
           </>
         )}
       </>

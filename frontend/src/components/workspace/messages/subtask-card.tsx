@@ -2,6 +2,7 @@ import {
   CheckCircleIcon,
   ChevronUp,
   ClipboardListIcon,
+  ClockIcon,
   Loader2Icon,
   XCircleIcon,
 } from "lucide-react";
@@ -29,6 +30,15 @@ import { CitationLink } from "../citations/citation-link";
 import { FlipDisplay } from "../flip-display";
 
 import { MarkdownContent } from "./markdown-content";
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`;
+  }
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
 
 export function SubtaskCard({
   className,
@@ -113,6 +123,12 @@ export function SubtaskCard({
                         ? explainLastToolCall(task.latestMessage, t)
                         : t.subtasks[task.status]}
                     </FlipDisplay>
+                    {task.executionTimeSeconds != null && task.status !== "in_progress" && (
+                      <span className="text-muted-foreground/60 flex items-center gap-0.5">
+                        <ClockIcon className="size-3" />
+                        {formatDuration(task.executionTimeSeconds)}
+                      </span>
+                    )}
                   </div>
                 )}
                 <ChevronUp
@@ -151,7 +167,17 @@ export function SubtaskCard({
           {task.status === "completed" && (
             <>
               <ChainOfThoughtStep
-                label={t.subtasks.completed}
+                label={
+                  <span className="flex items-center gap-2">
+                    {t.subtasks.completed}
+                    {task.executionTimeSeconds != null && (
+                      <span className="text-muted-foreground/60 flex items-center gap-1 text-xs font-normal">
+                        <ClockIcon className="size-3" />
+                        {formatDuration(task.executionTimeSeconds)}
+                      </span>
+                    )}
+                  </span>
+                }
                 icon={<CheckCircleIcon className="size-4" />}
               ></ChainOfThoughtStep>
               <ChainOfThoughtStep

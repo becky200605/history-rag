@@ -14,4 +14,5 @@ export interface Subtask {
   citations?: string[];
   openQuestions?: string[];
   error?: string;
+  executionTimeSeconds?: number;
 }

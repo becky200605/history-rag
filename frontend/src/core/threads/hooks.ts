@@ -75,11 +75,13 @@ export function useThreadStream({
               findings?: string[];
               citations?: string[];
               open_questions?: string[];
+              execution_time_seconds?: number;
             }
           | {
               type: "task_failed" | "task_timed_out";
               task_id: string;
               error?: string;
+              execution_time_seconds?: number;
             }
           | {
               type: "todo_board_updated";
@@ -114,12 +116,14 @@ export function useThreadStream({
             findings: e.findings,
             citations: e.citations,
             openQuestions: e.open_questions,
+            executionTimeSeconds: e.execution_time_seconds,
           });
         } else if (e.type === "task_failed" || e.type === "task_timed_out") {
           updateSubtask({
             id: e.task_id,
             status: "failed",
             error: e.error,
+            executionTimeSeconds: e.execution_time_seconds,
           });
         }
       }

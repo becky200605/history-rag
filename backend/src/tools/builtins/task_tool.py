@@ -185,11 +185,13 @@ def task_tool(
 
             # Check if task completed, failed, or timed out
             if result.status == SubagentStatus.COMPLETED:
-                writer({"type": "task_completed", "task_id": task_id, "result": result.result})
+                execution_time = (result.completed_at - result.started_at).total_seconds() if result.started_at and result.completed_at else None
+                writer({"type": "task_completed", "task_id": task_id, "result": result.result, "execution_time_seconds": execution_time})
                 logger.info(f"[trace={trace_id}] Task {task_id} completed after {poll_count} polls")
                 return f"Task Succeeded. Result: {result.result}"
             elif result.status == SubagentStatus.FAILED:
-                writer({"type": "task_failed", "task_id": task_id, "error": result.error})
+                execution_time = (result.completed_at - result.started_at).total_seconds() if result.started_at and result.completed_at else None
+                writer({"type": "task_failed", "task_id": task_id, "error": result.error, "execution_time_seconds": execution_time})
                 logger.error(f"[trace={trace_id}] Task {task_id} failed: {result.error}")
                 append_error_doc(
                     location="task_tool",
@@ -204,7 +206,8 @@ def task_tool(
                 )
                 return f"Task failed. Error: {result.error}"
             elif result.status == SubagentStatus.TIMED_OUT:
-                writer({"type": "task_timed_out", "task_id": task_id, "error": result.error})
+                execution_time = (result.completed_at - result.started_at).total_seconds() if result.started_at and result.completed_at else None
+                writer({"type": "task_timed_out", "task_id": task_id, "error": result.error, "execution_time_seconds": execution_time})
                 logger.warning(f"[trace={trace_id}] Task {task_id} timed out: {result.error}")
                 append_error_doc(
                     location="task_tool",

@@ -2,6 +2,7 @@ import {
   CheckCircle2Icon,
   ChevronUpIcon,
   CircleDotIcon,
+  ClockIcon,
   ListTodoIcon,
   Loader2Icon,
   XCircleIcon,
@@ -103,6 +104,15 @@ export function TodoList({
   );
 }
 
+function formatDuration(seconds: number): string {
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`;
+  }
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
 function TodoListItem({
   todo,
   selected,
@@ -134,6 +144,10 @@ function TodoListItem({
     hasToolCalls(linkedSubtask.latestMessage)
       ? explainLastToolCall(linkedSubtask.latestMessage, t)
       : null;
+
+  const executionTime = todo.task_id
+    ? linkedSubtask?.executionTimeSeconds
+    : todo.executionTimeSeconds;
 
   const statusIcon =
     detailStatus === "completed" ? (
@@ -197,6 +211,12 @@ function TodoListItem({
                 <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground/75">
                   {statusIcon}
                   <span className="truncate">{liveAction ?? detailLabel}</span>
+                  {executionTime != null && detailStatus !== "in_progress" && (
+                    <span className="flex shrink-0 items-center gap-0.5 opacity-60">
+                      <ClockIcon className="size-3" />
+                      {formatDuration(executionTime)}
+                    </span>
+                  )}
                 </div>
               )}
             </div>

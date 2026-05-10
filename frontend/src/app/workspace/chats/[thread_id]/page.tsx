@@ -152,12 +152,14 @@ type TaskCompletedEvent = {
   findings?: string[];
   citations?: string[];
   open_questions?: string[];
+  execution_time_seconds?: number;
 };
 
 type TaskFailedEvent = {
   type: "task_failed" | "task_timed_out";
   task_id: string;
   error?: string;
+  execution_time_seconds?: number;
 };
 
 type TodoBoardUpdatedEvent = {
@@ -332,6 +334,7 @@ function mergeTaskEventIntoTodos(
         ...todo,
         status: "in_progress" as const,
         task_description: event.description ?? todo.task_description ?? todo.content,
+        startedAt: Date.now(),
       };
     }
 
@@ -357,6 +360,7 @@ function mergeTaskEventIntoTodos(
         structured_findings: event.findings ?? todo.structured_findings,
         structured_citations: event.citations ?? todo.structured_citations,
         structured_gaps: event.open_questions ?? todo.structured_gaps,
+        executionTimeSeconds: event.execution_time_seconds ?? (todo.startedAt ? (Date.now() - todo.startedAt) / 1000 : undefined),
       };
     }
 
@@ -364,6 +368,7 @@ function mergeTaskEventIntoTodos(
       ...todo,
       status: "failed" as const,
       error: event.error ?? todo.error,
+      executionTimeSeconds: event.execution_time_seconds ?? (todo.startedAt ? (Date.now() - todo.startedAt) / 1000 : undefined),
     };
   });
 
@@ -586,6 +591,8 @@ function ChatPageContent({
     [persistedContext, settings.context],
   );
   const updateSubtask = useUpdateSubtask();
+  const streamStartTimeRef = useRef<number | null>(null);
+  const [runElapsedSeconds, setRunElapsedSeconds] = useState<number | null>(null);
   const [liveTodos, setLiveTodos] = useState<Todo[] | null>(null);
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
   const [selectedTodoDraft, setSelectedTodoDraft] = useState<Todo | null>(null);
@@ -637,7 +644,23 @@ function ChatPageContent({
     },
     onFinish: (state) => {
       activeRunRef.current = null;
-      setLiveTodos(state.todos ?? null);
+      if (streamStartTimeRef.current) {
+        setRunElapsedSeconds((Date.now() - streamStartTimeRef.current) / 1000);
+        streamStartTimeRef.current = null;
+      }
+      setLiveTodos((currentLiveTodos) => {
+        const stateTodos = state.todos ?? null;
+        if (!stateTodos || !currentLiveTodos) return stateTodos;
+        return stateTodos.map((todo) => {
+          const live = currentLiveTodos.find((t) => todosMatch(t, todo));
+          if (!live) return todo;
+          return {
+            ...todo,
+            executionTimeSeconds: todo.executionTimeSeconds ?? live.executionTimeSeconds,
+            startedAt: todo.startedAt ?? live.startedAt,
+          };
+        });
+      });
       setFinalState(state);
       if (document.hidden || !document.hasFocus()) {
         let body = "Conversation finished";
@@ -673,7 +696,7 @@ function ChatPageContent({
               return todo;
             }
 
-            return {
+            const merged = {
               ...currentTodo,
               ...todo,
               stream_messages: todo.stream_messages ?? currentTodo.stream_messages,
@@ -690,6 +713,20 @@ function ChatPageContent({
               task_description:
                 todo.task_description ?? currentTodo.task_description,
             };
+            // Track timing for main todos (no delegated task_id) via status transitions
+            if (!todo.task_id) {
+              if (todo.status === "in_progress" && currentTodo.status !== "in_progress") {
+                merged.startedAt = Date.now();
+              } else {
+                merged.startedAt = currentTodo.startedAt;
+              }
+              if ((todo.status === "completed" || todo.status === "failed") && currentTodo.startedAt && !currentTodo.executionTimeSeconds) {
+                merged.executionTimeSeconds = (Date.now() - currentTodo.startedAt) / 1000;
+              } else {
+                merged.executionTimeSeconds = currentTodo.executionTimeSeconds ?? merged.executionTimeSeconds;
+              }
+            }
+            return merged;
           });
         });
         if (event.todos.length > 0) {
@@ -954,6 +991,8 @@ function ChatPageContent({
   const handleSubmit = useCallback(
     async (...args: Parameters<typeof submitThread>) => {
       setLiveTodos(null);
+      setRunElapsedSeconds(null);
+      streamStartTimeRef.current = Date.now();
       await submitThread(...args);
     },
     [submitThread],
@@ -1246,6 +1285,7 @@ function ChatPageContent({
                         : undefined
                     }
                     paddingBottom={todoListCollapsed ? 140 : 400}
+                    runElapsedSeconds={!thread.isLoading ? runElapsedSeconds ?? undefined : undefined}
                   />
                 </div>
                 <div className="absolute right-0 bottom-0 left-0 z-30 flex justify-center px-4">

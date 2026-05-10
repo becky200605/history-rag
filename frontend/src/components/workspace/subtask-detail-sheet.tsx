@@ -4,6 +4,7 @@ import type { AIMessage, Message } from "@langchain/langgraph-sdk";
 import {
   CheckCircle2Icon,
   CircleDotIcon,
+  ClockIcon,
   Loader2Icon,
   XCircleIcon,
 } from "lucide-react";
@@ -91,6 +92,7 @@ export function SubtaskDetailSheet({
   const fallbackOpenQuestions =
     linkedSubtask?.openQuestions ?? todo?.structured_gaps ?? [];
   const fallbackError = linkedSubtask?.error ?? todo?.error;
+  const executionTimeSeconds = linkedSubtask?.executionTimeSeconds ?? todo?.executionTimeSeconds;
   const threadCitationRegistry = thread.values.knowledge_citation_registry as
     | import("@/core/threads").KnowledgeCitationRegistryItem[]
     | undefined;
@@ -172,6 +174,14 @@ export function SubtaskDetailSheet({
           <SheetDescription className="flex items-center gap-2 text-xs">
             {statusIcon}
             <span>{statusLabel(detailStatus, t)}</span>
+            {executionTimeSeconds != null && detailStatus !== "in_progress" && (
+              <span className="text-muted-foreground/60 flex items-center gap-1">
+                <ClockIcon className="size-3" />
+                {executionTimeSeconds < 60
+                  ? `${Math.round(executionTimeSeconds)}s`
+                  : `${Math.floor(executionTimeSeconds / 60)}m ${Math.round(executionTimeSeconds % 60)}s`}
+              </span>
+            )}
           </SheetDescription>
         </SheetHeader>
 

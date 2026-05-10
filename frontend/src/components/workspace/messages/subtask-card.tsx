@@ -167,17 +167,7 @@ export function SubtaskCard({
           {task.status === "completed" && (
             <>
               <ChainOfThoughtStep
-                label={
-                  <span className="flex items-center gap-2">
-                    {t.subtasks.completed}
-                    {task.executionTimeSeconds != null && (
-                      <span className="text-muted-foreground/60 flex items-center gap-1 text-xs font-normal">
-                        <ClockIcon className="size-3" />
-                        {formatDuration(task.executionTimeSeconds)}
-                      </span>
-                    )}
-                  </span>
-                }
+                label={t.subtasks.completed}
                 icon={<CheckCircleIcon className="size-4" />}
               ></ChainOfThoughtStep>
               <ChainOfThoughtStep
@@ -192,13 +182,27 @@ export function SubtaskCard({
                   ) : null
                 }
               ></ChainOfThoughtStep>
+              {task.executionTimeSeconds != null && (
+                <div className="text-muted-foreground/50 mt-1 flex items-center gap-1.5 text-xs">
+                  <ClockIcon className="size-3" />
+                  {formatDuration(task.executionTimeSeconds)}
+                </div>
+              )}
             </>
           )}
           {task.status === "failed" && (
-            <ChainOfThoughtStep
-              label={<div className="text-red-500">{task.error}</div>}
-              icon={<XCircleIcon className="size-4 text-red-500" />}
-            ></ChainOfThoughtStep>
+            <>
+              <ChainOfThoughtStep
+                label={<div className="text-red-500">{task.error}</div>}
+                icon={<XCircleIcon className="size-4 text-red-500" />}
+              ></ChainOfThoughtStep>
+              {task.executionTimeSeconds != null && (
+                <div className="text-muted-foreground/50 mt-1 flex items-center gap-1.5 text-xs">
+                  <ClockIcon className="size-3" />
+                  {formatDuration(task.executionTimeSeconds)}
+                </div>
+              )}
+            </>
           )}
         </ChainOfThoughtContent>
       </div>

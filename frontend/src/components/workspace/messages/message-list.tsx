@@ -1,5 +1,6 @@
 import type { Message } from "@langchain/langgraph-sdk";
 import type { UseStream } from "@langchain/langgraph-sdk/react";
+import { ClockIcon } from "lucide-react";
 
 import {
   Conversation,
@@ -31,6 +32,13 @@ import { MessageListItem } from "./message-list-item";
 import { MessageListSkeleton } from "./skeleton";
 import { SubtaskCard } from "./subtask-card";
 
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
 export function MessageList({
   className,
   threadId,
@@ -38,6 +46,7 @@ export function MessageList({
   messagesOverride,
   citationRegistryOverride,
   paddingBottom = 160,
+  runElapsedSeconds,
 }: {
   className?: string;
   threadId: string;
@@ -47,6 +56,7 @@ export function MessageList({
   /** Keep messages and citation registry from the same completed state snapshot. */
   citationRegistryOverride?: KnowledgeCitationRegistryItem[];
   paddingBottom?: number;
+  runElapsedSeconds?: number;
 }) {
   const { t } = useI18n();
   const rehypePlugins = useRehypeSplitWordsIntoSpans(thread.isLoading);
@@ -216,6 +226,12 @@ export function MessageList({
           );
         })}
         {thread.isLoading && <StreamingIndicator className="my-4" />}
+        {!thread.isLoading && runElapsedSeconds != null && (
+          <div className="text-muted-foreground/50 flex items-center gap-1.5 pt-1 pb-2 text-xs">
+            <ClockIcon className="size-3" />
+            {formatDuration(runElapsedSeconds)}
+          </div>
+        )}
         <div style={{ height: `${paddingBottom}px` }} />
       </ConversationContent>
     </Conversation>

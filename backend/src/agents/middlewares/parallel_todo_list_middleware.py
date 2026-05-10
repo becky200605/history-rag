@@ -21,7 +21,11 @@ from typing_extensions import NotRequired, TypedDict, cast, override
 
 from src.agents.lead_agent.prompt import get_skills_prompt_section
 from src.agents.thread_state import ThreadState
-from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY, merge_citation_registry, rewrite_numbered_citations
+from src.community.knowledge_base.citations import (
+    citation_registry_update_fragment,
+    merge_citation_registry,
+    rewrite_numbered_citations,
+)
 from src.community.knowledge_base.reading_state import (
     COVERED_DOC_IDS_KEY,
     get_active_reading_state,
@@ -849,10 +853,11 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
             "messages": [ToolMessage(self._build_tool_message(normalized, summary_lines), tool_call_id=tool_call_id)],
         }
         # Explicitly sync citation registry so LangGraph channel update fires.
-        if runtime is not None and isinstance(getattr(runtime, "state", None), dict):
-            raw_registry = runtime.state.get(KNOWLEDGE_CITATION_REGISTRY_KEY)
-            if isinstance(raw_registry, list) and raw_registry:
-                update_payload[KNOWLEDGE_CITATION_REGISTRY_KEY] = list(raw_registry)
+        update_payload.update(
+            citation_registry_update_fragment(
+                runtime.state if runtime is not None and isinstance(getattr(runtime, "state", None), dict) else None
+            )
+        )
         return Command(update=update_payload)
 
     @override

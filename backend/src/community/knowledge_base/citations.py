@@ -160,6 +160,25 @@ def merge_citation_registry(
     return mapping
 
 
+def citation_registry_update_fragment(state: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
+    """Return a LangGraph update fragment that syncs the citation registry channel.
+
+    LangGraph only fires channel updates on values returned from middleware /
+    tool handlers; in-place mutation of ``runtime.state`` does NOT propagate.
+    Any code path that calls ``merge_citation_registry`` (directly or via
+    ``prepare_task_memory_matches_for_injection``) must merge this fragment
+    into its returned update payload, otherwise the merged citations will not
+    reach the frontend even though the in-memory state dict looks correct.
+    """
+
+    if not isinstance(state, dict):
+        return {}
+    raw = state.get(KNOWLEDGE_CITATION_REGISTRY_KEY)
+    if not isinstance(raw, list) or not raw:
+        return {}
+    return {KNOWLEDGE_CITATION_REGISTRY_KEY: list(raw)}
+
+
 def rewrite_numbered_citations(text: str, citation_id_mapping: dict[str, str]) -> str:
     """Rewrite bare numbered citation markers according to a registry id mapping."""
 

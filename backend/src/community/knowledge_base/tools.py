@@ -5,14 +5,16 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeVar
 
+from langchain_core.messages import ToolMessage
+from langgraph.types import Command
 from pydantic import BaseModel, Field, field_validator
 
 try:
-    from langchain.tools import ToolRuntime, tool
+    from langchain.tools import InjectedToolCallId, ToolRuntime, tool
 except ImportError:  # pragma: no cover - compatibility with older LangChain layouts
-    from langchain.tools import tool
+    from langchain.tools import InjectedToolCallId, tool
 
     _ToolRuntimeContextT = TypeVar("_ToolRuntimeContextT")
     _ToolRuntimeStateT = TypeVar("_ToolRuntimeStateT")
@@ -43,7 +45,11 @@ from src.community.knowledge_base.catalog import (
     render_book_catalog_directory_tree,
     search_book_catalog,
 )
-from src.community.knowledge_base.citations import register_citation_marker, resolve_result_citation_context
+from src.community.knowledge_base.citations import (
+    citation_registry_update_fragment,
+    register_citation_marker,
+    resolve_result_citation_context,
+)
 from src.community.knowledge_base.common import tokenize_search_text
 from src.community.knowledge_base.locator import LocatedDocument, extract_document_context, locate_document
 from src.community.knowledge_base.reading_state import (
@@ -1083,7 +1089,8 @@ def knowledge_search_tool(
     doc_ids: list[str] | None = None,
     scopes: str | None = None,
     knowledge_folders: list[str] | None = None,
-) -> str:
+    tool_call_id: Annotated[str | None, InjectedToolCallId] = None,
+) -> str | Command:
     """Search historical main-task/subtask results in the task-memory vector store.
 
     `knowledge_search` now prioritizes the dedicated task-memory collection
@@ -1092,6 +1099,28 @@ def knowledge_search_tool(
     similarity. The deprecated compatibility fields (`doc_ids`, `scopes`,
     `knowledge_folders`) are ignored.
     """
+
+    def _finalize(output_text: str, *, target_state: dict[str, Any] | None) -> str | Command:
+        # If the caller did not give us a tool_call_id (e.g. the gateway debug
+        # endpoint or tests invoking the tool directly), there is no ToolMessage
+        # to attach the registry to — fall back to returning the raw text.
+        if not tool_call_id:
+            return output_text
+        update: dict[str, Any] = {
+            "messages": [
+                ToolMessage(
+                    content=output_text,
+                    tool_call_id=tool_call_id,
+                    name="knowledge_search",
+                )
+            ],
+        }
+        # search_and_prepare_task_memory mutated runtime.state in place, but
+        # LangGraph only fires channel updates on values returned via Command,
+        # so we must echo the merged registry back through `update`.
+        update.update(citation_registry_update_fragment(target_state))
+        return Command(update=update)
+
     started_at = time.perf_counter()
     try:
         if doc_ids or scopes or knowledge_folders:
@@ -1102,13 +1131,16 @@ def knowledge_search_tool(
                 scopes,
                 knowledge_folders or [],
             )
-            return (
-                "## 检索结果\n\n"
-                "`knowledge_search` 现在只检索历史主任务/子任务结果，不检索书籍正文；"
-                "`doc_ids`、`scopes`、`knowledge_folders` 在这里都是误用参数。\n\n"
-                "---\n"
-                "不要继续改写 query 反复调用 `knowledge_search`。如果当前是主任务，下一步应按证据缺口或探索方向派发子任务；"
-                "子任务再自行用 `book_search` 选源，并用 `knowledge_locate(doc_id=...)` 读原文目录、章节页、命中页或连续页正文。"
+            return _finalize(
+                (
+                    "## 检索结果\n\n"
+                    "`knowledge_search` 现在只检索历史主任务/子任务结果，不检索书籍正文；"
+                    "`doc_ids`、`scopes`、`knowledge_folders` 在这里都是误用参数。\n\n"
+                    "---\n"
+                    "不要继续改写 query 反复调用 `knowledge_search`。如果当前是主任务，下一步应按证据缺口或探索方向派发子任务；"
+                    "子任务再自行用 `book_search` 选源，并用 `knowledge_locate(doc_id=...)` 读原文目录、章节页、命中页或连续页正文。"
+                ),
+                target_state=None,
             )
 
         from src.community.knowledge_base.task_memory import (
@@ -1146,7 +1178,7 @@ def knowledge_search_tool(
             query,
             (time.perf_counter() - started_at) * 1000,
         )
-        return f"Error searching task memory: {e}"
+        return _finalize(f"Error searching task memory: {e}", target_state=None)
 
     if "本轮没有命中" in output:
         output += (
@@ -1155,7 +1187,7 @@ def knowledge_search_tool(
             "下一步直接从零走原始资料路线：主任务按证据缺口或探索方向派发子任务；"
             "子任务再用 `book_search` 选源，并用 `knowledge_locate` 读目录、章节页、命中页或连续页正文。"
         )
-    return output
+    return _finalize(output, target_state=target_state)
 
 
 @tool("knowledge_locate", parse_docstring=True)

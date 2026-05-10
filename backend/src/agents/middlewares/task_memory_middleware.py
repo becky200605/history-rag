@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.runtime import Runtime
 
 from src.agents.middlewares.title_middleware import generate_title_candidate
+from src.community.knowledge_base.citations import citation_registry_update_fragment
 from src.community.knowledge_base.task_memory import (
     build_task_memory_injection_message,
     is_non_reusable_failure_summary,
@@ -253,6 +254,10 @@ class TaskMemoryMiddleware(AgentMiddleware[TaskMemoryMiddlewareState]):
             candidate["title"] for candidate in match_candidates if candidate.get("title")
         ]
         updates["task_memory_injected_human_index"] = human_index
+        # search_and_prepare_task_memory mutated state["knowledge_citation_registry"]
+        # in place, but LangGraph only fires channel updates from returned values,
+        # so we must echo the merged registry back through `updates`.
+        updates.update(citation_registry_update_fragment(state))
         if not prepared_matches:
             return updates or None
 

@@ -311,8 +311,12 @@ def test_knowledge_search_tool_merges_historical_citations_into_runtime_state(mo
     directly and skipped ``prepare_task_memory_matches_for_injection``, so the
     LLM saw ``[citation:N]`` markers from past records that were not present in
     ``state["knowledge_citation_registry"]`` — the frontend then could not
-    resolve them when the model copied them into its final answer.
+    resolve them when the model copied them into its final answer. The tool
+    must additionally return a ``Command`` whose update payload echoes the
+    merged registry, otherwise the LangGraph channel does not fire.
     """
+
+    from langgraph.types import Command
 
     from src.community.knowledge_base import tools as knowledge_tools
 
@@ -347,13 +351,21 @@ def test_knowledge_search_tool_merges_historical_citations_into_runtime_state(mo
     runtime_state: dict[str, Any] = {"current_task_title": "当前任务"}
     fake_runtime = SimpleNamespace(state=runtime_state)
 
-    output = knowledge_tools.knowledge_search_tool.func(runtime=fake_runtime, query="盛宣怀")
+    result = knowledge_tools.knowledge_search_tool.func(
+        runtime=fake_runtime,
+        query="盛宣怀",
+        tool_call_id="call-knowledge-search-1",
+    )
 
+    assert isinstance(result, Command)
+    update = result.update
+    tool_message = update["messages"][0]
+    output = tool_message.content
     assert "## 检索结果" in output
     # Historical id 7 must be rewritten to id 1 in the merged registry.
     assert "[citation:1]" in output
     assert "[citation:7]" not in output
-    assert runtime_state[KNOWLEDGE_CITATION_REGISTRY_KEY] == [
+    expected_registry = [
         {
             "id": "1",
             "label": historical_label,
@@ -361,6 +373,10 @@ def test_knowledge_search_tool_merges_historical_citations_into_runtime_state(mo
             "stable_key": build_citation_stable_key(citation_label=historical_label, citation_link=historical_url),
         }
     ]
+    # The mutation has to be present both in the live state (for in-process readers)
+    # and the returned update payload (so LangGraph fires the channel).
+    assert runtime_state[KNOWLEDGE_CITATION_REGISTRY_KEY] == expected_registry
+    assert update[KNOWLEDGE_CITATION_REGISTRY_KEY] == expected_registry
 
 
 def test_prepare_task_memory_matches_for_injection_strips_orphan_citations_without_registry() -> None:
@@ -392,6 +408,65 @@ class _DecisionModel:
 
     def invoke(self, _messages: list[Any]) -> SimpleNamespace:
         return SimpleNamespace(content=self.payload)
+
+
+def test_task_memory_middleware_before_model_returns_merged_registry_in_updates(monkeypatch: Any) -> None:
+    """`before_model` must echo the merged registry through its returned updates.
+
+    Regression: the middleware was mutating ``state["knowledge_citation_registry"]``
+    in place via ``search_and_prepare_task_memory`` but only returning
+    ``messages`` / ``current_task_*`` keys. LangGraph only fires channel updates
+    on values present in the returned dict, so the historical citations never
+    reached the frontend even though the in-memory state dict looked correct.
+    """
+
+    historical_label = "档案 第9页第1段"
+    historical_url = "/api/knowledge/docs/foo.pdf?page_no=9&paragraph_no=1"
+
+    def _fake_search_and_prepare(*, query: str, title: str | None, target_state: dict[str, Any] | None, top_k: int, task_level: str | None = None) -> list[dict[str, Any]]:
+        # Mimic the production helper's side effect: merge the saved registry
+        # into ``target_state`` and return the prepared matches.
+        if isinstance(target_state, dict):
+            registry = target_state.setdefault(KNOWLEDGE_CITATION_REGISTRY_KEY, [])
+            registry.append(
+                {
+                    "id": "1",
+                    "label": historical_label,
+                    "url": historical_url,
+                    "stable_key": build_citation_stable_key(citation_label=historical_label, citation_link=historical_url),
+                }
+            )
+        return [
+            {
+                "metadata": {
+                    "summary": "历史摘要[citation:1]",
+                    "findings": [],
+                    "citations": ["[citation:1]"],
+                    "open_questions": [],
+                    "title": "历史任务",
+                    "task_level": "main",
+                    "query": "历史问题",
+                }
+            }
+        ]
+
+    monkeypatch.setattr(task_memory_middleware, "search_and_prepare_task_memory", _fake_search_and_prepare)
+    monkeypatch.setattr(task_memory_middleware, "generate_title_candidate", lambda query: "当前任务标题")
+
+    middleware = task_memory_middleware.TaskMemoryMiddleware()
+    state = {"messages": [HumanMessage(content="盛宣怀与招商局关系？")]}
+
+    result = middleware.before_model(state, SimpleNamespace(context={"thread_id": "t1", "user_id": "u1"}))
+
+    assert result is not None
+    assert result[KNOWLEDGE_CITATION_REGISTRY_KEY] == [
+        {
+            "id": "1",
+            "label": historical_label,
+            "url": historical_url,
+            "stable_key": build_citation_stable_key(citation_label=historical_label, citation_link=historical_url),
+        }
+    ]
 
 
 def test_task_memory_middleware_skips_qdrant_write_when_model_says_skip(monkeypatch: Any) -> None:

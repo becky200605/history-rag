@@ -3,6 +3,7 @@
 import json
 import logging
 import math
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -739,6 +740,56 @@ def _build_user_entries(
     return entries
 
 
+_CATALOG_CACHE_TTL: float = 30.0  # seconds — short enough to pick up newly ingested books
+_catalog_cache: dict[tuple, tuple[list, float, float]] = {}  # key -> (entries, monotonic_build_time, mtime_sig)
+_catalog_cache_lock = threading.Lock()
+
+
+def _catalog_mtime_signature(docs_root: Path, user_id: str | None, thread_id: str | None) -> float:
+    """Return the sum of directory mtimes for all relevant catalog roots.
+
+    Changes whenever a file is added/removed/replaced in those roots, which
+    is the trigger for cache invalidation.
+    """
+    paths: list[Path] = [docs_root]
+    if user_id:
+        try:
+            paths.append(get_paths().user_knowledge_docs_dir(user_id))
+        except Exception:
+            pass
+    if thread_id:
+        try:
+            paths.append(get_paths().sandbox_uploads_dir(thread_id))
+        except Exception:
+            pass
+    total = 0.0
+    for p in paths:
+        try:
+            total += p.stat().st_mtime
+        except Exception:
+            pass
+    return total
+
+
+def _get_cached_catalog(cache_key: tuple, docs_root: Path, user_id: str | None, thread_id: str | None) -> "list[BookCatalogEntry] | None":
+    with _catalog_cache_lock:
+        entry = _catalog_cache.get(cache_key)
+    if entry is None:
+        return None
+    cached_entries, build_time, mtime_sig = entry
+    if time.monotonic() - build_time > _CATALOG_CACHE_TTL:
+        return None
+    if _catalog_mtime_signature(docs_root, user_id, thread_id) != mtime_sig:
+        return None
+    return cached_entries  # type: ignore[return-value]
+
+
+def _store_catalog_cache(cache_key: tuple, docs_root: Path, user_id: str | None, thread_id: str | None, entries: "list[BookCatalogEntry]") -> None:
+    mtime_sig = _catalog_mtime_signature(docs_root, user_id, thread_id)
+    with _catalog_cache_lock:
+        _catalog_cache[cache_key] = (entries, time.monotonic(), mtime_sig)
+
+
 def list_book_catalog(
     thread_id: str | None = None,
     user_id: str | None = None,
@@ -746,10 +797,23 @@ def list_book_catalog(
     include_search_content: bool = True,
     caller: str | None = None,
 ) -> list[BookCatalogEntry]:
-    """List user/global knowledge books plus optional current-thread uploads."""
+    """List user/global knowledge books plus optional current-thread uploads.
+
+    Results are cached for up to ``_CATALOG_CACHE_TTL`` seconds and
+    invalidated whenever the mtime of any relevant root directory changes.
+    This allows parallel sub-task ``book_search`` calls within the same batch
+    to share a single catalog build rather than each rebuilding from disk.
+    """
     started_at = time.perf_counter()
     kb_config = get_knowledge_base_config()
     docs_root = resolve_project_path(kb_config.docs_path)
+
+    cache_key = (thread_id or "", user_id or "", include_search_content)
+    cached = _get_cached_catalog(cache_key, docs_root, user_id, thread_id)
+    if cached is not None:
+        logger.debug("Book catalog cache hit: thread_id=%s user_id=%s include_search_content=%s caller=%s", thread_id, user_id, include_search_content, caller or "")
+        return cached
+
     metadata_index = _load_book_metadata_index(docs_root)
     entries = _build_global_entries(
         docs_root,
@@ -777,6 +841,7 @@ def list_book_catalog(
         )
         thread_count = len(thread_entries)
         entries = thread_entries + entries
+    elapsed_ms = (time.perf_counter() - started_at) * 1000
     logger.info(
         "Book catalog built: global=%s user=%s thread=%s total=%s thread_id=%s has_user=%s include_search_content=%s caller=%s elapsed_ms=%.1f",
         global_count,
@@ -787,8 +852,9 @@ def list_book_catalog(
         bool(user_id),
         include_search_content,
         caller or "",
-        (time.perf_counter() - started_at) * 1000,
+        elapsed_ms,
     )
+    _store_catalog_cache(cache_key, docs_root, user_id, thread_id, entries)
     return entries
 
 

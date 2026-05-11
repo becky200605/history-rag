@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
+from time import sleep
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -18,10 +20,37 @@ from src.community.knowledge_base.citations import (
 from src.community.knowledge_base.retriever import get_embedding_model, get_qdrant_client
 from src.config.knowledge_base_config import get_knowledge_base_config
 
+logger = logging.getLogger(__name__)
+
+_EMBED_RETRY_ATTEMPTS = 3
+_EMBED_RETRY_DELAY_SECONDS = 2.0
+
 TASK_MEMORY_COLLECTION_SUFFIX = "__task_memory"
 TASK_MEMORY_TOP_K = 5
 TASK_MEMORY_TITLE_MATCH_BOOST = 0.15
 TASK_MEMORY_TITLE_PARTIAL_BOOST = 0.05
+def _retryable_embedding_exception(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if "no embedding data received" in message:
+        return True
+    if "rate limit" in message or "temporarily unavailable" in message:
+        return True
+    error_name = exc.__class__.__name__
+    if error_name in {"APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError"}:
+        return True
+    try:
+        import httpx
+
+        if isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
+            return True
+    except ImportError:
+        pass
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, Exception) and cause is not exc and _retryable_embedding_exception(cause):
+        return True
+    return False
+
+
 LINKED_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\]\((?:<[^>\n]+>|[^)\n]*)\)", re.IGNORECASE)
 NUMBERED_CITATION_PATTERN = re.compile(r"\[citation:\s*\d+\s*\]", re.IGNORECASE)
 BARE_CITATION_PATTERN = re.compile(r"\[citation:[^\]]+\](?!\()", re.IGNORECASE)
@@ -420,11 +449,26 @@ def search_task_memory(
         ]
         if part
     )
-    results = vector_store.similarity_search_with_score(
-        search_text,
-        k=max(top_k, 3),
-        score_threshold=0.0,
-    )
+    results: list = []
+    for _attempt in range(1, _EMBED_RETRY_ATTEMPTS + 1):
+        try:
+            results = vector_store.similarity_search_with_score(
+                search_text,
+                k=max(top_k, 3),
+                score_threshold=0.0,
+            )
+            break
+        except Exception as exc:
+            if not _retryable_embedding_exception(exc) or _attempt >= _EMBED_RETRY_ATTEMPTS:
+                raise
+            logger.warning(
+                "Task memory search transient failure on attempt %s/%s (%s); retrying in %.1fs",
+                _attempt,
+                _EMBED_RETRY_ATTEMPTS,
+                exc,
+                _EMBED_RETRY_DELAY_SECONDS,
+            )
+            sleep(_EMBED_RETRY_DELAY_SECONDS)
 
     min_score = float(get_knowledge_base_config().retrieval.score_threshold or 0.0)
     ranked: list[dict[str, Any]] = []

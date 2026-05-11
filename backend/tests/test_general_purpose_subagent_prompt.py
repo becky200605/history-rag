@@ -28,6 +28,20 @@ def test_subagent_prompt_allows_multi_locate_in_large_books() -> None:
     assert "multiple locate passes" in prompt or "several location steps" in prompt
 
 
+def test_subagent_prompt_page_window_rule() -> None:
+    prompt = GENERAL_PURPOSE_CONFIG.system_prompt
+    # Should instruct subtasks to fetch multiple pages per locate call
+    assert "page_no_end" in prompt
+    assert "3" in prompt  # at least 3 pages at a time
+
+
+def test_subagent_prompt_metadata_prefiler() -> None:
+    prompt = GENERAL_PURPOSE_CONFIG.system_prompt
+    # Should instruct subtasks to use time/category metadata before locate
+    assert "时代" in prompt or "eras" in prompt.lower()
+    assert "类别" in prompt or "categor" in prompt.lower()
+
+
 def test_subagent_prompt_no_same_book_loop() -> None:
     prompt = GENERAL_PURPOSE_CONFIG.system_prompt
     # Should warn against looping on the same query/book

@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 # Make 'src' importable from any working directory
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -31,3 +33,27 @@ _executor_mock.MAX_CONCURRENT_SUBAGENTS = 3
 _executor_mock.get_background_task_result = MagicMock()
 
 sys.modules["src.subagents.executor"] = _executor_mock
+
+
+def _flush_catalog_cache() -> None:
+    """Clear the process-level book catalog cache."""
+    try:
+        import src.community.knowledge_base.catalog as catalog_mod
+
+        with catalog_mod._catalog_cache_lock:
+            catalog_mod._catalog_cache.clear()
+    except Exception:
+        pass  # Module not yet imported — nothing to clear
+
+
+@pytest.fixture(autouse=True)
+def _clear_catalog_cache():
+    """Clear the catalog cache both before and after every test.
+
+    The cache is module-level state.  Tests that mock ``list_book_catalog``
+    internals (including multi-threaded cache tests) can leave stale entries
+    that pollute subsequent tests unless we flush in both directions.
+    """
+    _flush_catalog_cache()
+    yield
+    _flush_catalog_cache()

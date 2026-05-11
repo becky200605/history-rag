@@ -887,6 +887,11 @@ def _format_candidate_brief(candidate: BookCatalogEntry) -> str:
         parts.append(f"目录={candidate.folder_path}")
     if formatted_language := _format_language_hint(candidate.language_hint):
         parts.append(f"语言={formatted_language}")
+    # Expose era and category metadata so subtasks can pre-filter without a navigation locate call.
+    if candidate.eras:
+        parts.append(f"时代={' '.join(candidate.eras[:4])}")
+    if candidate.categories:
+        parts.append(f"类别={' '.join(candidate.categories[:3])}")
     return " | ".join(parts)
 
 

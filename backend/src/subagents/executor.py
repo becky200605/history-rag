@@ -279,7 +279,10 @@ _thread_cancel_cache: dict[str, _ThreadCancelCacheEntry] = {}
 _thread_cancel_cache_lock = threading.Lock()
 
 # Default subagent concurrency budget for orchestrated runs.
-MAX_CONCURRENT_SUBAGENTS = 4
+# Set to 6 to allow larger parallel retrieval batches — each subtask primarily
+# waits on LLM + knowledge_locate I/O, so higher parallelism reduces wall-clock
+# time without proportionally increasing CPU or memory pressure.
+MAX_CONCURRENT_SUBAGENTS = 6
 
 # Thread pool for background task scheduling and orchestration
 _scheduler_pool = ThreadPoolExecutor(
@@ -531,12 +534,15 @@ class SubagentExecutor:
         messages: list[HumanMessage] = [HumanMessage(content=task)]
         normalized_title = str(task_title or "").strip()
         state: dict[str, Any] = {"messages": messages}
-        prepared_matches = search_and_prepare_task_memory(
-            query=task,
-            title=normalized_title or None,
-            target_state=state,
-            top_k=3,
-        )
+        try:
+            prepared_matches = search_and_prepare_task_memory(
+                query=task,
+                title=normalized_title or None,
+                target_state=state,
+                top_k=3,
+            )
+        except Exception:
+            prepared_matches = []
         if prepared_matches:
             messages.append(
                 HumanMessage(

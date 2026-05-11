@@ -668,3 +668,74 @@ def test_task_memory_middleware_skips_update_when_target_is_not_matched(monkeypa
 
     assert result == {"task_memory_saved_human_index": 0}
     assert calls == []
+
+
+def test_search_task_memory_retries_on_no_embedding_data(monkeypatch: Any) -> None:
+    attempt_count = 0
+
+    class _FlakyVectorStore:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def similarity_search_with_score(self, *_args: Any, **_kwargs: Any) -> list:
+            nonlocal attempt_count
+            attempt_count += 1
+            if attempt_count < 3:
+                raise RuntimeError("No embedding data received")
+            return []
+
+    monkeypatch.setattr(task_memory, "_ensure_task_memory_collection", lambda: (object(), object(), "col"))
+    monkeypatch.setattr(task_memory, "QdrantVectorStore", _FlakyVectorStore)
+    monkeypatch.setattr(task_memory, "sleep", lambda _: None)
+
+    results = task_memory.search_task_memory("盛宣怀")
+    assert results == []
+    assert attempt_count == 3
+
+
+def test_search_task_memory_raises_after_max_retries(monkeypatch: Any) -> None:
+    attempt_count = 0
+
+    class _AlwaysFailVectorStore:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def similarity_search_with_score(self, *_args: Any, **_kwargs: Any) -> list:
+            nonlocal attempt_count
+            attempt_count += 1
+            raise RuntimeError("No embedding data received")
+
+    monkeypatch.setattr(task_memory, "_ensure_task_memory_collection", lambda: (object(), object(), "col"))
+    monkeypatch.setattr(task_memory, "QdrantVectorStore", _AlwaysFailVectorStore)
+    monkeypatch.setattr(task_memory, "sleep", lambda _: None)
+
+    try:
+        task_memory.search_task_memory("盛宣怀")
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        assert "no embedding data received" in str(exc).lower()
+    assert attempt_count == task_memory._EMBED_RETRY_ATTEMPTS
+
+
+def test_search_task_memory_does_not_retry_non_transient_error(monkeypatch: Any) -> None:
+    attempt_count = 0
+
+    class _NonTransientFailVectorStore:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def similarity_search_with_score(self, *_args: Any, **_kwargs: Any) -> list:
+            nonlocal attempt_count
+            attempt_count += 1
+            raise ValueError("collection not found")
+
+    monkeypatch.setattr(task_memory, "_ensure_task_memory_collection", lambda: (object(), object(), "col"))
+    monkeypatch.setattr(task_memory, "QdrantVectorStore", _NonTransientFailVectorStore)
+    monkeypatch.setattr(task_memory, "sleep", lambda _: None)
+
+    try:
+        task_memory.search_task_memory("盛宣怀")
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+    assert attempt_count == 1

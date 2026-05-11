@@ -645,7 +645,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                         "[trace=%s] Todo subtask %s citation merge: source_count=%s, mapping=%s, target_registry_count=%s",
                         trace_id,
                         task_id,
-                        len(result.citation_registry) if result.citation_registry else 0,
+                        len(getattr(result, "citation_registry", None) or []),
                         citation_id_mapping,
                         len(runtime.state.get("knowledge_citation_registry", [])) if isinstance(getattr(runtime, "state", None), dict) else "N/A",
                     )

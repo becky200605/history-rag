@@ -152,6 +152,10 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         user_msg = _stringify_message_content(user_msg_content) if user_msg_content else ""
         return generate_title_candidate(user_msg)
 
+    def _extract_title_from_response(self, text: str, *, max_chars: int, max_words: int) -> str:
+        """Instance-level shim for the module-level ``_extract_title_from_response_text`` helper."""
+        return _extract_title_from_response_text(text, max_chars=max_chars, max_words=max_words)
+
     @override
     def after_agent(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
         """Generate and set thread title after the first agent response."""

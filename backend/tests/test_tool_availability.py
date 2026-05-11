@@ -60,3 +60,26 @@ def test_subagents_enable_checkpoint_middleware() -> None:
 
     assert "KnowledgeCheckpointMiddleware" in executor_source
     assert "KnowledgeCheckpointMiddleware(),  # Enforce checkpoint cadence during raw retrieval loops" in executor_source
+
+
+def test_general_purpose_subagent_tool_allowlist() -> None:
+    from src.subagents.builtins.general_purpose import GENERAL_PURPOSE_CONFIG
+
+    allowed = set(GENERAL_PURPOSE_CONFIG.tools or [])
+    assert allowed == {"book_search", "knowledge_search", "knowledge_locate", "knowledge_checkpoint"}, (
+        "general-purpose subagent must only have knowledge retrieval tools; "
+        "sandbox/bash/file tools must be handled by the lead agent before delegating"
+    )
+    assert "bash" not in allowed
+    assert "read_file" not in allowed
+    assert "ls" not in allowed
+
+
+def test_general_purpose_subagent_no_sandbox_working_directory() -> None:
+    from src.subagents.builtins.general_purpose import GENERAL_PURPOSE_CONFIG
+
+    prompt = GENERAL_PURPOSE_CONFIG.system_prompt
+    assert "/mnt/user-data/uploads" not in prompt, (
+        "subtask prompt must not reference sandbox upload paths; "
+        "uploaded document content should be passed via task description from lead agent"
+    )

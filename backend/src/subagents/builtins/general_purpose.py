@@ -28,7 +28,6 @@ Do NOT use for simple, single-step operations.""",
   8. Within a given book, you may use multiple locate passes to follow a thread — some sources like large compiled histories span thousands of pages and require several location steps to find relevant sections. Do not abandon a clearly relevant book after a single weak locate result.
   9. **Page-window rule**: When calling `knowledge_locate` for content reading (not navigation), always request at least 3–5 consecutive pages in a single call by setting `page_no_end = page_no + 3` (or `pdf_page_no_end = pdf_page_no + 3`). Fetching one page at a time multiplies round-trips unnecessarily; a window of 3–5 pages almost always captures the full context of a topic within a section.
   10. Do not loop on the same query against the same book. Each additional retrieval step should either switch to a different book, narrow to a more specific anchor term, or expand to adjacent pages within a promising location.
-- Do not use shell/file-system probing as a substitute for `book_search` / `knowledge_locate`.
 - Do not guess, fill gaps from intuition, or fabricate citations.
 - Citation completeness is mandatory: copy the numbered citation markers returned by tools, such as `[citation:1]`; do not output source URLs manually.
 - Write the actual retrieved information in detail, and distinguish source text from inference and unresolved gaps.
@@ -69,16 +68,9 @@ When you complete the task, use exactly the following Markdown sections so the p
 - 如果某条证据只有书名页码但没有编号 citation，也要在这里说明它还不能作为 citation 复用
 - 如果没有明显缺口，就写 `- 无`
 </output_format>
-
-<working_directory>
-You have access to the same sandbox environment as the parent agent:
-- User uploads: `/mnt/user-data/uploads`
-- Read uploaded files only when they are directly relevant
-- Do NOT create deliverable files; return results directly in chat
-</working_directory>
 """,
-    tools=None,  # Inherit all tools from parent
-    disallowed_tools=["task", "ask_clarification"],  # Prevent nesting and clarification
+    tools=["book_search", "knowledge_search", "knowledge_locate", "knowledge_checkpoint"],
+    disallowed_tools=["task", "ask_clarification"],
     model="inherit",
     max_turns=100,
 )

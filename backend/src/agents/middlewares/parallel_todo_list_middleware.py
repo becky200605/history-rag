@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -55,6 +56,23 @@ class Todo(TypedDict):
     structured_gaps: NotRequired[list[str]]
     citation_registry: NotRequired[list[dict[str, Any]]]
     error: NotRequired[str]
+
+
+def _coerce_todos_list(value: Any) -> Any:
+    """Allow the model to pass ``todos`` as a JSON string.
+
+    Some models serialise complex parameters as a JSON-encoded string rather
+    than a structured object.  This function transparently parses that
+    string into a Python list so downstream validation can proceed unchanged.
+    """
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return value
 
 
 class ParallelDispatchState(TypedDict):
@@ -913,6 +931,38 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
         ]
         return {"messages": error_messages}
 
+    def _coerce_write_todos_args(self, state: PlanningState) -> dict[str, Any] | None:
+        """Coerce JSON-string ``todos`` args to a list before Pydantic validation.
+
+        Some models serialise complex tool arguments as a JSON-encoded string
+        rather than a structured object.  Pydantic rejects this before the tool
+        function body runs, so we patch the tool_call args here in ``after_model``
+        (which executes before any tool invocation) and return a replacement
+        AIMessage with corrected args when a coercion was necessary.
+        """
+        last_ai_msg = self._last_ai_message(state)
+        if not last_ai_msg or not last_ai_msg.tool_calls:
+            return None
+
+        patched_calls = []
+        any_patched = False
+        for tc in last_ai_msg.tool_calls:
+            if tc.get("name") == "write_todos":
+                raw_todos = tc.get("args", {}).get("todos")
+                coerced = _coerce_todos_list(raw_todos)
+                if coerced is not raw_todos:
+                    # Build a new tool_call dict with corrected args
+                    new_args = {**tc.get("args", {}), "todos": coerced}
+                    tc = {**tc, "args": new_args}
+                    any_patched = True
+            patched_calls.append(tc)
+
+        if not any_patched:
+            return None
+
+        new_msg = last_ai_msg.model_copy(update={"tool_calls": patched_calls})
+        return {"messages": [new_msg]}
+
     def _write_todos_is_phase_boundary(self, state: PlanningState) -> dict[str, Any] | None:
         last_ai_msg = self._last_ai_message(state)
         if not last_ai_msg or not last_ai_msg.tool_calls:
@@ -943,13 +993,15 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
     @override
     def after_model(self, state: PlanningState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
         return (
-            self._single_write_todos_only(state)
+            self._coerce_write_todos_args(state)
+            or self._single_write_todos_only(state)
             or self._write_todos_is_phase_boundary(state)
         )
 
     @override
     async def aafter_model(self, state: PlanningState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
         return (
-            self._single_write_todos_only(state)
+            self._coerce_write_todos_args(state)
+            or self._single_write_todos_only(state)
             or self._write_todos_is_phase_boundary(state)
         )

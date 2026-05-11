@@ -372,6 +372,100 @@ def test_write_todos_rejects_mixed_tool_batch():
     assert "phase boundary" in messages[0].content
 
 
+def test_coerce_todos_list_from_json_string() -> None:
+    """_coerce_todos_list must parse a JSON-encoded string into a Python list."""
+    coerce = todo_module._coerce_todos_list
+
+    raw = '[{"content": "查关税制度", "id": "1", "status": "in_progress"}, {"content": "查鸦片战争", "id": "2", "status": "pending"}]'
+    result = coerce(raw)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0]["content"] == "查关税制度"
+    assert result[1]["status"] == "pending"
+
+
+def test_coerce_todos_list_passthrough_for_real_list() -> None:
+    """_coerce_todos_list must pass through a real list unchanged."""
+    coerce = todo_module._coerce_todos_list
+
+    items = [{"content": "task 1", "status": "pending"}]
+    assert coerce(items) is items
+
+
+def test_coerce_todos_list_passthrough_for_non_parseable_string() -> None:
+    """_coerce_todos_list must return non-JSON strings as-is (Pydantic will then reject them)."""
+    coerce = todo_module._coerce_todos_list
+
+    bad = "not valid json"
+    assert coerce(bad) == bad
+
+
+def test_coerce_write_todos_args_patches_string_todos_in_ai_message() -> None:
+    """_coerce_write_todos_args must replace a JSON-string todos arg with a real list.
+
+    This is the after_model guard that intercepts the malformed tool call
+    before Pydantic validation rejects it.
+    """
+    middleware = todo_module.TodoListMiddleware(
+        system_prompt="test",
+        tool_description="test",
+        subagent_enabled=False,
+    )
+
+    json_string = '[{"content": "查关税制度", "id": "1", "status": "in_progress"}]'
+    state = {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "write_todos",
+                        "args": {"todos": json_string},
+                        "id": "call-1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    }
+
+    result = middleware._coerce_write_todos_args(state)
+
+    assert result is not None, "should return a patched message"
+    patched_msg = result["messages"][0]
+    patched_todos = patched_msg.tool_calls[0]["args"]["todos"]
+    assert isinstance(patched_todos, list), "todos should now be a real list"
+    assert patched_todos[0]["content"] == "查关税制度"
+
+
+def test_coerce_write_todos_args_noop_when_todos_already_a_list() -> None:
+    """_coerce_write_todos_args should return None (no patch needed) when todos is already a list."""
+    middleware = todo_module.TodoListMiddleware(
+        system_prompt="test",
+        tool_description="test",
+        subagent_enabled=False,
+    )
+
+    state = {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "write_todos",
+                        "args": {"todos": [{"content": "task", "status": "pending"}]},
+                        "id": "call-1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    }
+
+    result = middleware._coerce_write_todos_args(state)
+    assert result is None, "no patch needed when todos is already a list"
+
+
 def test_write_todos_can_redispatch_completed_todo_with_same_content(monkeypatch):
     launched_task_ids: list[str] = []
 

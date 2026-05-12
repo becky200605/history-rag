@@ -109,6 +109,8 @@ _REFUSAL_PREFIXES = (
 
 _DEFAULT_LANGGRAPH_BASE_URL = "http://127.0.0.1:2024"
 _THREAD_CANCEL_CACHE_TTL_SECONDS = 1.0
+_MAX_EXECUTION_RETRIES = 3
+_RETRY_DELAY_SECONDS = 5
 
 
 class SubagentCancelledError(RuntimeError):
@@ -649,122 +651,70 @@ class SubagentExecutor:
                 started_at=datetime.now(UTC),
             )
 
-        try:
-            self._raise_if_cancelled(result, cancel_event)
-            agent = self._create_agent()
-            state = self._build_initial_state(task, task_title=task_title)
-
-            # Build config with thread_id for sandbox access and recursion limit
-            run_config: RunnableConfig = {
-                "recursion_limit": self.config.max_turns,
-            }
-            context = {
-                "trace_id": self.trace_id,
-                "subtask_id": result.task_id,
-                "subagent_name": self.config.name,
-            }
-            if self.thread_id:
-                run_config["configurable"] = {"thread_id": self.thread_id}
-                context["thread_id"] = self.thread_id
-
-            logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting execution with max_turns={self.config.max_turns}")
-
-            # Use stream instead of invoke to get real-time updates.
-            # `messages` yields incremental AI chunks; `values` gives us the final state.
-            final_state = None
-            aggregated_chunks: dict[str, AIMessageChunk] = {}
-            logged_tool_call_signatures: set[tuple[str, str, str]] = set()
-            logged_ai_message_debug_signatures: set[tuple[str, str]] = set()
-            for mode, payload in agent.stream(  # type: ignore[arg-type]
-                state,
-                config=run_config,
-                context=context,
-                stream_mode=["messages", "values"],
-            ):
+        for attempt in range(1, _MAX_EXECUTION_RETRIES + 1):
+            try:
                 self._raise_if_cancelled(result, cancel_event)
-                if mode == "values":
-                    final_state = payload
-                    continue
+                agent = self._create_agent()
+                state = self._build_initial_state(task, task_title=task_title)
 
-                if mode != "messages":
-                    continue
+                # Build config with thread_id for sandbox access and recursion limit
+                run_config: RunnableConfig = {
+                    "recursion_limit": self.config.max_turns,
+                }
+                context = {
+                    "trace_id": self.trace_id,
+                    "subtask_id": result.task_id,
+                    "subagent_name": self.config.name,
+                }
+                if self.thread_id:
+                    run_config["configurable"] = {"thread_id": self.thread_id}
+                    context["thread_id"] = self.thread_id
 
-                streamed_message, _metadata = payload
-                if isinstance(streamed_message, AIMessageChunk):
-                    message_id = streamed_message.id or str(uuid.uuid4())
-                    previous_chunk = aggregated_chunks.get(message_id)
-                    aggregated_chunk = (
-                        streamed_message
-                        if previous_chunk is None
-                        else previous_chunk + streamed_message
-                    )
-                    aggregated_chunks[message_id] = aggregated_chunk
-                    message_dict = _strip_reasoning_from_message_dict(
-                        message_chunk_to_message(aggregated_chunk).model_dump()
-                    )
-                elif isinstance(streamed_message, AIMessage):
-                    message_dict = _strip_reasoning_from_message_dict(
-                        streamed_message.model_dump()
-                    )
-                else:
-                    continue
+                logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting execution (attempt {attempt}/{_MAX_EXECUTION_RETRIES}) with max_turns={self.config.max_turns}")
 
-                tool_call_debug_payload = _extract_tool_call_debug_payload(message_dict)
-                debug_signature = (
-                    str(message_dict.get("id") or ""),
-                    _stable_log_signature(tool_call_debug_payload),
-                )
-                if (
-                    tool_call_debug_payload["tool_calls"]
-                    or tool_call_debug_payload["invalid_tool_calls"]
-                    or tool_call_debug_payload["additional_kwargs_tool_calls"]
-                ) and debug_signature not in logged_ai_message_debug_signatures:
-                    logged_ai_message_debug_signatures.add(debug_signature)
-                    log_subtask_event(
-                        "subtask_ai_message_tool_calls",
-                        trace_id=self.trace_id,
-                        task_id=result.task_id,
-                        subagent_name=self.config.name,
-                        thread_id=self.thread_id,
-                        message_id=message_dict.get("id"),
-                        **tool_call_debug_payload,
-                    )
-
-                if not result.ai_messages or result.ai_messages[-1] != message_dict:
-                    result.ai_messages.append(message_dict)
-                    logger.info(
-                        f"[trace={self.trace_id}] Subagent {self.config.name} captured AI message snapshot #{len(result.ai_messages)}"
-                    )
-
-                for tool_call in message_dict.get("tool_calls") or []:
-                    if not isinstance(tool_call, dict):
+                # Use stream instead of invoke to get real-time updates.
+                # `messages` yields incremental AI chunks; `values` gives us the final state.
+                final_state = None
+                aggregated_chunks: dict[str, AIMessageChunk] = {}
+                logged_tool_call_signatures: set[tuple[str, str, str]] = set()
+                logged_ai_message_debug_signatures: set[tuple[str, str]] = set()
+                for mode, payload in agent.stream(  # type: ignore[arg-type]
+                    state,
+                    config=run_config,
+                    context=context,
+                    stream_mode=["messages", "values"],
+                ):
+                    self._raise_if_cancelled(result, cancel_event)
+                    if mode == "values":
+                        final_state = payload
                         continue
-                    tool_call_id = str(tool_call.get("id") or "")
-                    tool_name = str(tool_call.get("name") or "")
-                    tool_args = tool_call.get("args")
-                    signature = (tool_call_id, tool_name, _stable_log_signature(tool_args))
-                    if not tool_name or signature in logged_tool_call_signatures:
-                        continue
-                    logged_tool_call_signatures.add(signature)
-                    log_subtask_event(
-                        "subtask_tool_call_requested",
-                        trace_id=self.trace_id,
-                        task_id=result.task_id,
-                        subagent_name=self.config.name,
-                        thread_id=self.thread_id,
-                        tool_call_id=tool_call_id or None,
-                        tool_name=tool_name,
-                        tool_args=_clip_for_subtask_log(tool_args),
-                    )
 
-            if final_state is not None:
-                for final_message in final_state.get("messages", []) or []:
-                    if not isinstance(final_message, AIMessage):
+                    if mode != "messages":
                         continue
-                    final_message_dict = _strip_reasoning_from_message_dict(final_message.model_dump())
-                    tool_call_debug_payload = _extract_tool_call_debug_payload(final_message_dict)
+
+                    streamed_message, _metadata = payload
+                    if isinstance(streamed_message, AIMessageChunk):
+                        message_id = streamed_message.id or str(uuid.uuid4())
+                        previous_chunk = aggregated_chunks.get(message_id)
+                        aggregated_chunk = (
+                            streamed_message
+                            if previous_chunk is None
+                            else previous_chunk + streamed_message
+                        )
+                        aggregated_chunks[message_id] = aggregated_chunk
+                        message_dict = _strip_reasoning_from_message_dict(
+                            message_chunk_to_message(aggregated_chunk).model_dump()
+                        )
+                    elif isinstance(streamed_message, AIMessage):
+                        message_dict = _strip_reasoning_from_message_dict(
+                            streamed_message.model_dump()
+                        )
+                    else:
+                        continue
+
+                    tool_call_debug_payload = _extract_tool_call_debug_payload(message_dict)
                     debug_signature = (
-                        str(final_message_dict.get("id") or ""),
+                        str(message_dict.get("id") or ""),
                         _stable_log_signature(tool_call_debug_payload),
                     )
                     if (
@@ -774,119 +724,202 @@ class SubagentExecutor:
                     ) and debug_signature not in logged_ai_message_debug_signatures:
                         logged_ai_message_debug_signatures.add(debug_signature)
                         log_subtask_event(
-                            "subtask_final_state_tool_calls",
+                            "subtask_ai_message_tool_calls",
                             trace_id=self.trace_id,
                             task_id=result.task_id,
                             subagent_name=self.config.name,
                             thread_id=self.thread_id,
-                            message_id=final_message_dict.get("id"),
+                            message_id=message_dict.get("id"),
                             **tool_call_debug_payload,
                         )
 
-            logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} completed execution")
-            self._raise_if_cancelled(result, cancel_event)
+                    if not result.ai_messages or result.ai_messages[-1] != message_dict:
+                        result.ai_messages.append(message_dict)
+                        logger.info(
+                            f"[trace={self.trace_id}] Subagent {self.config.name} captured AI message snapshot #{len(result.ai_messages)}"
+                        )
 
-            if final_state is None:
-                logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no final state")
-                result.result = "No response generated"
-            else:
-                # Extract the final message - find the last AIMessage
-                messages = final_state.get("messages", [])
-                logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} final messages count: {len(messages)}")
+                    for tool_call in message_dict.get("tool_calls") or []:
+                        if not isinstance(tool_call, dict):
+                            continue
+                        tool_call_id = str(tool_call.get("id") or "")
+                        tool_name = str(tool_call.get("name") or "")
+                        tool_args = tool_call.get("args")
+                        signature = (tool_call_id, tool_name, _stable_log_signature(tool_args))
+                        if not tool_name or signature in logged_tool_call_signatures:
+                            continue
+                        logged_tool_call_signatures.add(signature)
+                        log_subtask_event(
+                            "subtask_tool_call_requested",
+                            trace_id=self.trace_id,
+                            task_id=result.task_id,
+                            subagent_name=self.config.name,
+                            thread_id=self.thread_id,
+                            tool_call_id=tool_call_id or None,
+                            tool_name=tool_name,
+                            tool_args=_clip_for_subtask_log(tool_args),
+                        )
 
-                # Find the last AIMessage in the conversation
-                last_ai_message = None
-                for msg in reversed(messages):
-                    if isinstance(msg, AIMessage):
-                        last_ai_message = msg
-                        break
+                if final_state is not None:
+                    for final_message in final_state.get("messages", []) or []:
+                        if not isinstance(final_message, AIMessage):
+                            continue
+                        final_message_dict = _strip_reasoning_from_message_dict(final_message.model_dump())
+                        tool_call_debug_payload = _extract_tool_call_debug_payload(final_message_dict)
+                        debug_signature = (
+                            str(final_message_dict.get("id") or ""),
+                            _stable_log_signature(tool_call_debug_payload),
+                        )
+                        if (
+                            tool_call_debug_payload["tool_calls"]
+                            or tool_call_debug_payload["invalid_tool_calls"]
+                            or tool_call_debug_payload["additional_kwargs_tool_calls"]
+                        ) and debug_signature not in logged_ai_message_debug_signatures:
+                            logged_ai_message_debug_signatures.add(debug_signature)
+                            log_subtask_event(
+                                "subtask_final_state_tool_calls",
+                                trace_id=self.trace_id,
+                                task_id=result.task_id,
+                                subagent_name=self.config.name,
+                                thread_id=self.thread_id,
+                                message_id=final_message_dict.get("id"),
+                                **tool_call_debug_payload,
+                            )
 
-                if last_ai_message is not None:
-                    content = last_ai_message.content
-                    # Handle both str and list content types for the final result
-                    if isinstance(content, str):
-                        result.result = content
-                    elif isinstance(content, list):
-                        # Extract text from list of content blocks for final result only
-                        text_parts = []
-                        for block in content:
-                            if isinstance(block, str):
-                                text_parts.append(block)
-                            elif isinstance(block, dict) and "text" in block:
-                                text_parts.append(block["text"])
-                        result.result = "\n".join(text_parts) if text_parts else "No text content in response"
-                    else:
-                        result.result = str(content)
-                elif messages:
-                    # Fallback: use the last message if no AIMessage found
-                    last_message = messages[-1]
-                    logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no AIMessage found, using last message: {type(last_message)}")
-                    result.result = str(last_message.content) if hasattr(last_message, "content") else str(last_message)
-                else:
-                    logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no messages in final state")
+                logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} completed execution")
+                self._raise_if_cancelled(result, cancel_event)
+
+                if final_state is None:
+                    logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no final state")
                     result.result = "No response generated"
+                else:
+                    # Extract the final message - find the last AIMessage
+                    messages = final_state.get("messages", [])
+                    logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} final messages count: {len(messages)}")
 
-            result.structured_result = _parse_structured_subtask_result(result.result)
-            if final_state is not None:
-                raw_registry = final_state.get(KNOWLEDGE_CITATION_REGISTRY_KEY)
-                if isinstance(raw_registry, list):
-                    result.citation_registry = [item for item in raw_registry if isinstance(item, dict)]
-                logger.info(
-                    "[trace=%s] Subagent %s citation_registry: count=%s, ids=%s, sample=%s",
-                    self.trace_id,
-                    self.config.name,
-                    len(result.citation_registry) if result.citation_registry else 0,
-                    [str(item.get("id")) for item in (result.citation_registry or [])],
-                    result.citation_registry[:3] if result.citation_registry else None,
+                    # Find the last AIMessage in the conversation
+                    last_ai_message = None
+                    for msg in reversed(messages):
+                        if isinstance(msg, AIMessage):
+                            last_ai_message = msg
+                            break
+
+                    if last_ai_message is not None:
+                        content = last_ai_message.content
+                        # Handle both str and list content types for the final result
+                        if isinstance(content, str):
+                            result.result = content
+                        elif isinstance(content, list):
+                            # Extract text from list of content blocks for final result only
+                            text_parts = []
+                            for block in content:
+                                if isinstance(block, str):
+                                    text_parts.append(block)
+                                elif isinstance(block, dict) and "text" in block:
+                                    text_parts.append(block["text"])
+                            result.result = "\n".join(text_parts) if text_parts else "No text content in response"
+                        else:
+                            result.result = str(content)
+                    elif messages:
+                        # Fallback: use the last message if no AIMessage found
+                        last_message = messages[-1]
+                        logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no AIMessage found, using last message: {type(last_message)}")
+                        result.result = str(last_message.content) if hasattr(last_message, "content") else str(last_message)
+                    else:
+                        logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no messages in final state")
+                        result.result = "No response generated"
+
+                result.structured_result = _parse_structured_subtask_result(result.result)
+                if final_state is not None:
+                    raw_registry = final_state.get(KNOWLEDGE_CITATION_REGISTRY_KEY)
+                    if isinstance(raw_registry, list):
+                        result.citation_registry = [item for item in raw_registry if isinstance(item, dict)]
+                    logger.info(
+                        "[trace=%s] Subagent %s citation_registry: count=%s, ids=%s, sample=%s",
+                        self.trace_id,
+                        self.config.name,
+                        len(result.citation_registry) if result.citation_registry else 0,
+                        [str(item.get("id")) for item in (result.citation_registry or [])],
+                        result.citation_registry[:3] if result.citation_registry else None,
+                    )
+
+                self._raise_if_cancelled(result, cancel_event)
+                result.status = SubagentStatus.COMPLETED
+                result.completed_at = datetime.now(UTC)
+                self._persist_completed_task_memory(
+                    task=task,
+                    task_title=task_title,
+                    task_level=task_level,
+                    result=result,
                 )
+                return result
 
-            self._raise_if_cancelled(result, cancel_event)
-            result.status = SubagentStatus.COMPLETED
-            result.completed_at = datetime.now(UTC)
-            self._persist_completed_task_memory(
-                task=task,
-                task_title=task_title,
-                task_level=task_level,
-                result=result,
-            )
-
-        except SubagentCancelledError as e:
-            logger.info(
-                "[trace=%s] Subagent %s cancelled: %s",
-                self.trace_id,
-                self.config.name,
-                e,
-            )
-            result.status = SubagentStatus.CANCELLED
-            result.error = str(e)
-            result.completed_at = datetime.now(UTC)
-        except Exception as e:
-            if cancel_event is not None and cancel_event.is_set():
+            except SubagentCancelledError as e:
                 logger.info(
-                    "[trace=%s] Subagent %s observed cancellation during exception handling",
+                    "[trace=%s] Subagent %s cancelled: %s",
                     self.trace_id,
                     self.config.name,
+                    e,
                 )
                 result.status = SubagentStatus.CANCELLED
-                result.error = (
-                    f"Subtask {result.task_id} cancelled because the parent session was interrupted."
-                )
+                result.error = str(e)
                 result.completed_at = datetime.now(UTC)
                 return result
-            logger.exception(f"[trace={self.trace_id}] Subagent {self.config.name} execution failed")
-            append_error_doc(
-                location="subagent_executor.execute",
-                summary=f"Subagent {self.config.name} execution failed",
-                error=str(e),
-                context={
-                    "trace_id": self.trace_id,
-                    "subagent_name": self.config.name,
-                    "task_id": result.task_id,
-                },
-            )
-            result.status = SubagentStatus.FAILED
-            result.error = str(e)
-            result.completed_at = datetime.now(UTC)
+            except Exception as e:
+                if cancel_event is not None and cancel_event.is_set():
+                    logger.info(
+                        "[trace=%s] Subagent %s observed cancellation during exception handling",
+                        self.trace_id,
+                        self.config.name,
+                    )
+                    result.status = SubagentStatus.CANCELLED
+                    result.error = (
+                        f"Subtask {result.task_id} cancelled because the parent session was interrupted."
+                    )
+                    result.completed_at = datetime.now(UTC)
+                    return result
+
+                if attempt < _MAX_EXECUTION_RETRIES:
+                    logger.warning(
+                        "[trace=%s] Subagent %s attempt %d/%d failed: %s — retrying in %ds",
+                        self.trace_id,
+                        self.config.name,
+                        attempt,
+                        _MAX_EXECUTION_RETRIES,
+                        e,
+                        _RETRY_DELAY_SECONDS,
+                    )
+                    log_subtask_event(
+                        "subtask_execution_retry",
+                        trace_id=self.trace_id,
+                        task_id=result.task_id,
+                        subagent_name=self.config.name,
+                        attempt=attempt,
+                        max_retries=_MAX_EXECUTION_RETRIES,
+                        error=str(e),
+                    )
+                    result.ai_messages = []
+                    result.result = None
+                    result.structured_result = None
+                    result.citation_registry = None
+                    time.sleep(_RETRY_DELAY_SECONDS)
+                    continue
+
+                logger.exception(f"[trace={self.trace_id}] Subagent {self.config.name} execution failed after {_MAX_EXECUTION_RETRIES} attempts")
+                append_error_doc(
+                    location="subagent_executor.execute",
+                    summary=f"Subagent {self.config.name} execution failed after {_MAX_EXECUTION_RETRIES} attempts",
+                    error=str(e),
+                    context={
+                        "trace_id": self.trace_id,
+                        "subagent_name": self.config.name,
+                        "task_id": result.task_id,
+                        "attempts": _MAX_EXECUTION_RETRIES,
+                    },
+                )
+                result.status = SubagentStatus.FAILED
+                result.error = str(e)
+                result.completed_at = datetime.now(UTC)
 
         return result
 

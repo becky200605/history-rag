@@ -48,6 +48,8 @@ def test_write_todos_dispatches_parallel_batch_and_updates_todos(monkeypatch):
         "get_background_task_result",
         lambda task_id: SimpleNamespace(
             status=FakeStatus.COMPLETED,
+            started_at=None,
+            completed_at=None,
             result=f"result for {task_id}",
             error=None,
             ai_messages=[],
@@ -128,6 +130,8 @@ def test_write_todos_merges_subtask_citation_registry_and_rewrites_markers(monke
         "get_background_task_result",
         lambda task_id: SimpleNamespace(
             status=FakeStatus.COMPLETED,
+            started_at=None,
+            completed_at=None,
             result="## 任务结果\n甲书证明了税制变化。[citation:1]",
             error=None,
             ai_messages=[],
@@ -225,6 +229,8 @@ def test_write_todos_wraps_custom_task_prompt_with_knowledge_locate_guardrails(m
         "get_background_task_result",
         lambda task_id: SimpleNamespace(
             status=FakeStatus.COMPLETED,
+            started_at=None,
+            completed_at=None,
             result=f"done: {task_id}",
             error=None,
             ai_messages=[],
@@ -301,6 +307,8 @@ def test_write_todos_auto_promotes_pending_queue_until_all_batches_finish(monkey
         "get_background_task_result",
         lambda task_id: SimpleNamespace(
             status=FakeStatus.COMPLETED,
+            started_at=None,
+            completed_at=None,
             result=f"done: {task_id}",
             error=None,
             ai_messages=[],
@@ -504,6 +512,8 @@ def test_write_todos_can_redispatch_completed_todo_with_same_content(monkeypatch
         "get_background_task_result",
         lambda task_id: SimpleNamespace(
             status=FakeStatus.COMPLETED,
+            started_at=None,
+            completed_at=None,
             result=f"rerun: {task_id}",
             error=None,
             ai_messages=[],
@@ -585,6 +595,8 @@ def test_write_todos_marks_matching_reading_set_book_as_covered_on_completion(mo
         "get_background_task_result",
         lambda task_id: SimpleNamespace(
             status=FakeStatus.COMPLETED,
+            started_at=None,
+            completed_at=None,
             result="## 任务结果\n已核对《甲书》的相关证据。\n\n## 关键发现\n- 《甲书》提供了这一问题的关键证据。",
             error=None,
             ai_messages=[],

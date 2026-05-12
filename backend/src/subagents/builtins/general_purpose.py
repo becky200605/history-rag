@@ -72,5 +72,5 @@ When you complete the task, use exactly the following Markdown sections so the p
     tools=["book_search", "knowledge_search", "knowledge_locate", "knowledge_checkpoint"],
     disallowed_tools=["task", "ask_clarification"],
     model="inherit",
-    max_turns=100,
+    max_turns=200,
 )

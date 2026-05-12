@@ -92,7 +92,7 @@ export function SubtaskDetailSheet({
   const fallbackOpenQuestions =
     linkedSubtask?.openQuestions ?? todo?.structured_gaps ?? [];
   const fallbackError = linkedSubtask?.error ?? todo?.error;
-  const executionTimeSeconds = linkedSubtask?.executionTimeSeconds ?? todo?.executionTimeSeconds;
+  const executionTimeSeconds = linkedSubtask?.executionTimeSeconds ?? todo?.execution_time_seconds ?? todo?.executionTimeSeconds;
   const threadCitationRegistry = thread.values.knowledge_citation_registry as
     | import("@/core/threads").KnowledgeCitationRegistryItem[]
     | undefined;

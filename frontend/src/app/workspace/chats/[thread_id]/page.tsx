@@ -652,6 +652,7 @@ function ChatPageContent({
           if (!live) return todo;
           return {
             ...todo,
+            execution_time_seconds: todo.execution_time_seconds ?? live.execution_time_seconds,
             executionTimeSeconds: todo.executionTimeSeconds ?? live.executionTimeSeconds,
             startedAt: todo.startedAt ?? live.startedAt,
           };

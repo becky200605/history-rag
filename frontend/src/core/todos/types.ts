@@ -19,6 +19,7 @@ export interface Todo {
   structured_gaps?: string[];
   citation_registry?: KnowledgeCitationRegistryItem[];
   error?: string;
+  execution_time_seconds?: number;
   executionTimeSeconds?: number;
   startedAt?: number;
 }

@@ -56,6 +56,7 @@ class Todo(TypedDict):
     structured_gaps: NotRequired[list[str]]
     citation_registry: NotRequired[list[dict[str, Any]]]
     error: NotRequired[str]
+    execution_time_seconds: NotRequired[float]
 
 
 def _coerce_todos_list(value: Any) -> Any:
@@ -637,6 +638,9 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
 
                 if result.status == SubagentStatus.COMPLETED:
                     todo["status"] = "completed"
+                    exec_time = (result.completed_at - result.started_at).total_seconds() if result.started_at and result.completed_at else None
+                    if exec_time is not None:
+                        todo["execution_time_seconds"] = exec_time
                     citation_id_mapping = merge_citation_registry(
                         runtime.state if isinstance(getattr(runtime, "state", None), dict) else None,
                         getattr(result, "citation_registry", None),
@@ -712,6 +716,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                             "findings": todo.get("structured_findings"),
                             "citations": todo.get("structured_citations"),
                             "open_questions": todo.get("structured_gaps"),
+                            "execution_time_seconds": todo.get("execution_time_seconds"),
                         }
                     )
                     writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
@@ -720,6 +725,9 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 elif result.status == SubagentStatus.FAILED:
                     todo["status"] = "failed"
                     todo["error"] = result.error or "Unknown subtask error"
+                    exec_time = (result.completed_at - result.started_at).total_seconds() if result.started_at and result.completed_at else None
+                    if exec_time is not None:
+                        todo["execution_time_seconds"] = exec_time
                     log_subtask_event(
                         "subtask_failed",
                         task_id=task_id,
@@ -737,13 +745,16 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                             "content": todo["content"],
                         },
                     )
-                    writer({"type": "task_failed", "task_id": task_id, "error": todo["error"]})
+                    writer({"type": "task_failed", "task_id": task_id, "error": todo["error"], "execution_time_seconds": todo.get("execution_time_seconds")})
                     writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
                     summary_lines.append(f"[failed] {todo['content']}：{todo['error']}")
                     completed_task_ids.append(task_id)
                 elif result.status == SubagentStatus.TIMED_OUT:
                     todo["status"] = "failed"
                     todo["error"] = result.error or "Subtask timed out"
+                    exec_time = (result.completed_at - result.started_at).total_seconds() if result.started_at and result.completed_at else None
+                    if exec_time is not None:
+                        todo["execution_time_seconds"] = exec_time
                     log_subtask_event(
                         "subtask_timed_out",
                         task_id=task_id,
@@ -761,7 +772,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                             "content": todo["content"],
                         },
                     )
-                    writer({"type": "task_timed_out", "task_id": task_id, "error": todo["error"]})
+                    writer({"type": "task_timed_out", "task_id": task_id, "error": todo["error"], "execution_time_seconds": todo.get("execution_time_seconds")})
                     writer({"type": "todo_board_updated", "todos": _serialize_todos_for_event(todos)})
                     summary_lines.append(f"[failed] {todo['content']}：{todo['error']}")
                     completed_task_ids.append(task_id)

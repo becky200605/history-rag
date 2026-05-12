@@ -146,8 +146,8 @@ function TodoListItem({
       : null;
 
   const executionTime = todo.task_id
-    ? linkedSubtask?.executionTimeSeconds
-    : todo.executionTimeSeconds;
+    ? (linkedSubtask?.executionTimeSeconds ?? todo.execution_time_seconds)
+    : (todo.execution_time_seconds ?? todo.executionTimeSeconds);
 
   const statusIcon =
     detailStatus === "completed" ? (

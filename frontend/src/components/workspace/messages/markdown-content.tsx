@@ -157,6 +157,12 @@ export function MarkdownContent({
 }: MarkdownContentProps) {
   const components = useMemo(() => {
     return {
+      ol: ({ className, ...props }: ComponentProps<"ol">) => (
+        <ol
+          className={`list-decimal list-outside pl-8 whitespace-normal${className ? ` ${className}` : ""}`}
+          {...props}
+        />
+      ),
       a: (props: ComponentProps<"a">) => {
         const normalizedHref =
           typeof props.href === "string"

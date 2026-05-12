@@ -26,5 +26,5 @@ class SubagentConfig:
     disallowed_tools: list[str] | None = field(default_factory=lambda: ["task"])
     model: str = "inherit"
     thinking_enabled: bool = True
-    max_turns: int = 100
+    max_turns: int = 200
     timeout_seconds: int = 900

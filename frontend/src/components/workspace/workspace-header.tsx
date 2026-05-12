@@ -239,7 +239,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          <SidebarMenuItem>
+          {/* <SidebarMenuItem>
             <SidebarMenuButton
               isActive={isKnowledgeDebugActive}
               asChild
@@ -257,7 +257,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
                 </span>
               </Link>
             </SidebarMenuButton>
-          </SidebarMenuItem>
+          </SidebarMenuItem> */}
         </>
       )}
     </SidebarMenu>

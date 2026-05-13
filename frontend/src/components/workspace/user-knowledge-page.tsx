@@ -141,6 +141,124 @@ function buildOriginalJumpHref(
   return `/workspace/knowledge/view?${params.toString()}`;
 }
 
+type ParsedExcerpt = {
+  filename: string;
+  location?: string;
+  text: string;
+};
+
+type NoteSegment =
+  | { kind: "text"; text: string }
+  | { kind: "excerpt"; excerpt: ParsedExcerpt };
+
+const EXCERPT_HEADER = "## 原文摘录";
+
+function parseNoteSegments(content: string): NoteSegment[] {
+  const normalized = content.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const segments: NoteSegment[] = [];
+  let textBuffer: string[] = [];
+  let i = 0;
+
+  const flushText = () => {
+    if (textBuffer.length === 0) {
+      return;
+    }
+    const text = textBuffer.join("\n").replace(/^\n+/, "").replace(/\n+$/, "");
+    segments.push({ kind: "text", text });
+    textBuffer = [];
+  };
+
+  const lineAt = (idx: number): string => lines[idx] ?? "";
+
+  while (i < lines.length) {
+    if (lineAt(i).trim() === EXCERPT_HEADER) {
+      flushText();
+      i++;
+      while (i < lines.length && lineAt(i).trim() === "") i++;
+
+      let filename = "";
+      if (i < lines.length && lineAt(i).startsWith("来源：")) {
+        filename = lineAt(i).slice("来源：".length).trim();
+        i++;
+      }
+
+      let location: string | undefined;
+      if (i < lines.length && lineAt(i).startsWith("定位：")) {
+        location = lineAt(i).slice("定位：".length).trim();
+        i++;
+      }
+
+      while (i < lines.length && lineAt(i).trim() === "") i++;
+
+      const quoteLines: string[] = [];
+      while (i < lines.length && lineAt(i).startsWith(">")) {
+        const line = lineAt(i);
+        if (line === ">") {
+          quoteLines.push("");
+        } else if (line.startsWith("> ")) {
+          quoteLines.push(line.slice(2));
+        } else {
+          quoteLines.push(line.slice(1).replace(/^\s/, ""));
+        }
+        i++;
+      }
+
+      segments.push({
+        kind: "excerpt",
+        excerpt: {
+          filename,
+          location,
+          text: quoteLines.join("\n").replace(/\n+$/, ""),
+        },
+      });
+    } else {
+      textBuffer.push(lineAt(i));
+      i++;
+    }
+  }
+
+  flushText();
+
+  const firstSeg = segments[0];
+  if (!firstSeg) {
+    segments.push({ kind: "text", text: "" });
+  } else if (firstSeg.kind !== "text") {
+    segments.unshift({ kind: "text", text: "" });
+  }
+
+  return segments;
+}
+
+function serializeNoteSegments(segments: NoteSegment[]): string {
+  const parts: string[] = [];
+  segments.forEach((seg, i) => {
+    if (seg.kind === "text") {
+      if (seg.text.length > 0 || (i === 0 && segments.length === 1)) {
+        parts.push(seg.text);
+      }
+      return;
+    }
+    const e = seg.excerpt;
+    const lines: string[] = [
+      EXCERPT_HEADER,
+      "",
+      `来源：${e.filename || "未知来源"}`,
+    ];
+    if (e.location) {
+      lines.push(`定位：${e.location}`);
+    }
+    lines.push("");
+    const quoteLines =
+      e.text.length > 0
+        ? e.text.split("\n").map((line) => (line ? `> ${line}` : ">"))
+        : ["> "];
+    lines.push(...quoteLines);
+    parts.push(lines.join("\n"));
+  });
+  return parts.join("\n\n");
+}
+
 function sortRecords(records: UserKnowledgeRecord[]) {
   return [...records].sort((left, right) => {
     const leftTime = new Date(
@@ -510,6 +628,95 @@ function ReadonlyRecordState({ record }: { record: UserKnowledgeRecord }) {
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+function NoteExcerptCard({
+  excerpt,
+  onRemove,
+}: {
+  excerpt: ParsedExcerpt;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="group relative rounded-2xl border border-stone-200 bg-stone-50/80 p-5">
+      <button
+        type="button"
+        onClick={onRemove}
+        className="absolute top-3 right-3 flex size-7 items-center justify-center rounded-full text-stone-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
+        title="移除此摘录"
+      >
+        <Trash2Icon className="size-3.5" />
+      </button>
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 pr-10 text-sm text-stone-500">
+        {excerpt.filename ? (
+          <span className="flex items-center gap-1.5">
+            <span className="opacity-60">来源：</span>
+            <span className="font-medium text-stone-700">{excerpt.filename}</span>
+          </span>
+        ) : null}
+        {excerpt.location ? <span>{excerpt.location}</span> : null}
+      </div>
+      <div className="border-l-2 border-stone-200 pl-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap text-stone-600 italic">
+        {excerpt.text}
+      </div>
+    </div>
+  );
+}
+
+function NoteEditableArea({
+  content,
+  onChange,
+  placeholder,
+}: {
+  content: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+}) {
+  const segments = useMemo(() => parseNoteSegments(content), [content]);
+
+  const updateTextSegment = (segmentIndex: number, nextValue: string) => {
+    const nextSegments = segments.map((seg, idx) =>
+      idx === segmentIndex && seg.kind === "text"
+        ? { kind: "text" as const, text: nextValue }
+        : seg,
+    );
+    onChange(serializeNoteSegments(nextSegments));
+  };
+
+  const removeExcerpt = (segmentIndex: number) => {
+    const nextSegments = segments.filter((_, idx) => idx !== segmentIndex);
+    onChange(serializeNoteSegments(nextSegments));
+  };
+
+  return (
+    <div className="space-y-6">
+      {segments.map((seg, idx) => {
+        if (seg.kind === "excerpt") {
+          return (
+            <NoteExcerptCard
+              key={`excerpt-${idx}`}
+              excerpt={seg.excerpt}
+              onRemove={() => removeExcerpt(idx)}
+            />
+          );
+        }
+        const isFirstText = idx === 0;
+        const hasExcerpts = segments.some((s) => s.kind === "excerpt");
+        return (
+          <Textarea
+            key={`text-${idx}`}
+            value={seg.text}
+            onChange={(event) => updateTextSegment(idx, event.target.value)}
+            placeholder={isFirstText ? placeholder : "继续写一些笔记..."}
+            className={cn(
+              "selection:bg-primary/10 w-full resize-none rounded-none border-0 bg-transparent px-0 py-2 font-serif text-[18px] leading-[2.2] text-stone-800 placeholder:text-stone-300 focus-visible:ring-0",
+              isFirstText && !hasExcerpts ? "min-h-[600px]" : "min-h-[120px]",
+            )}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -1207,17 +1414,14 @@ export default function NotesPage() {
                         </div>
                       ) : null}
                       {contentQuery.data?.editable ? (
-                        <Textarea
-                          value={contentDraft}
-                          onChange={(event) =>
-                            setContentDraft(event.target.value)
-                          }
+                        <NoteEditableArea
+                          content={contentDraft}
+                          onChange={setContentDraft}
                           placeholder={
                             contentQuery.data.mode === "derived"
                               ? "在这里继续写你的摘抄、理解或批注。"
                               : "输入正文内容"
                           }
-                          className="selection:bg-primary/10 min-h-[600px] w-full resize-none rounded-none border-0 bg-transparent px-0 py-2 font-serif text-[18px] leading-[2.2] text-stone-800 placeholder:text-stone-300 focus-visible:ring-0"
                         />
                       ) : (
                         <ReadonlyRecordState record={selectedRecord} />

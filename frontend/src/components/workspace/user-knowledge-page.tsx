@@ -197,13 +197,13 @@ function SidebarFolderNode({
   const isDropTarget = dropTargetFolderPath === node.path;
 
   return (
-    <div>
+    <div className="mb-0.5">
       <div
         className={cn(
-          "group flex items-center rounded-lg pr-2 transition-all",
+          "group flex items-center rounded-md pr-2 transition-colors",
           isSelected
-            ? "bg-primary/8 text-primary"
-            : "text-stone-600 hover:bg-stone-100 hover:text-stone-900",
+            ? "bg-primary/10 text-primary font-medium"
+            : "text-stone-600 hover:bg-stone-200/50 hover:text-stone-900",
           isDropTarget && "ring-primary/40 bg-primary/10 ring-2",
         )}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
@@ -233,27 +233,29 @@ function SidebarFolderNode({
               onToggleFolder(node.path);
             }
           }}
-          className="flex size-8 shrink-0 items-center justify-center rounded-md opacity-70 hover:bg-black/5 hover:opacity-100"
+          className={cn(
+            "flex size-7 shrink-0 items-center justify-center rounded-sm transition-colors",
+            isSelected ? "hover:bg-primary/20" : "hover:bg-stone-300/50",
+            !hasChildren && "pointer-events-none opacity-0"
+          )}
           aria-label={isExpanded ? "折叠文件夹" : "展开文件夹"}
         >
-          {hasChildren ? (
-            isExpanded ? (
-              <ChevronDownIcon className="size-3.5" />
-            ) : (
-              <ChevronRightIcon className="size-3.5" />
-            )
-          ) : null}
+          {isExpanded ? (
+            <ChevronDownIcon className="size-3.5 opacity-70" />
+          ) : (
+            <ChevronRightIcon className="size-3.5 opacity-70" />
+          )}
         </button>
         <button
           type="button"
           onClick={() => onSelectFolder(node.path)}
-          className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-2 pl-0 text-left text-sm"
+          className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-0.5 pr-2 text-left text-sm"
         >
-          <FolderIcon className="size-4 shrink-0 opacity-70" />
-          <span className="min-w-0 flex-1 truncate">
+          <FolderIcon className={cn("size-4 shrink-0", isSelected ? "opacity-90" : "opacity-50")} />
+          <span className="min-w-0 flex-1 truncate tracking-wide">
             {getFolderDisplayName(node.name)}
           </span>
-          <span className="text-[10px] opacity-45">{node.fileCount}</span>
+          <span className="text-[10px] font-medium opacity-40">{node.fileCount}</span>
         </button>
         <div className="mr-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
           <button
@@ -262,10 +264,13 @@ function SidebarFolderNode({
               event.stopPropagation();
               onCreateNoteInFolder(node.path);
             }}
-            className="flex size-7 items-center justify-center rounded-md hover:bg-black/5"
+            className={cn(
+              "flex size-6 items-center justify-center rounded-sm",
+              isSelected ? "hover:bg-primary/20" : "hover:bg-stone-300/50"
+            )}
             title="在此文件夹新建笔记"
           >
-            <PlusIcon className="size-3.5" />
+            <PlusIcon className="size-3.5 opacity-70" />
           </button>
           <button
             type="button"
@@ -273,15 +278,18 @@ function SidebarFolderNode({
               event.stopPropagation();
               onCreateFolderInFolder(node.path);
             }}
-            className="flex size-7 items-center justify-center rounded-md hover:bg-black/5"
+            className={cn(
+              "flex size-6 items-center justify-center rounded-sm",
+              isSelected ? "hover:bg-primary/20" : "hover:bg-stone-300/50"
+            )}
             title="在此文件夹新建子文件夹"
           >
-            <FolderPlusIcon className="size-3.5" />
+            <FolderPlusIcon className="size-3.5 opacity-70" />
           </button>
         </div>
       </div>
       {hasChildren && isExpanded ? (
-        <div className="mt-0.5">
+        <div className="mt-0.5 space-y-0.5">
           {node.children.map((child) => (
             <SidebarFolderNode
               key={child.path}
@@ -319,15 +327,15 @@ function SidebarFolderNode({
                 }}
                 onDragEnd={onRecordDragEnd}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-all",
+                  "my-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors",
                   isActive
-                    ? "bg-primary/6 text-primary"
-                    : "text-stone-600 hover:bg-stone-50 hover:text-stone-900",
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-stone-600 hover:bg-stone-200/50 hover:text-stone-900",
                 )}
-                style={{ paddingLeft: `${38 + depth * 14}px` }}
+                style={{ paddingLeft: `${36 + depth * 14}px` }}
               >
-                <FileTextIcon className="size-3.5 shrink-0 opacity-70" />
-                <span className="min-w-0 truncate">
+                <FileTextIcon className={cn("size-3.5 shrink-0", isActive ? "opacity-90" : "opacity-40")} />
+                <span className="min-w-0 truncate tracking-wide">
                   {getReadableRecordTitle(record)}
                 </span>
               </button>
@@ -901,31 +909,30 @@ export default function NotesPage() {
           className="h-full min-h-0 w-full"
         >
           <ResizablePanel
-            defaultSize={22}
-            minSize={15}
+            defaultSize={24}
+            minSize={18}
             maxSize={45}
-            className="border-accent/20 flex min-h-0 flex-col border-r bg-white"
+            className="flex min-h-0 flex-col border-r border-stone-200 bg-stone-50/50"
           >
-            <div className="p-4">
+            <div className="border-b border-stone-200/50 bg-stone-50 p-5">
               <div className="flex gap-2">
                 <Button
                   size="sm"
-                  variant="outline"
-                  className="border-primary/30 bg-primary/5 text-primary hover:bg-primary group h-11 flex-1 justify-start gap-2 rounded-none font-serif transition-all hover:text-white"
+                  className="bg-primary/90 text-primary-foreground hover:bg-primary group h-10 flex-1 justify-start gap-2 rounded-md font-serif shadow-sm transition-all"
                   disabled={createMutation.isPending}
                   onClick={() => void handleCreateNote()}
                 >
                   {createMutation.isPending ? (
                     <Loader2Icon className="size-4 animate-spin" />
                   ) : (
-                    <PlusIcon className="size-4 transition-transform group-hover:rotate-90" />
+                    <PlusIcon className="size-4 opacity-80 transition-transform group-hover:rotate-90" />
                   )}
-                  <span className="tracking-widest">新建笔记</span>
+                  <span className="whitespace-nowrap tracking-widest">新建笔记</span>
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-11 w-11 shrink-0 rounded-none border-stone-300 bg-white px-0"
+                  className="h-10 w-10 shrink-0 rounded-md border-stone-200 bg-white px-0 text-stone-500 shadow-sm transition-colors hover:bg-stone-100 hover:text-stone-700"
                   disabled={createFolderMutation.isPending}
                   onClick={() => handleOpenCreateFolderDialog()}
                   title={
@@ -937,33 +944,36 @@ export default function NotesPage() {
                   {createFolderMutation.isPending ? (
                     <Loader2Icon className="size-4 animate-spin" />
                   ) : (
-                    <FolderPlusIcon className="size-4" />
+                    <FolderPlusIcon className="size-4 opacity-80" />
                   )}
                 </Button>
               </div>
-              <div className="mt-3 text-[11px] leading-5 text-stone-400">
-                {selectedFolderPath && folderBreadcrumbs.length > 0
-                  ? `当前位置：${folderBreadcrumbs
-                      .map((crumb) => getFolderDisplayName(crumb.name))
-                      .join(" / ")}`
-                  : "按文件夹展开和折叠笔记结构"}
+              <div className="mt-4 flex items-center gap-1.5 font-serif text-[13px] text-stone-500">
+                <span className="shrink-0 opacity-80">当前:</span>
+                <span className="truncate font-medium text-stone-700">
+                  {selectedFolderPath && folderBreadcrumbs.length > 0
+                    ? folderBreadcrumbs.map((crumb) => getFolderDisplayName(crumb.name)).join(" / ")
+                    : "笔记总览"}
+                </span>
               </div>
             </div>
 
             <ScrollArea className="min-h-0 flex-1">
               {isLoading ? (
-                <div className="flex min-h-[240px] items-center justify-center gap-2 text-sm text-slate-500">
-                  <Loader2Icon className="size-4 animate-spin" />
-                  正在加载
+                <div className="flex min-h-[240px] items-center justify-center gap-2 text-sm text-stone-400">
+                  <Loader2Icon className="size-4 animate-spin opacity-50" />
+                  <span className="font-serif tracking-widest">加载中...</span>
                 </div>
               ) : error ? (
-                <div className="m-4 border border-red-500/20 bg-red-500/6 p-4 text-sm text-red-600">
+                <div className="m-4 rounded-md border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-600">
                   {error.message}
                 </div>
               ) : records.length === 0 ? (
-                <div className="p-4 text-sm text-slate-500">暂无笔记。</div>
+                <div className="p-8 text-center font-serif text-sm text-stone-400">
+                  暂无笔记。
+                </div>
               ) : (
-                <div className="px-2 py-3">
+                <div className="space-y-0.5 px-3 py-4">
                   {folderTree.map((node) => (
                     <SidebarFolderNode
                       key={node.path}
@@ -990,7 +1000,10 @@ export default function NotesPage() {
             </ScrollArea>
           </ResizablePanel>
 
-          <ResizableHandle withHandle />
+          <ResizableHandle 
+            withHandle 
+            className="w-1.5 bg-stone-100 hover:bg-primary/20 active:bg-primary/30 transition-colors" 
+          />
 
           <ResizablePanel minSize={30} className="flex min-h-0 flex-col bg-white">
             <div className="border-accent/20 border-b px-6 py-4 shadow-sm">

@@ -18,6 +18,11 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { CreateFolderDialog } from "@/components/workspace/knowledge-management-page.dialogs";
@@ -36,6 +41,7 @@ import {
   useCreateUserDerivedKnowledge,
   useCreateUserKnowledgeFolder,
   useDeleteUserKnowledgeRecord,
+  useMoveUserKnowledgeRecord,
   useUpdateUserKnowledgeRecordContent,
   useUserKnowledgeRecordContent,
   useUserKnowledgeRecords,
@@ -110,32 +116,27 @@ function buildOriginalJumpHref(
     return null;
   }
 
-  const pageNo = getOriginAnchorNumber(record, "page_no");
   const pdfPageNo = getOriginAnchorNumber(record, "pdf_page_no");
-  const paragraphNo = getOriginAnchorNumber(record, "paragraph_no");
-  if (!pageNo && !pdfPageNo && !paragraphNo) {
+  const pageNo = getOriginAnchorNumber(record, "page_no");
+  const initialPage = pdfPageNo ?? pageNo;
+  if (!initialPage) {
     return null;
   }
 
+  const documentUrl = buildKnowledgeDocumentUrl(
+    record.origin_scope,
+    record.origin_filename,
+  );
   const params = new URLSearchParams({
+    mode: "reader",
     filename: record.origin_filename,
     scope: record.origin_scope,
-    document_url: buildKnowledgeDocumentUrl(
-      record.origin_scope,
-      record.origin_filename,
-    ),
+    document_url: documentUrl,
+    origin_filename: record.origin_filename,
+    pdf_page_no: String(initialPage),
     back_href: `/workspace/notes?space=${encodeURIComponent(knowledgeSpaceId ?? record.knowledge_space_id ?? "")}&record=${encodeURIComponent(recordId)}`,
     back_label: "笔记",
   });
-  if (pageNo) {
-    params.set("page_no", String(pageNo));
-  }
-  if (pdfPageNo) {
-    params.set("pdf_page_no", String(pdfPageNo));
-  }
-  if (paragraphNo) {
-    params.set("paragraph_no", String(paragraphNo));
-  }
   return `/workspace/knowledge/view?${params.toString()}`;
 }
 
@@ -162,6 +163,12 @@ function SidebarFolderNode({
   onCreateNoteInFolder,
   onCreateFolderInFolder,
   registerRecordRef,
+  dropTargetFolderPath,
+  onRecordDragStart,
+  onRecordDragEnd,
+  onFolderDragEnter,
+  onFolderDragLeave,
+  onFolderDrop,
   depth = 0,
 }: {
   node: NoteTreeFolderNode;
@@ -176,11 +183,18 @@ function SidebarFolderNode({
   registerRecordRef: (
     recordId: string,
   ) => (element: HTMLButtonElement | null) => void;
+  dropTargetFolderPath: string | null;
+  onRecordDragStart: (recordId: string) => void;
+  onRecordDragEnd: () => void;
+  onFolderDragEnter: (path: string) => void;
+  onFolderDragLeave: () => void;
+  onFolderDrop: (path: string) => void;
   depth?: number;
 }) {
   const isSelected = selectedFolderPath === node.path;
   const isExpanded = expandedFolderPaths.includes(node.path);
   const hasChildren = node.children.length > 0 || node.records.length > 0;
+  const isDropTarget = dropTargetFolderPath === node.path;
 
   return (
     <div>
@@ -190,8 +204,26 @@ function SidebarFolderNode({
           isSelected
             ? "bg-primary/8 text-primary"
             : "text-stone-600 hover:bg-stone-100 hover:text-stone-900",
+          isDropTarget && "ring-primary/40 bg-primary/10 ring-2",
         )}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+        }}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          onFolderDragEnter(node.path);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+            onFolderDragLeave();
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          onFolderDrop(node.path);
+        }}
       >
         <button
           type="button"
@@ -263,6 +295,12 @@ function SidebarFolderNode({
               onCreateNoteInFolder={onCreateNoteInFolder}
               onCreateFolderInFolder={onCreateFolderInFolder}
               registerRecordRef={registerRecordRef}
+              dropTargetFolderPath={dropTargetFolderPath}
+              onRecordDragStart={onRecordDragStart}
+              onRecordDragEnd={onRecordDragEnd}
+              onFolderDragEnter={onFolderDragEnter}
+              onFolderDragLeave={onFolderDragLeave}
+              onFolderDrop={onFolderDrop}
               depth={depth + 1}
             />
           ))}
@@ -273,7 +311,13 @@ function SidebarFolderNode({
                 key={record.id}
                 ref={registerRecordRef(record.id)}
                 type="button"
+                draggable
                 onClick={() => onSelectRecord(record)}
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = "move";
+                  onRecordDragStart(record.id);
+                }}
+                onDragEnd={onRecordDragEnd}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-all",
                   isActive
@@ -283,7 +327,7 @@ function SidebarFolderNode({
                 style={{ paddingLeft: `${38 + depth * 14}px` }}
               >
                 <FileTextIcon className="size-3.5 shrink-0 opacity-70" />
-                <span className="truncate">
+                <span className="min-w-0 truncate">
                   {getReadableRecordTitle(record)}
                 </span>
               </button>
@@ -457,6 +501,8 @@ export default function NotesPage() {
   const recordElementRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
+  const [dropTargetFolderPath, setDropTargetFolderPath] = useState<string | null>(null);
+  const draggingRecordIdRef = useRef<string | null>(null);
   const [selectedFolderPath, setSelectedFolderPath] = useState("");
   const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([]);
   const [isCreateFolderDialogOpen, setIsCreateFolderDialogOpen] =
@@ -503,6 +549,7 @@ export default function NotesPage() {
   const createMutation = useCreateUserDerivedKnowledge();
   const createFolderMutation = useCreateUserKnowledgeFolder();
   const deleteMutation = useDeleteUserKnowledgeRecord();
+  const moveMutation = useMoveUserKnowledgeRecord();
   const updateMutation = useUpdateUserKnowledgeRecordContent();
 
   const records = useMemo(
@@ -748,6 +795,45 @@ export default function NotesPage() {
     }
   };
 
+  const handleRecordDragStart = (recordId: string) => {
+    draggingRecordIdRef.current = recordId;
+  };
+
+  const handleRecordDragEnd = () => {
+    draggingRecordIdRef.current = null;
+    setDropTargetFolderPath(null);
+  };
+
+  const handleFolderDragEnter = (path: string) => {
+    setDropTargetFolderPath(path);
+  };
+
+  const handleFolderDragLeave = () => {
+    setDropTargetFolderPath(null);
+  };
+
+  const handleFolderDrop = async (folderPath: string) => {
+    const recordId = draggingRecordIdRef.current;
+    draggingRecordIdRef.current = null;
+    setDropTargetFolderPath(null);
+    if (!recordId) {
+      return;
+    }
+    const record = records.find((r) => r.id === recordId);
+    const logicalPath = folderPath.replace(/^personal:/, "");
+    if (record && normalizeFolderPath(record.folder_path) === logicalPath) {
+      return;
+    }
+    try {
+      await moveMutation.mutateAsync({ recordId, folderPath: logicalPath });
+      toast.success("已移动");
+    } catch (moveError) {
+      toast.error(
+        moveError instanceof Error ? moveError.message : "移动失败",
+      );
+    }
+  };
+
   const handleSave = async () => {
     if (!selectedRecord?.id || !contentQuery.data?.editable) {
       return;
@@ -810,8 +896,16 @@ export default function NotesPage() {
           onSubmit={() => void handleCreateFolder()}
           isPending={createFolderMutation.isPending}
         />
-        <div className="flex h-full min-h-0 w-full overflow-hidden bg-transparent">
-          <aside className="border-accent/20 flex min-h-0 w-full shrink-0 flex-col border-b bg-white lg:w-[280px] lg:border-r lg:border-b-0">
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="h-full min-h-0 w-full"
+        >
+          <ResizablePanel
+            defaultSize={22}
+            minSize={15}
+            maxSize={45}
+            className="border-accent/20 flex min-h-0 flex-col border-r bg-white"
+          >
             <div className="p-4">
               <div className="flex gap-2">
                 <Button
@@ -883,14 +977,22 @@ export default function NotesPage() {
                       onCreateNoteInFolder={handleCreateNoteInFolder}
                       onCreateFolderInFolder={handleOpenCreateFolderDialog}
                       registerRecordRef={registerRecordRef}
+                      dropTargetFolderPath={dropTargetFolderPath}
+                      onRecordDragStart={handleRecordDragStart}
+                      onRecordDragEnd={handleRecordDragEnd}
+                      onFolderDragEnter={handleFolderDragEnter}
+                      onFolderDragLeave={handleFolderDragLeave}
+                      onFolderDrop={(path) => void handleFolderDrop(path)}
                     />
                   ))}
                 </div>
               )}
             </ScrollArea>
-          </aside>
+          </ResizablePanel>
 
-          <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
+          <ResizableHandle withHandle />
+
+          <ResizablePanel minSize={30} className="flex min-h-0 flex-col bg-white">
             <div className="border-accent/20 border-b px-6 py-4 shadow-sm">
               <div className="flex items-start gap-6">
                 <div className="max-w-full min-w-0">
@@ -1060,8 +1162,8 @@ export default function NotesPage() {
                 )}
               </div>
             )}
-          </section>
-        </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </WorkspaceBody>
     </WorkspaceContainer>
   );

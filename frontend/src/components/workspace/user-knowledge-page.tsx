@@ -42,6 +42,7 @@ import {
   useCreateUserKnowledgeFolder,
   useDeleteUserKnowledgeRecord,
   useMoveUserKnowledgeRecord,
+  useRenameUserKnowledgeFolder,
   useUpdateUserKnowledgeRecordContent,
   useUserKnowledgeRecordContent,
   useUserKnowledgeRecords,
@@ -165,7 +166,8 @@ function SidebarFolderNode({
   registerRecordRef,
   dropTargetFolderPath,
   onRecordDragStart,
-  onRecordDragEnd,
+  onFolderDragStartNode,
+  onDragEnd,
   onFolderDragEnter,
   onFolderDragLeave,
   onFolderDrop,
@@ -185,7 +187,8 @@ function SidebarFolderNode({
   ) => (element: HTMLButtonElement | null) => void;
   dropTargetFolderPath: string | null;
   onRecordDragStart: (recordId: string) => void;
-  onRecordDragEnd: () => void;
+  onFolderDragStartNode: (path: string) => void;
+  onDragEnd: () => void;
   onFolderDragEnter: (path: string) => void;
   onFolderDragLeave: () => void;
   onFolderDrop: (path: string) => void;
@@ -199,6 +202,7 @@ function SidebarFolderNode({
   return (
     <div className="mb-0.5">
       <div
+        data-sidebar-folder-row
         className={cn(
           "group flex items-center rounded-md pr-2 transition-colors",
           isSelected
@@ -222,6 +226,7 @@ function SidebarFolderNode({
         }}
         onDrop={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           onFolderDrop(node.path);
         }}
       >
@@ -248,7 +253,13 @@ function SidebarFolderNode({
         </button>
         <button
           type="button"
+          draggable
           onClick={() => onSelectFolder(node.path)}
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = "move";
+            onFolderDragStartNode(node.path);
+          }}
+          onDragEnd={onDragEnd}
           className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-0.5 pr-2 text-left text-sm"
         >
           <FolderIcon className={cn("size-4 shrink-0", isSelected ? "opacity-90" : "opacity-50")} />
@@ -305,7 +316,8 @@ function SidebarFolderNode({
               registerRecordRef={registerRecordRef}
               dropTargetFolderPath={dropTargetFolderPath}
               onRecordDragStart={onRecordDragStart}
-              onRecordDragEnd={onRecordDragEnd}
+              onFolderDragStartNode={onFolderDragStartNode}
+              onDragEnd={onDragEnd}
               onFolderDragEnter={onFolderDragEnter}
               onFolderDragLeave={onFolderDragLeave}
               onFolderDrop={onFolderDrop}
@@ -325,7 +337,7 @@ function SidebarFolderNode({
                   e.dataTransfer.effectAllowed = "move";
                   onRecordDragStart(record.id);
                 }}
-                onDragEnd={onRecordDragEnd}
+                onDragEnd={onDragEnd}
                 className={cn(
                   "my-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors",
                   isActive
@@ -510,7 +522,11 @@ export default function NotesPage() {
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [dropTargetFolderPath, setDropTargetFolderPath] = useState<string | null>(null);
-  const draggingRecordIdRef = useRef<string | null>(null);
+  const draggingItemRef = useRef<
+    | { type: "record"; id: string }
+    | { type: "folder"; path: string }
+    | null
+  >(null);
   const [selectedFolderPath, setSelectedFolderPath] = useState("");
   const [expandedFolderPaths, setExpandedFolderPaths] = useState<string[]>([]);
   const [isCreateFolderDialogOpen, setIsCreateFolderDialogOpen] =
@@ -558,6 +574,7 @@ export default function NotesPage() {
   const createFolderMutation = useCreateUserKnowledgeFolder();
   const deleteMutation = useDeleteUserKnowledgeRecord();
   const moveMutation = useMoveUserKnowledgeRecord();
+  const renameFolderMutation = useRenameUserKnowledgeFolder();
   const updateMutation = useUpdateUserKnowledgeRecordContent();
 
   const records = useMemo(
@@ -804,15 +821,23 @@ export default function NotesPage() {
   };
 
   const handleRecordDragStart = (recordId: string) => {
-    draggingRecordIdRef.current = recordId;
+    draggingItemRef.current = { type: "record", id: recordId };
   };
 
-  const handleRecordDragEnd = () => {
-    draggingRecordIdRef.current = null;
+  const handleFolderDragStartNode = (path: string) => {
+    draggingItemRef.current = { type: "folder", path };
+  };
+
+  const handleDragEnd = () => {
+    draggingItemRef.current = null;
     setDropTargetFolderPath(null);
   };
 
   const handleFolderDragEnter = (path: string) => {
+    const item = draggingItemRef.current;
+    if (item?.type === "folder" && item.path === path) {
+      return;
+    }
     setDropTargetFolderPath(path);
   };
 
@@ -821,23 +846,55 @@ export default function NotesPage() {
   };
 
   const handleFolderDrop = async (folderPath: string) => {
-    const recordId = draggingRecordIdRef.current;
-    draggingRecordIdRef.current = null;
+    const item = draggingItemRef.current;
+    draggingItemRef.current = null;
     setDropTargetFolderPath(null);
-    if (!recordId) {
+    if (!item) {
       return;
     }
-    const record = records.find((r) => r.id === recordId);
-    const logicalPath = folderPath.replace(/^personal:/, "");
-    if (record && normalizeFolderPath(record.folder_path) === logicalPath) {
+    const targetLogical = folderPath.replace(/^personal:/, "");
+
+    if (item.type === "record") {
+      const record = records.find((r) => r.id === item.id);
+      if (record && normalizeFolderPath(record.folder_path) === targetLogical) {
+        return;
+      }
+      try {
+        await moveMutation.mutateAsync({
+          recordId: item.id,
+          folderPath: targetLogical,
+        });
+        toast.success("已移动");
+      } catch (moveError) {
+        toast.error(
+          moveError instanceof Error ? moveError.message : "移动失败",
+        );
+      }
+      return;
+    }
+
+    const sourceLogical = item.path.replace(/^personal:/, "");
+    if (!sourceLogical || sourceLogical === targetLogical) {
+      return;
+    }
+    if (targetLogical === `${sourceLogical}` || targetLogical.startsWith(`${sourceLogical}/`)) {
+      toast.error("不能把文件夹移到它自己的子目录里");
+      return;
+    }
+    const basename = sourceLogical.split("/").pop() ?? sourceLogical;
+    const newPath = targetLogical ? `${targetLogical}/${basename}` : basename;
+    if (newPath === sourceLogical) {
       return;
     }
     try {
-      await moveMutation.mutateAsync({ recordId, folderPath: logicalPath });
+      await renameFolderMutation.mutateAsync({
+        path: sourceLogical,
+        newPath,
+      });
       toast.success("已移动");
-    } catch (moveError) {
+    } catch (renameError) {
       toast.error(
-        moveError instanceof Error ? moveError.message : "移动失败",
+        renameError instanceof Error ? renameError.message : "移动失败",
       );
     }
   };
@@ -909,10 +966,10 @@ export default function NotesPage() {
           className="h-full min-h-0 w-full"
         >
           <ResizablePanel
-            defaultSize={28}
-            minSize={15}
-            maxSize={60}
-            className="flex min-h-0 min-w-[280px] flex-col border-r border-stone-200 bg-stone-50/50"
+            defaultSize="28%"
+            minSize="15%"
+            maxSize="60%"
+            className="flex min-h-0 flex-col border-r border-stone-200 bg-stone-50/50"
           >
             <div className="border-b border-stone-200/50 bg-stone-50 p-5">
               <div className="flex gap-2">
@@ -958,7 +1015,29 @@ export default function NotesPage() {
               </div>
             </div>
 
-            <ScrollArea className="min-h-0 flex-1">
+            <ScrollArea
+              className="min-h-0 flex-1"
+              onClick={(e) => {
+                const target = e.target as HTMLElement;
+                if (!target.closest("button") && !target.closest("[data-sidebar-folder-row]")) {
+                  setSelectedFolderPath("");
+                }
+              }}
+              onDragOver={(e) => {
+                if (draggingItemRef.current) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                }
+              }}
+              onDrop={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest("[data-sidebar-folder-row]")) {
+                  return;
+                }
+                e.preventDefault();
+                void handleFolderDrop("personal:");
+              }}
+            >
               {isLoading ? (
                 <div className="flex min-h-[240px] items-center justify-center gap-2 text-sm text-stone-400">
                   <Loader2Icon className="size-4 animate-spin opacity-50" />
@@ -989,7 +1068,8 @@ export default function NotesPage() {
                       registerRecordRef={registerRecordRef}
                       dropTargetFolderPath={dropTargetFolderPath}
                       onRecordDragStart={handleRecordDragStart}
-                      onRecordDragEnd={handleRecordDragEnd}
+                      onFolderDragStartNode={handleFolderDragStartNode}
+                      onDragEnd={handleDragEnd}
                       onFolderDragEnter={handleFolderDragEnter}
                       onFolderDragLeave={handleFolderDragLeave}
                       onFolderDrop={(path) => void handleFolderDrop(path)}
@@ -1005,7 +1085,7 @@ export default function NotesPage() {
             className="w-1.5 bg-stone-100 hover:bg-primary/20 active:bg-primary/30 transition-colors" 
           />
 
-          <ResizablePanel minSize={20} className="flex min-h-0 flex-col bg-white">
+          <ResizablePanel minSize="20%" className="flex min-h-0 flex-col bg-white">
             <div className="border-accent/20 border-b px-6 py-4 shadow-sm">
               <div className="flex items-start gap-6">
                 <div className="max-w-full min-w-0">

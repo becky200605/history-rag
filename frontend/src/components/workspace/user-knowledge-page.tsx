@@ -1,5 +1,17 @@
 "use client";
 
+import { Placeholder } from "@tiptap/extension-placeholder";
+import {
+  EditorContent,
+  Node,
+  NodeViewWrapper,
+  ReactNodeViewRenderer,
+  mergeAttributes,
+  useEditor,
+  type JSONContent,
+  type ReactNodeViewProps,
+} from "@tiptap/react";
+import { StarterKit } from "@tiptap/starter-kit";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -24,7 +36,6 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 import { CreateFolderDialog } from "@/components/workspace/knowledge-management-page.dialogs";
 import {
   getFolderDisplayName,
@@ -230,34 +241,6 @@ function parseNoteSegments(content: string): NoteSegment[] {
   return segments;
 }
 
-function serializeNoteSegments(segments: NoteSegment[]): string {
-  const parts: string[] = [];
-  segments.forEach((seg, i) => {
-    if (seg.kind === "text") {
-      if (seg.text.length > 0 || (i === 0 && segments.length === 1)) {
-        parts.push(seg.text);
-      }
-      return;
-    }
-    const e = seg.excerpt;
-    const lines: string[] = [
-      EXCERPT_HEADER,
-      "",
-      `来源：${e.filename || "未知来源"}`,
-    ];
-    if (e.location) {
-      lines.push(`定位：${e.location}`);
-    }
-    lines.push("");
-    const quoteLines =
-      e.text.length > 0
-        ? e.text.split("\n").map((line) => (line ? `> ${line}` : ">"))
-        : ["> "];
-    lines.push(...quoteLines);
-    parts.push(lines.join("\n"));
-  });
-  return parts.join("\n\n");
-}
 
 function sortRecords(records: UserKnowledgeRecord[]) {
   return [...records].sort((left, right) => {
@@ -338,7 +321,7 @@ function SidebarFolderNode({
           onFolderDragEnter(node.path);
         }}
         onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          if (!e.currentTarget.contains(e.relatedTarget as HTMLElement | null)) {
             onFolderDragLeave();
           }
         }}
@@ -632,91 +615,186 @@ function ReadonlyRecordState({ record }: { record: UserKnowledgeRecord }) {
   );
 }
 
-function NoteExcerptCard({
-  excerpt,
-  onRemove,
-}: {
-  excerpt: ParsedExcerpt;
-  onRemove: () => void;
-}) {
+function markdownToTiptapDoc(markdown: string): JSONContent {
+  const segments = parseNoteSegments(markdown);
+  const nodes: JSONContent[] = [];
+
+  for (const seg of segments) {
+    if (seg.kind === "text") {
+      const lines = seg.text.split("\n");
+      for (const line of lines) {
+        if (line === "") {
+          nodes.push({ type: "paragraph" });
+        } else {
+          nodes.push({ type: "paragraph", content: [{ type: "text", text: line }] });
+        }
+      }
+    } else {
+      nodes.push({
+        type: "excerptBlock",
+        attrs: {
+          filename: seg.excerpt.filename,
+          location: seg.excerpt.location ?? null,
+          text: seg.excerpt.text,
+        },
+      });
+    }
+  }
+
+  if (nodes.length === 0) {
+    nodes.push({ type: "paragraph" });
+  }
+
+  return { type: "doc", content: nodes };
+}
+
+function extractInlineText(node: JSONContent): string {
+  if (node.type === "hardBreak") return "\n";
+  if (node.type === "text") return node.text ?? "";
+  if (node.content) return node.content.map(extractInlineText).join("");
+  return "";
+}
+
+function tiptapDocToMarkdown(doc: JSONContent): string {
+  const content = doc.content ?? [];
+  const parts: string[] = [];
+  const textBuffer: string[] = [];
+
+  const flushText = () => {
+    if (textBuffer.length > 0) {
+      parts.push(textBuffer.join("\n"));
+      textBuffer.length = 0;
+    }
+  };
+
+  for (const node of content) {
+    if (node.type === "excerptBlock") {
+      flushText();
+      const { filename, location, text } = (node.attrs ?? {}) as {
+        filename?: string;
+        location?: string | null;
+        text?: string;
+      };
+      const lines: string[] = [EXCERPT_HEADER, "", `来源：${filename ?? "未知来源"}`];
+      if (location) lines.push(`定位：${location}`);
+      lines.push("");
+      const textStr = text ?? "";
+      const quoteLines =
+        textStr.length > 0
+          ? textStr.split("\n").map((l) => (l ? `> ${l}` : ">"))
+          : ["> "];
+      lines.push(...quoteLines);
+      parts.push(lines.join("\n"));
+    } else {
+      textBuffer.push(extractInlineText(node));
+    }
+  }
+
+  flushText();
+  return parts.join("\n\n");
+}
+
+function ExcerptBlockNodeView({ node, deleteNode }: ReactNodeViewProps) {
+  const { filename, location, text } = node.attrs as {
+    filename: string;
+    location: string | null;
+    text: string;
+  };
   return (
-    <div className="group relative rounded-2xl border border-stone-200 bg-stone-50/80 p-5">
-      <button
-        type="button"
-        onClick={onRemove}
-        className="absolute top-3 right-3 flex size-7 items-center justify-center rounded-full text-stone-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
-        title="移除此摘录"
+    <NodeViewWrapper>
+      <div
+        className="group relative my-4 rounded-2xl border border-stone-200 bg-stone-50/80 p-5"
+        contentEditable={false}
       >
-        <Trash2Icon className="size-3.5" />
-      </button>
-      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 pr-10 text-sm text-stone-500">
-        {excerpt.filename ? (
-          <span className="flex items-center gap-1.5">
-            <span className="opacity-60">来源：</span>
-            <span className="font-medium text-stone-700">{excerpt.filename}</span>
-          </span>
-        ) : null}
-        {excerpt.location ? <span>{excerpt.location}</span> : null}
+        <button
+          type="button"
+          onClick={deleteNode}
+          className="absolute top-3 right-3 flex size-7 items-center justify-center rounded-full text-stone-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
+          title="移除此摘录"
+        >
+          <Trash2Icon className="size-3.5" />
+        </button>
+        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 pr-10 text-sm text-stone-500">
+          {filename ? (
+            <span className="flex items-center gap-1.5">
+              <span className="opacity-60">来源：</span>
+              <span className="font-medium text-stone-700">{filename}</span>
+            </span>
+          ) : null}
+          {location ? <span>{location}</span> : null}
+        </div>
+        <div className="border-l-2 border-stone-200 pl-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap text-stone-600 italic">
+          {text}
+        </div>
       </div>
-      <div className="border-l-2 border-stone-200 pl-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap text-stone-600 italic">
-        {excerpt.text}
-      </div>
-    </div>
+    </NodeViewWrapper>
   );
 }
 
-function NoteEditableArea({
+const ExcerptBlockExtension = Node.create({
+  name: "excerptBlock",
+  group: "block",
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return {
+      filename: { default: "" },
+      location: { default: null },
+      text: { default: "" },
+    };
+  },
+  parseHTML() {
+    return [{ tag: 'div[data-type="excerpt-block"]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["div", mergeAttributes(HTMLAttributes, { "data-type": "excerpt-block" }), 0];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(ExcerptBlockNodeView);
+  },
+});
+
+function NoteEditor({
+  editorKey,
   content,
   onChange,
   placeholder,
 }: {
+  editorKey: string;
   content: string;
   onChange: (next: string) => void;
   placeholder: string;
 }) {
-  const segments = useMemo(() => parseNoteSegments(content), [content]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const initialDoc = useMemo(() => markdownToTiptapDoc(content), [editorKey]);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
-  const updateTextSegment = (segmentIndex: number, nextValue: string) => {
-    const nextSegments = segments.map((seg, idx) =>
-      idx === segmentIndex && seg.kind === "text"
-        ? { kind: "text" as const, text: nextValue }
-        : seg,
-    );
-    onChange(serializeNoteSegments(nextSegments));
-  };
-
-  const removeExcerpt = (segmentIndex: number) => {
-    const nextSegments = segments.filter((_, idx) => idx !== segmentIndex);
-    onChange(serializeNoteSegments(nextSegments));
-  };
+  const editor = useEditor(
+    {
+      extensions: [
+        StarterKit.configure({ heading: false, codeBlock: false, blockquote: false }),
+        Placeholder.configure({ placeholder }),
+        ExcerptBlockExtension,
+      ],
+      content: initialDoc,
+      onUpdate({ editor: e }) {
+        onChangeRef.current(tiptapDocToMarkdown(e.getJSON()));
+      },
+      editorProps: {
+        attributes: {
+          class:
+            "outline-none font-serif text-[18px] leading-[2.2] text-stone-800 min-h-[600px] py-2",
+          spellcheck: "false",
+        },
+      },
+    },
+    [editorKey],
+  );
 
   return (
-    <div className="space-y-6">
-      {segments.map((seg, idx) => {
-        if (seg.kind === "excerpt") {
-          return (
-            <NoteExcerptCard
-              key={`excerpt-${idx}`}
-              excerpt={seg.excerpt}
-              onRemove={() => removeExcerpt(idx)}
-            />
-          );
-        }
-        const isFirstText = idx === 0;
-        const hasExcerpts = segments.some((s) => s.kind === "excerpt");
-        return (
-          <Textarea
-            key={`text-${idx}`}
-            value={seg.text}
-            onChange={(event) => updateTextSegment(idx, event.target.value)}
-            placeholder={isFirstText ? placeholder : "继续写一些笔记..."}
-            className={cn(
-              "selection:bg-primary/10 w-full resize-none rounded-none border-0 bg-transparent px-0 py-2 font-serif text-[18px] leading-[2.2] text-stone-800 placeholder:text-stone-300 focus-visible:ring-0",
-              isFirstText && !hasExcerpts ? "min-h-[600px]" : "min-h-[120px]",
-            )}
-          />
-        );
-      })}
+    <div className="note-editor w-full">
+      <EditorContent editor={editor} />
     </div>
   );
 }
@@ -1414,7 +1492,8 @@ export default function NotesPage() {
                         </div>
                       ) : null}
                       {contentQuery.data?.editable ? (
-                        <NoteEditableArea
+                        <NoteEditor
+                          editorKey={draftRecordId ?? ""}
                           content={contentDraft}
                           onChange={setContentDraft}
                           placeholder={

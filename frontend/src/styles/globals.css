@@ -527,3 +527,25 @@
   --container-width-md: calc(var(--spacing) * 204);
   --container-width-lg: calc(var(--spacing) * 256);
 }
+
+/* Tiptap note editor */
+.note-editor .tiptap {
+  outline: none;
+}
+
+.note-editor .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--color-stone-300);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+.note-editor .tiptap > * + * {
+  margin-top: 0;
+}
+
+.note-editor .tiptap p {
+  margin: 0;
+  min-height: 1em;
+}

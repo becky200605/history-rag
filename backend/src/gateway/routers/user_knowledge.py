@@ -428,6 +428,7 @@ def _build_note_markdown(*, title: str, content: str) -> str:
 def _build_note_excerpt_block(
     *,
     origin_filename: str | None,
+    origin_scope: str | None,
     origin_anchor: dict[str, Any] | None,
     excerpt_text: str,
 ) -> str:
@@ -442,6 +443,7 @@ def _build_note_excerpt_block(
         "## 原文摘录",
         "",
         f"来源：{origin_filename or '未知来源'}",
+        f"范围：{origin_scope}" if origin_scope else None,
         f"定位：{location_label}" if location_label else None,
         "",
         quoted_excerpt,
@@ -1226,6 +1228,7 @@ def append_excerpt_to_user_record(
 
     excerpt_block = _build_note_excerpt_block(
         origin_filename=payload.origin_filename,
+        origin_scope=payload.origin_scope,
         origin_anchor=payload.origin_anchor,
         excerpt_text=excerpt_text,
     )

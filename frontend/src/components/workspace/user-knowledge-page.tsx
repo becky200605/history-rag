@@ -154,6 +154,7 @@ function buildOriginalJumpHref(
 
 type ParsedExcerpt = {
   filename: string;
+  scope?: string;
   location?: string;
   text: string;
 };
@@ -194,6 +195,12 @@ function parseNoteSegments(content: string): NoteSegment[] {
         i++;
       }
 
+      let scope: string | undefined;
+      if (i < lines.length && lineAt(i).startsWith("范围：")) {
+        scope = lineAt(i).slice("范围：".length).trim();
+        i++;
+      }
+
       let location: string | undefined;
       if (i < lines.length && lineAt(i).startsWith("定位：")) {
         location = lineAt(i).slice("定位：".length).trim();
@@ -219,6 +226,7 @@ function parseNoteSegments(content: string): NoteSegment[] {
         kind: "excerpt",
         excerpt: {
           filename,
+          scope,
           location,
           text: quoteLines.join("\n").replace(/\n+$/, ""),
         },
@@ -634,6 +642,7 @@ function markdownToTiptapDoc(markdown: string): JSONContent {
         type: "excerptBlock",
         attrs: {
           filename: seg.excerpt.filename,
+          scope: seg.excerpt.scope ?? null,
           location: seg.excerpt.location ?? null,
           text: seg.excerpt.text,
         },
@@ -670,12 +679,14 @@ function tiptapDocToMarkdown(doc: JSONContent): string {
   for (const node of content) {
     if (node.type === "excerptBlock") {
       flushText();
-      const { filename, location, text } = (node.attrs ?? {}) as {
+      const { filename, scope, location, text } = (node.attrs ?? {}) as {
         filename?: string;
+        scope?: string | null;
         location?: string | null;
         text?: string;
       };
       const lines: string[] = [EXCERPT_HEADER, "", `来源：${filename ?? "未知来源"}`];
+      if (scope) lines.push(`范围：${scope}`);
       if (location) lines.push(`定位：${location}`);
       lines.push("");
       const textStr = text ?? "";
@@ -694,12 +705,38 @@ function tiptapDocToMarkdown(doc: JSONContent): string {
   return parts.join("\n\n");
 }
 
+function buildExcerptJumpHref(
+  filename: string,
+  scope: string | null,
+  location: string | null,
+): string | null {
+  if (!filename || !scope || !location) return null;
+  if (scope !== "global" && scope !== "user") return null;
+  const pageMatch = /PDF 第 (\d+) 页/.exec(location);
+  if (!pageMatch) return null;
+  const pdfPageNo = pageMatch[1] ?? "";
+  const documentUrl = buildKnowledgeDocumentUrl(scope, filename);
+  const params = new URLSearchParams({
+    mode: "reader",
+    filename,
+    scope,
+    document_url: documentUrl,
+    origin_filename: filename,
+    pdf_page_no: pdfPageNo,
+    back_href: "/workspace/notes",
+    back_label: "笔记",
+  });
+  return `/workspace/knowledge/view?${params.toString()}`;
+}
+
 function ExcerptBlockNodeView({ node, deleteNode }: ReactNodeViewProps) {
-  const { filename, location, text } = node.attrs as {
+  const { filename, scope, location, text } = node.attrs as {
     filename: string;
+    scope: string | null;
     location: string | null;
     text: string;
   };
+  const jumpHref = buildExcerptJumpHref(filename, scope, location);
   return (
     <NodeViewWrapper>
       <div
@@ -722,6 +759,15 @@ function ExcerptBlockNodeView({ node, deleteNode }: ReactNodeViewProps) {
             </span>
           ) : null}
           {location ? <span>{location}</span> : null}
+          {jumpHref ? (
+            <a
+              href={jumpHref}
+              className="text-accent hover:text-accent/80 inline-flex items-center gap-1 font-medium transition-all hover:translate-x-0.5"
+            >
+              跳转原文
+              <ExternalLinkIcon className="size-3.5" />
+            </a>
+          ) : null}
         </div>
         <div className="border-l-2 border-stone-200 pl-4 font-serif text-[15px] leading-relaxed whitespace-pre-wrap text-stone-600 italic">
           {text}
@@ -739,6 +785,7 @@ const ExcerptBlockExtension = Node.create({
   addAttributes() {
     return {
       filename: { default: "" },
+      scope: { default: null },
       location: { default: null },
       text: { default: "" },
     };

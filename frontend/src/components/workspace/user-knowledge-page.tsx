@@ -909,10 +909,10 @@ export default function NotesPage() {
           className="h-full min-h-0 w-full"
         >
           <ResizablePanel
-            defaultSize={24}
-            minSize={18}
-            maxSize={45}
-            className="flex min-h-0 flex-col border-r border-stone-200 bg-stone-50/50"
+            defaultSize={28}
+            minSize={15}
+            maxSize={60}
+            className="flex min-h-0 min-w-[280px] flex-col border-r border-stone-200 bg-stone-50/50"
           >
             <div className="border-b border-stone-200/50 bg-stone-50 p-5">
               <div className="flex gap-2">
@@ -1005,7 +1005,7 @@ export default function NotesPage() {
             className="w-1.5 bg-stone-100 hover:bg-primary/20 active:bg-primary/30 transition-colors" 
           />
 
-          <ResizablePanel minSize={30} className="flex min-h-0 flex-col bg-white">
+          <ResizablePanel minSize={20} className="flex min-h-0 flex-col bg-white">
             <div className="border-accent/20 border-b px-6 py-4 shadow-sm">
               <div className="flex items-start gap-6">
                 <div className="max-w-full min-w-0">
@@ -1018,8 +1018,8 @@ export default function NotesPage() {
                             setTitleDraft(event.target.value)
                           }
                           disabled={!contentQuery.data?.editable}
-                          className="text-primary h-auto !w-auto max-w-[860px] min-w-[240px] rounded-none border-0 bg-transparent px-0 py-0 font-serif text-2xl font-bold shadow-none focus-visible:ring-0 disabled:opacity-100"
-                          style={{ width: `${titleInputWidth}px` }}
+                          className="text-primary h-auto !w-auto max-w-full min-w-[120px] rounded-none border-0 bg-transparent px-0 py-0 font-serif text-2xl font-bold shadow-none focus-visible:ring-0 disabled:opacity-100"
+                          style={{ width: `${titleInputWidth}px`, maxWidth: '100%' }}
                         />
                         <span
                           ref={titleMeasureRef}

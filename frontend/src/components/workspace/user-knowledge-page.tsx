@@ -710,16 +710,17 @@ function buildExcerptJumpHref(
   scope: string | null,
   location: string | null,
 ): string | null {
-  if (!filename || !scope || !location) return null;
-  if (scope !== "global" && scope !== "user") return null;
+  if (!filename || !location) return null;
+  const resolvedScope = scope ?? "global";
+  if (resolvedScope !== "global" && resolvedScope !== "user") return null;
   const pageMatch = /PDF 第 (\d+) 页/.exec(location);
   if (!pageMatch) return null;
   const pdfPageNo = pageMatch[1] ?? "";
-  const documentUrl = buildKnowledgeDocumentUrl(scope, filename);
+  const documentUrl = buildKnowledgeDocumentUrl(resolvedScope, filename);
   const params = new URLSearchParams({
     mode: "reader",
     filename,
-    scope,
+    scope: resolvedScope,
     document_url: documentUrl,
     origin_filename: filename,
     pdf_page_no: pdfPageNo,

@@ -763,6 +763,8 @@ function ExcerptBlockNodeView({ node, deleteNode }: ReactNodeViewProps) {
           {jumpHref ? (
             <a
               href={jumpHref}
+              target="_blank"
+              rel="noopener noreferrer"
               className="text-accent hover:text-accent/80 inline-flex items-center gap-1 font-medium transition-all hover:translate-x-0.5"
             >
               跳转原文
@@ -877,7 +879,7 @@ export default function NotesPage() {
     if (!nextWidth) {
       return;
     }
-    setTitleInputWidth(Math.max(240, Math.min(nextWidth + 12, 860)));
+    setTitleInputWidth(Math.max(240, nextWidth + 12));
   }, [titleDraft]);
 
   const spacesQuery = useUserKnowledgeSpaces();
@@ -1421,37 +1423,25 @@ export default function NotesPage() {
           <ResizablePanel minSize="20%" className="flex min-h-0 flex-col bg-white">
             <div className="border-accent/20 border-b px-6 py-4 shadow-sm">
               <div className="flex items-start gap-6">
-                <div className="max-w-full min-w-0">
+                <div className="min-w-0 flex-1">
                   {selectedRecord ? (
-                    <div className="space-y-1.5">
-                      <div className="relative inline-flex max-w-full items-center gap-2 align-middle">
-                        <Input
-                          value={titleDraft}
-                          onChange={(event) =>
-                            setTitleDraft(event.target.value)
-                          }
-                          disabled={!contentQuery.data?.editable}
-                          className="text-primary h-auto !w-auto max-w-full min-w-[120px] rounded-none border-0 bg-transparent px-0 py-0 font-serif text-2xl font-bold shadow-none focus-visible:ring-0 disabled:opacity-100"
-                          style={{ width: `${titleInputWidth}px`, maxWidth: '100%' }}
-                        />
-                        <span
-                          ref={titleMeasureRef}
-                          aria-hidden="true"
-                          className="pointer-events-none invisible absolute top-0 left-0 px-0 font-serif text-2xl font-bold whitespace-pre"
-                        >
-                          {titleDraft || "未命名笔记"}
-                        </span>
-                      </div>
-                      {selectedRecord ? (
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
-                          <span className="flex items-center gap-1.5">
-                            <span className="opacity-60">目录：</span>
-                            <span>
-                              {normalizeFolderPath(selectedRecord.folder_path)}
-                            </span>
-                          </span>
-                        </div>
-                      ) : null}
+                    <div className="relative inline-flex max-w-full items-center gap-2 align-middle">
+                      <Input
+                        value={titleDraft}
+                        onChange={(event) =>
+                          setTitleDraft(event.target.value)
+                        }
+                        disabled={!contentQuery.data?.editable}
+                        className="text-primary h-auto !w-auto max-w-full min-w-[120px] rounded-none border-0 bg-transparent px-0 py-0 font-serif text-2xl font-bold shadow-none focus-visible:ring-0 disabled:opacity-100"
+                        style={{ width: `${titleInputWidth}px` }}
+                      />
+                      <span
+                        ref={titleMeasureRef}
+                        aria-hidden="true"
+                        className="pointer-events-none invisible absolute top-0 left-0 px-0 font-serif text-2xl font-bold whitespace-pre"
+                      >
+                        {titleDraft || "未命名笔记"}
+                      </span>
                     </div>
                   ) : null}
                 </div>
@@ -1527,6 +1517,8 @@ export default function NotesPage() {
                             {originalJumpHref ? (
                               <Link
                                 href={originalJumpHref}
+                                target="_blank"
+                                rel="noopener noreferrer"
                                 className="text-accent hover:text-accent/80 inline-flex items-center gap-1 font-medium transition-all hover:translate-x-0.5"
                               >
                                 跳转原文

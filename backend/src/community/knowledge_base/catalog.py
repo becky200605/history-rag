@@ -93,6 +93,8 @@ class BookCatalogEntry:
     regions: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
     summary: str = ""
+    author: str = ""
+    publisher: str = ""
     priority: int | None = None
     score: float | None = None
     metadata_source: str | None = None
@@ -111,6 +113,8 @@ class CatalogMetadataRecord:
     regions: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
     summary: str = ""
+    author: str = ""
+    publisher: str = ""
     priority: int | None = None
     search_terms: list[str] = field(default_factory=list)
     source_path: str | None = None
@@ -254,6 +258,8 @@ def _coerce_catalog_metadata_record(payload: dict[str, object], source_path: str
         regions=_as_list(payload.get("regions")),
         keywords=_as_list(payload.get("keywords")),
         summary=str(payload.get("summary") or payload.get("description") or "").strip(),
+        author=str(payload.get("author") or "").strip(),
+        publisher=str(payload.get("publisher") or "").strip(),
         priority=_as_optional_int(payload.get("priority")),
         search_terms=_as_list(payload.get("search_terms")),
         source_path=source_path,
@@ -286,6 +292,8 @@ def _merge_metadata_record(
         regions=record.regions or existing.regions,
         keywords=record.keywords or existing.keywords,
         summary=record.summary or existing.summary,
+        author=record.author or existing.author,
+        publisher=record.publisher or existing.publisher,
         priority=record.priority if record.priority is not None else existing.priority,
         search_terms=record.search_terms or existing.search_terms,
         source_path=record.source_path or existing.source_path,
@@ -306,6 +314,8 @@ def _load_generated_book_metadata_index(directory: Path) -> dict[str, CatalogMet
             continue
         suggestion = generated.suggestion
         summary = _field_value(suggestion.summary)
+        author = _field_value(suggestion.author)
+        publisher = _field_value(suggestion.publisher)
         record = CatalogMetadataRecord(
             source_filename=generated.source_filename,
             title=(suggestion.title or generated.source_title or "").strip() or None,
@@ -315,6 +325,8 @@ def _load_generated_book_metadata_index(directory: Path) -> dict[str, CatalogMet
             regions=[value for value in (_field_value(item) for item in suggestion.regions) if value],
             keywords=[value for value in (_field_value(item) for item in suggestion.keywords) if value],
             summary=summary,
+            author=author,
+            publisher=publisher,
             search_terms=tokenize_search_text(summary),
             source_path=str(path),
             folder_path=resolve_book_folder(suggestion),
@@ -359,6 +371,8 @@ def _book_metadata_search_text(metadata: CatalogMetadataRecord) -> str:
     parts = [
         metadata.type,
         metadata.title or "",
+        metadata.author,
+        metadata.publisher,
         metadata.folder_path or "",
         metadata.language_hint or "",
         metadata.summary,
@@ -391,6 +405,8 @@ def _apply_metadata_to_entry(
         regions=metadata.regions or entry.regions,
         keywords=metadata.keywords or entry.keywords,
         summary=metadata.summary or entry.summary,
+        author=metadata.author or entry.author,
+        publisher=metadata.publisher or entry.publisher,
         priority=metadata.priority if metadata.priority is not None else entry.priority,
         search_text=search_text,
         search_tokens=tokenize_search_text(search_text),
@@ -404,6 +420,10 @@ def _format_metadata_text(entry: BookCatalogEntry) -> str:
     parts: list[str] = []
     if entry.type and entry.type != "unknown":
         parts.append(f"类型: {entry.type}")
+    if entry.author:
+        parts.append(f"作者: {entry.author}")
+    if entry.publisher:
+        parts.append(f"出版社: {entry.publisher}")
     if entry.folder_path:
         parts.append(f"目录: {entry.folder_path}")
     if entry.language_hint:

@@ -14,8 +14,8 @@ from typing import Any, Mapping
 from pydantic import BaseModel, ConfigDict, Field
 
 BOOK_METADATA_SCHEMA_VERSION = 1
-DEFAULT_FRONT_PAGE_LIMIT = 10
-DEFAULT_BODY_SAMPLE_COUNT = 3
+DEFAULT_FRONT_PAGE_LIMIT = 20
+DEFAULT_BODY_SAMPLE_COUNT = 5
 DEFAULT_MAX_EXCERPT_CHARS = 1200
 BOOK_METADATA_FILENAME_SUFFIX = ".book-metadata.json"
 BOOK_METADATA_SUBDIR = ".book-metadata"
@@ -65,6 +65,7 @@ class BookMetadataSuggestion(BaseModel):
 
     title: str | None = None
     author: MetadataField | None = None
+    publisher: MetadataField | None = None
     type: MetadataField | None = None
     folder: MetadataField | None = None
     categories: list[MetadataField] = Field(default_factory=list)
@@ -180,6 +181,7 @@ def _coerce_metadata_fields(values: Any) -> list[MetadataField]:
 def _normalize_book_metadata_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
     normalized["author"] = _coerce_metadata_field(payload.get("author"))
+    normalized["publisher"] = _coerce_metadata_field(payload.get("publisher"))
     normalized["type"] = _coerce_book_type(payload.get("type"))
     normalized["folder"] = _coerce_folder_field(payload.get("folder"))
     normalized["categories"] = _coerce_metadata_fields(payload.get("categories"))
@@ -389,6 +391,8 @@ def build_book_metadata_system_prompt() -> str:
         "Prefer the supplied title unless the excerpts clearly show a better normalized title.\n"
         "Each populated field should include short evidence copied or paraphrased from the excerpts.\n"
         "Do not use author-role words like 著, 编, 译 as `type`.\n"
+        "The field `author` is the primary author(s) of the book as they appear on the cover or front matter.\n"
+        "The field `publisher` is the publishing house (出版社) of the book as it appears on the cover or copyright page.\n"
         "Return valid JSON that matches the expected book-metadata schema.\n"
         "Return raw JSON only. Do not wrap it in markdown fences. Do not add any explanation before or after the JSON.\n"
         "If a field is unknown, use null, an empty array, or 'unknown' as appropriate.\n"
@@ -397,6 +401,7 @@ def build_book_metadata_system_prompt() -> str:
         "{\n"
         '  "title": "string or null",\n'
         '  "author": {"value": "string", "confidence": 0.0, "evidence": "string"} or null,\n'
+        '  "publisher": {"value": "string", "confidence": 0.0, "evidence": "string"} or null,\n'
         '  "type": {"value": "core|specialized|reference|unknown", "confidence": 0.0, "evidence": "string"} or null,\n'
         '  "folder": {"value": "string", "confidence": 0.0, "evidence": "string"} or null,\n'
         '  "categories": [{"value": "string", "confidence": 0.0, "evidence": "string"}],\n'

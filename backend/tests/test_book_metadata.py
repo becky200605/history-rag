@@ -107,6 +107,7 @@ def test_parse_book_metadata_suggestion_coerces_scalar_fields() -> None:
         {
             "title": "民国财政史",
             "author": "杨荫溥",
+            "publisher": "商务印书馆",
             "type": "specialized",
             "folder": "财政史/民国",
             "categories": ["中国财政史", "民国史"],
@@ -120,6 +121,8 @@ def test_parse_book_metadata_suggestion_coerces_scalar_fields() -> None:
 
     assert suggestion.author is not None
     assert suggestion.author.value == "杨荫溥"
+    assert suggestion.publisher is not None
+    assert suggestion.publisher.value == "商务印书馆"
     assert suggestion.type is not None
     assert suggestion.type.value == "specialized"
     assert suggestion.folder is not None
@@ -137,12 +140,14 @@ def test_parse_book_metadata_suggestion_ignores_mapping_with_null_value() -> Non
         {
             "title": "户部奏稿第9册",
             "author": {"value": None, "confidence": 0.2, "evidence": "unknown"},
+            "publisher": {"value": "", "confidence": 0.1, "evidence": "unknown"},
             "summary": {"value": "", "confidence": 0.2, "evidence": "unknown"},
             "type": {"value": "specialized", "confidence": 0.8, "evidence": "奏稿"},
         }
     )
 
     assert suggestion.author is None
+    assert suggestion.publisher is None
     assert suggestion.summary is None
     assert suggestion.type is not None
     assert suggestion.type.value == "specialized"

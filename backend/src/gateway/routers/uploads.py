@@ -9,10 +9,6 @@ from pydantic import BaseModel
 
 from src.community.knowledge_base.book_metadata_runtime import maybe_generate_book_metadata
 from src.community.knowledge_base.document_parsers import OFFICE_EXTENSIONS, PDF_EXTENSIONS
-from src.community.knowledge_base.indexer import (
-    delete_thread_upload_records,
-    upsert_thread_upload_records,
-)
 from src.community.knowledge_base.ingestion import (
     build_ingestion_record,
     build_ingestion_urls,
@@ -20,7 +16,6 @@ from src.community.knowledge_base.ingestion import (
     find_ingestion_record,
     mark_record_failed,
     mark_record_parsed,
-    mark_thread_records_indexed,
     persist_thread_structured_document,
     remove_ingestion_record,
     save_ingestion_record,
@@ -95,7 +90,6 @@ async def upload_files(
 
     uploads_dir = get_uploads_dir(thread_id)
     uploaded_files = []
-    indexed_source_filenames: list[str] = []
     hints = {
         key: value
         for key, value in {
@@ -199,8 +193,7 @@ async def upload_files(
                     file_info["structured_artifact_url"] = record["structured_artifact_url"]
                     file_info["index_target_filename"] = structured_filename
                     file_info["parse_status"] = record["parse_status"]
-                    indexed_source_filenames.append(str(record["source_filename"]))
-                else:
+                        else:
                     record = mark_record_failed(record, "MinerU gRPC returned no structured text")
                     file_info["parse_status"] = record["parse_status"]
                     file_info["error"] = record["error"]
@@ -213,13 +206,6 @@ async def upload_files(
         except Exception as e:
             logger.error(f"Failed to upload {file.filename}: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to upload {file.filename}: {str(e)}")
-
-    if indexed_source_filenames:
-        try:
-            upsert_thread_upload_records(thread_id, indexed_source_filenames)
-            mark_thread_records_indexed(thread_id)
-        except Exception as exc:
-            logger.warning("Failed to rebuild thread upload index for %s: %s", thread_id, exc)
 
     return UploadResponse(
         success=True,
@@ -339,11 +325,6 @@ async def delete_uploaded_file(thread_id: str, filename: str) -> dict:
                     preview_path.unlink()
             if source_filename:
                 remove_ingestion_record(thread_id, source_filename)
-        try:
-            delete_thread_upload_records(thread_id, [record.get("source_filename") or filename] if record else [filename])
-            mark_thread_records_indexed(thread_id)
-        except Exception as exc:
-            logger.warning("Failed to update thread upload index for %s after delete: %s", thread_id, exc)
         logger.info(f"Deleted file: {filename}")
         return {"success": True, "message": f"Deleted {filename}"}
     except Exception as e:

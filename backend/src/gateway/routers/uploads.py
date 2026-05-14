@@ -193,7 +193,7 @@ async def upload_files(
                     file_info["structured_artifact_url"] = record["structured_artifact_url"]
                     file_info["index_target_filename"] = structured_filename
                     file_info["parse_status"] = record["parse_status"]
-                        else:
+                else:
                     record = mark_record_failed(record, "MinerU gRPC returned no structured text")
                     file_info["parse_status"] = record["parse_status"]
                     file_info["error"] = record["error"]

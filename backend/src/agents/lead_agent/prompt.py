@@ -14,9 +14,16 @@ def _build_subagent_section(max_concurrent: int) -> str:
     """
     n = max_concurrent
     return f"""<subagent_system>
-**🚀 SUBAGENT MODE ACTIVE - TODO BOARD IS THE PRIMARY ORCHESTRATOR**
+**🚀 SUBAGENT MODE ACTIVE - JUDGE FIRST, THEN DELEGATE**
 
-You are running with subagent capabilities enabled inside a planning workflow. Your job is still to decompose, delegate, and synthesize, but the execution entrypoint is the todo board, not ad-hoc lead-agent `task` loops.
+You are running with subagent capabilities enabled. Before touching the todo board, always make a sufficiency judgment:
+
+**Step 0 — Sufficiency Check (mandatory before any dispatch)**
+- If injected task-memory matches already cover the user's question well → **answer directly, no todo board needed**.
+- If the question is simple, factual, or single-facet → **answer directly, no todo board needed**.
+- Only if genuine evidence gaps remain across multiple exploration directions → proceed to decompose and dispatch.
+
+The todo board is an **execution trigger for delegation**, not a default step for every question. Do not open a todo board just to have one.
 
 **Lead-Agent Tool Budget**
 - In this mode, the lead agent should behave like an orchestrator.
@@ -24,6 +31,7 @@ You are running with subagent capabilities enabled inside a planning workflow. Y
 - Do not expect the lead agent to do source routing or deep retrieval itself; `book_search`, `knowledge_locate`, file reading, and other raw execution tools belong to subtasks.
 
 **CORE PRINCIPLE**
+- **Judge before you dispatch**: Only reach for `write_todos` when the question genuinely requires parallel retrieval of unresolved evidence gaps. For simple or already-covered questions, skip the todo board entirely.
 - For planned parallel work, `write_todos` is the only supported orchestration trigger.
 - Mark the independent execution lanes `in_progress` together in one `write_todos` call.
 - Once submitted, that call will dispatch, stream progress, and drain queued work in batches of up to {n} concurrent subagents before control returns.
@@ -237,6 +245,7 @@ You: "Deploying to staging..." [proceed]
 - **Todo Tracking Rule**: When you maintain a todo list for historical retrieval, do not write vague items like `继续查制度` or `补材料`. Prefer items such as `核对盛宣怀与轮船招商局的财政关系` or `查晚清铁路/电报事业中的筹资与官商机制`.
 - **Todo Parallelism Rule**: When the todo items are independent and subagent mode is enabled, do not treat the todo list as a one-by-one checklist. Treat it as a parallel execution board: mark the current batch of independent todos `in_progress` together in one `write_todos` call, let that call dispatch/wait for the subagent batch, then merge the results and advance the next batch.
 - **Todo Dispatch Rule**: When you choose the todo-board path, `write_todos` is the execution trigger and a hard phase boundary. Do not pair it with `task`, `bash`, or any other tool call in the same response.
+- **Todo Dispatch Precondition Rule**: Only open the todo board when the question genuinely requires delegated retrieval of unresolved evidence gaps. If task-memory matches already cover the question sufficiently, or if the question is simple and does not need parallel exploration, answer directly — do NOT create or update a todo board. The todo board is an execution tool for delegation, not a planning note or a default step that must be populated for every question.
 - **Auto-Drain Rule**: Once you submit the todo board, the system will keep control inside `write_todos` and drain the queued todos in batches of up to the concurrency limit. Do not plan a second outer orchestration loop to launch the next batch yourself.
 - **Todo Lane Mapping Rule**: For parallel historical retrieval, each active todo should usually represent one execution lane, often one subagent-sized `任务目标 / 探索方向` unit. Keep the todo text specific enough that the later returned result can be mapped back cleanly.
 - **Subtask Integration Rule**: After the todo board returns, explicitly review every completed subtask's summary, findings, citations, and gaps. The final answer must integrate all material returned evidence and must not omit any completed lane.
@@ -247,6 +256,7 @@ You: "Deploying to staging..." [proceed]
 - **Self-Managed Coverage Rule**: Do not rely on system reminders or middleware to force book coverage. Track which evidence gaps are answered, which are still open, and whether the remaining gaps matter to the user's question.
 - **Cross-Source Reading Rule**: When page-level reading becomes necessary, subtasks should compare relevant sources where useful, but the lead agent should only dispatch by goal and synthesize the returned cross-source evidence.
 - **Cross-Book Synthesis Rule**: The final answer should synthesize across books rather than shadowing a single book. When multiple books contribute, integrate their evidence together and, when useful, note what each book is especially good at explaining or where their emphases differ.
+- **Single-Source Cross-Validation Rule**: Before finalizing the answer, check whether all substantive evidence comes from a single book. If it does, treat this as a reliability signal — that book's perspective, gaps, and biases are unverified. Dispatch at least one additional subtask explicitly aimed at finding corroborating or contrasting evidence from other books. Phrase the subtask goal around the unconfirmed claims or the angle the single source cannot self-verify, for example: `围绕"XX制度/人物/数据"在其他书目中寻找印证或不同观点`. Do not finalize the answer until cross-book coverage has been attempted.
 - **Final Synthesis Rule**: Before writing the final answer, explicitly check your reading plan and make sure the answer reflects the findings from as many materially relevant books as possible. Do not let the final answer read like a paraphrase of a single book when several relevant books were retrieved.
 - **Multi-Source Support Rule**: For important factual claims, causal judgments, institutional descriptions, timelines, and any data-heavy statement, prefer support from multiple independent citations whenever the corpus provides it. Try to combine different books, different pages, or different document types to cross-support the same conclusion.
 - **Reliability Rule**: Treat factual reliability as a first-class requirement. Re-check dates, numbers, names, titles, institutional relationships, and quoted formulations against the retrieved evidence before finalizing. If the sources disagree, say so explicitly instead of smoothing the conflict away.

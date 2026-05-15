@@ -84,30 +84,50 @@ def _extract_title_from_response_text(text: str, *, max_chars: int, max_words: i
     return raw[:max_chars]
 
 
-def generate_title_candidate(user_msg: str) -> str:
-    """Generate a concise title by lightly rewriting the user's request."""
+def _build_title_model():
     config = get_title_config()
-    model = create_chat_model(name=config.model_name, thinking_enabled=False)
-    prompt = config.prompt_template.format(
-        max_words=config.max_words,
-        user_msg=user_msg[:500],
-    )
+    return create_chat_model(name=config.model_name, thinking_enabled=False)
 
+
+def _build_title_prompt(user_msg: str) -> str:
+    config = get_title_config()
+    return config.prompt_template.format(max_words=config.max_words, user_msg=user_msg[:500])
+
+
+def _parse_title_response(content: str) -> str:
+    config = get_title_config()
+    title = _extract_title_from_response_text(content, max_chars=config.max_chars, max_words=config.max_words)
+    return title[: config.max_chars]
+
+
+def _title_fallback(user_msg: str) -> str:
+    config = get_title_config()
+    fallback_chars = min(config.max_chars, 50)
+    if len(user_msg) > fallback_chars:
+        return user_msg[:fallback_chars].rstrip() + "..."
+    return user_msg if user_msg else "New Conversation"
+
+
+def generate_title_candidate(user_msg: str) -> str:
+    """Generate a concise title (sync, for tests / non-async callers)."""
     try:
-        response = model.invoke(prompt)
-        title_content = str(response.content) if response.content else ""
-        title = _extract_title_from_response_text(
-            title_content,
-            max_chars=config.max_chars,
-            max_words=config.max_words,
-        )
-        return title[: config.max_chars] if len(title) > config.max_chars else title
+        model = _build_title_model()
+        response = model.invoke(_build_title_prompt(user_msg))
+        return _parse_title_response(str(response.content) if response.content else "")
     except Exception as e:
         print(f"Failed to generate title: {e}")
-        fallback_chars = min(config.max_chars, 50)
-        if len(user_msg) > fallback_chars:
-            return user_msg[:fallback_chars].rstrip() + "..."
-        return user_msg if user_msg else "New Conversation"
+        return _title_fallback(user_msg)
+
+
+async def agenerate_title_candidate(user_msg: str) -> str:
+    """Generate a concise title without blocking the event loop."""
+    try:
+        model = _build_title_model()
+        response = await model.ainvoke(_build_title_prompt(user_msg))
+        return _parse_title_response(str(response.content) if response.content else "")
+    except Exception as e:
+        print(f"Failed to generate title: {e}")
+        return _title_fallback(user_msg)
 
 
 class TitleMiddlewareState(AgentState):
@@ -143,14 +163,10 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         # Generate title after first complete exchange
         return len(user_messages) == 1 and len(assistant_messages) >= 1
 
-    def _generate_title(self, state: TitleMiddlewareState) -> str:
-        """Generate a concise title based on the conversation."""
+    def _get_user_msg(self, state: TitleMiddlewareState) -> str:
         messages = state.get("messages", [])
-
-        # Get first user message and first assistant response
         user_msg_content = next((m.content for m in messages if m.type == "human"), "")
-        user_msg = _stringify_message_content(user_msg_content) if user_msg_content else ""
-        return generate_title_candidate(user_msg)
+        return _stringify_message_content(user_msg_content) if user_msg_content else ""
 
     def _extract_title_from_response(self, text: str, *, max_chars: int, max_words: int) -> str:
         """Instance-level shim for the module-level ``_extract_title_from_response_text`` helper."""
@@ -158,12 +174,18 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
 
     @override
     def after_agent(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
-        """Generate and set thread title after the first agent response."""
+        """Sync fallback — only called when the graph runs in a purely synchronous context."""
         if self._should_generate_title(state):
-            title = self._generate_title(state)
+            title = generate_title_candidate(self._get_user_msg(state))
             print(f"Generated thread title: {title}")
-
-            # Store title in state (will be persisted by checkpointer if configured)
             return {"title": title}
+        return None
 
+    @override
+    async def aafter_agent(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
+        """Async path — used by LangGraph's async event loop; does not block."""
+        if self._should_generate_title(state):
+            title = await agenerate_title_candidate(self._get_user_msg(state))
+            print(f"Generated thread title: {title}")
+            return {"title": title}
         return None

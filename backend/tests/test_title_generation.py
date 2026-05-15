@@ -3,7 +3,7 @@
 import pytest
 from types import SimpleNamespace
 
-from src.agents.middlewares.title_middleware import TitleMiddleware
+from src.agents.middlewares.title_middleware import TitleMiddleware, generate_title_candidate
 from src.config.title_config import TitleConfig, get_title_config, set_title_config
 
 
@@ -113,7 +113,8 @@ Selection: 晚清六部紊乱
         }
 
         try:
-            title = middleware._generate_title(state)
+            user_msg = middleware._get_user_msg(state)
+            title = generate_title_candidate(user_msg)
         finally:
             set_title_config(original_config)
 

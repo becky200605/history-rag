@@ -505,6 +505,7 @@ class SubagentExecutor:
         # These middlewares will reuse the sandbox/thread_data from parent agent
         from src.agents.middlewares.citation_registry_sync_middleware import CitationRegistrySyncMiddleware
         from src.agents.middlewares.knowledge_checkpoint_middleware import KnowledgeCheckpointMiddleware
+        from src.agents.middlewares.subagent_tool_limit_middleware import SubagentToolLimitMiddleware
         from src.agents.middlewares.thread_data_middleware import ThreadDataMiddleware
         from src.sandbox.middleware import SandboxMiddleware
 
@@ -512,6 +513,7 @@ class SubagentExecutor:
             ThreadDataMiddleware(lazy_init=True),  # Compute thread paths
             SandboxMiddleware(lazy_init=True),  # Reuse parent's sandbox (no re-acquisition)
             KnowledgeCheckpointMiddleware(),  # Enforce checkpoint cadence during raw retrieval loops
+            SubagentToolLimitMiddleware(),  # Force wrap-up when tool-call budget is exhausted
             CitationRegistrySyncMiddleware(),  # Ensure citation registry survives LangGraph checkpoints
         ]
 

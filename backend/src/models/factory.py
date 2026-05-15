@@ -61,10 +61,8 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
 
     model_kwargs = _deep_merge_dicts(model_settings_from_config, kwargs)
     if not thinking_enabled:
-        model_kwargs = _deep_merge_dicts(
-            model_kwargs,
-            {"extra_body": {"reasoning": {"effort": "none"}}},
-        )
+        disable_patch = model_config.when_thinking_disabled or {"extra_body": {"reasoning": {"effort": "none"}}}
+        model_kwargs = _deep_merge_dicts(model_kwargs, disable_patch)
 
     model_instance = model_class(**model_kwargs)
 

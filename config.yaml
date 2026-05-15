@@ -35,6 +35,9 @@ models:
       reasoning_split: true
     supports_thinking: true
     supports_vision: false
+    when_thinking_disabled:
+      extra_body:
+        reasoning_effort: "none"
 
   - name: deepseek-v4-flash
     display_name: DeepSeek V4 Flash
@@ -255,7 +258,7 @@ subagents:
   # Optional default model for all subagents.
   model_name: MiniMax-M2.7
   # Optional default thinking mode for all subagents.
-  thinking_enabled: true
+  thinking_enabled: false
 #
 #   # Optional per-agent timeout overrides
 #   agents:

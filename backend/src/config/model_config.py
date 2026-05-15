@@ -18,4 +18,8 @@ class ModelConfig(BaseModel):
         default_factory=lambda: None,
         description="Extra settings to be passed to the model when thinking is enabled",
     )
+    when_thinking_disabled: dict | None = Field(
+        default_factory=lambda: None,
+        description="Extra settings to merge when thinking is disabled. Overrides the default reasoning.effort:none injection. Use for providers that need a different disable parameter (e.g. MiniMax uses reasoning_effort:none at the top level).",
+    )
     supports_vision: bool = Field(default_factory=lambda: False, description="Whether the model supports vision/image inputs")

@@ -304,7 +304,7 @@ class TestRegistryGetSubagentConfig:
         config = get_subagent_config("general-purpose")
         assert config.timeout_seconds == 900
         assert config.model == "inherit"
-        assert config.thinking_enabled is True
+        assert config.thinking_enabled is False
 
     def test_global_timeout_override_applied(self):
         from src.subagents.registry import get_subagent_config
@@ -373,7 +373,7 @@ class TestRegistryGetSubagentConfig:
         assert returned.thinking_enabled is False
         assert BUILTIN_SUBAGENTS["bash"].timeout_seconds == original_timeout
         assert BUILTIN_SUBAGENTS["bash"].model == "inherit"
-        assert BUILTIN_SUBAGENTS["bash"].thinking_enabled is True
+        assert BUILTIN_SUBAGENTS["bash"].thinking_enabled is False
 
     def test_config_preserves_other_fields(self):
         """Applying timeout override must not change other SubagentConfig fields."""

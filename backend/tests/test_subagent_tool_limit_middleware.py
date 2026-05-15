@@ -58,67 +58,69 @@ def _make_tool_messages(count: int) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Sync: after_model
+# Sync: wrap_model_call
 # ---------------------------------------------------------------------------
 
 
-class TestAfterModelBelowLimit:
+class TestWrapModelCallBelowLimit:
     """When the tool-call count is still below the limit, the middleware is a no-op."""
 
     def test_passes_through_text_response(self):
         middleware = SubagentToolLimitMiddleware()
         messages = _make_tool_messages(TOOL_CALL_LIMIT - 1)
         request = _build_request(messages)
-        response = _text_response()
 
-        handler_called = []
+        call_count = []
 
         def handler(req: ModelRequest) -> ModelResponse:
-            handler_called.append(req)
+            call_count.append(1)
             return _text_response()
 
-        result = middleware.after_model(request, response, handler)
+        result = middleware.wrap_model_call(request, handler)
 
-        assert result is response
-        assert not handler_called, "handler must NOT be called when below limit"
+        assert len(call_count) == 1, "handler must be called exactly once below limit"
+        assert result.result[0].content == "Here is my final answer."
 
     def test_passes_through_tool_call_response(self):
         """Even if the model still calls tools, we don't intervene below the limit."""
         middleware = SubagentToolLimitMiddleware()
         messages = _make_tool_messages(TOOL_CALL_LIMIT - 1)
         request = _build_request(messages)
-        response = _tool_call_response()
+
+        call_count = []
 
         def handler(req: ModelRequest) -> ModelResponse:
-            raise AssertionError("handler must not be called below limit")
+            call_count.append(1)
+            return _tool_call_response()
 
-        result = middleware.after_model(request, response, handler)
-        assert result is response
+        result = middleware.wrap_model_call(request, handler)
+
+        assert len(call_count) == 1
+        assert result.result[0].tool_calls  # original tool-call response passed through
 
 
-class TestAfterModelAtLimit:
+class TestWrapModelCallAtLimit:
     """When tool_count >= TOOL_CALL_LIMIT the middleware must act."""
 
     def test_passes_through_when_response_has_no_tool_calls(self):
-        """If the model already produced a plain answer, return it immediately."""
+        """If the model already produced a plain answer, return it without retry."""
         middleware = SubagentToolLimitMiddleware()
         messages = _make_tool_messages(TOOL_CALL_LIMIT)
         request = _build_request(messages)
-        response = _text_response()
 
-        handler_called = []
+        call_count = []
 
         def handler(req: ModelRequest) -> ModelResponse:
-            handler_called.append(req)
+            call_count.append(1)
             return _text_response()
 
-        result = middleware.after_model(request, response, handler)
+        result = middleware.wrap_model_call(request, handler)
 
-        assert result is response
-        assert not handler_called, "no retry needed when model already gave a text answer"
+        assert len(call_count) == 1, "no retry needed when model already gave a text answer"
+        assert result.result[0].content == "Here is my final answer."
 
     def test_injects_wrap_up_and_retries_when_model_calls_tools(self):
-        """On first retry the middleware injects both the wrap-up and hard-stop messages."""
+        """On retry the middleware injects both the wrap-up and hard-stop messages."""
         middleware = SubagentToolLimitMiddleware()
         messages = _make_tool_messages(TOOL_CALL_LIMIT)
         request = _build_request(messages)
@@ -127,16 +129,17 @@ class TestAfterModelAtLimit:
 
         def handler(req: ModelRequest) -> ModelResponse:
             seen_requests.append(req)
-            return _text_response()  # model complies on first retry
+            if len(seen_requests) == 1:
+                return _tool_call_response()  # first call: model still calls tools
+            return _text_response()           # retry: model complies
 
-        result = middleware.after_model(request, _tool_call_response(), handler)
+        result = middleware.wrap_model_call(request, handler)
 
-        assert len(seen_requests) == 1
-        injected_contents = [str(m.content) for m in seen_requests[0].messages if isinstance(m, HumanMessage)]
-        # Both messages must be present
+        assert len(seen_requests) == 2
+        retry_human_messages = [m for m in seen_requests[1].messages if isinstance(m, HumanMessage)]
+        injected_contents = [str(m.content) for m in retry_human_messages]
         assert any("上限" in c for c in injected_contents), "wrap-up message not injected"
         assert any("再次提醒" in c for c in injected_contents), "hard-stop message not injected"
-        # Final result is the model's compliant text answer
         assert result.result[0].content == "Here is my final answer."
 
     def test_wrap_up_message_includes_count_and_limit(self):
@@ -149,12 +152,15 @@ class TestAfterModelAtLimit:
 
         def handler(req: ModelRequest) -> ModelResponse:
             seen_requests.append(req)
+            if len(seen_requests) == 1:
+                return _tool_call_response()
             return _text_response()
 
-        middleware.after_model(request, _tool_call_response(), handler)
+        middleware.wrap_model_call(request, handler)
 
+        retry_human_messages = [m for m in seen_requests[1].messages if isinstance(m, HumanMessage)]
         wrap_up_content = next(
-            str(m.content) for m in seen_requests[0].messages if isinstance(m, HumanMessage) and "上限" in str(m.content)
+            str(m.content) for m in retry_human_messages if "上限" in str(m.content)
         )
         assert str(TOOL_CALL_LIMIT) in wrap_up_content
 
@@ -164,11 +170,10 @@ class TestAfterModelAtLimit:
         messages = _make_tool_messages(TOOL_CALL_LIMIT)
         request = _build_request(messages)
 
-        # Model ignores all injections and keeps calling tools
         def handler(req: ModelRequest) -> ModelResponse:
-            return _tool_call_response()
+            return _tool_call_response()  # always calls tools
 
-        result = middleware.after_model(request, _tool_call_response(), handler)
+        result = middleware.wrap_model_call(request, handler)
 
         # Must not raise; returns the last tool-calling response
         assert isinstance(result.result[0], AIMessage)
@@ -181,14 +186,16 @@ class TestAfterModelAtLimit:
         assert len(messages) == TOOL_CALL_LIMIT
 
         request = _build_request(messages)
-        handler_called = []
+        seen_requests: list[ModelRequest] = []
 
         def handler(req: ModelRequest) -> ModelResponse:
-            handler_called.append(req)
+            seen_requests.append(req)
+            if len(seen_requests) == 1:
+                return _tool_call_response()
             return _text_response()
 
-        middleware.after_model(request, _tool_call_response(), handler)
-        assert handler_called, "enforcement must trigger at exactly TOOL_CALL_LIMIT"
+        middleware.wrap_model_call(request, handler)
+        assert len(seen_requests) == 2, "enforcement must trigger at exactly TOOL_CALL_LIMIT"
 
     def test_does_not_trigger_one_below_limit(self):
         """Boundary: TOOL_CALL_LIMIT - 1 messages should NOT trigger enforcement."""
@@ -196,19 +203,23 @@ class TestAfterModelAtLimit:
         messages = _make_tool_messages(TOOL_CALL_LIMIT - 1)
         request = _build_request(messages)
 
-        def handler(req: ModelRequest) -> ModelResponse:
-            raise AssertionError("should not be called one below limit")
+        call_count = []
 
-        result = middleware.after_model(request, _tool_call_response(), handler)
+        def handler(req: ModelRequest) -> ModelResponse:
+            call_count.append(1)
+            return _tool_call_response()
+
+        result = middleware.wrap_model_call(request, handler)
+        assert len(call_count) == 1, "must call handler exactly once one below limit"
         assert result.result[0].tool_calls  # original tool-call response passed through
 
 
 # ---------------------------------------------------------------------------
-# Async: aafter_model
+# Async: awrap_model_call
 # ---------------------------------------------------------------------------
 
 
-class TestAAfterModel:
+class TestAWrapModelCall:
     """Async version mirrors the sync version's logic."""
 
     def test_passes_through_when_below_limit(self):
@@ -216,13 +227,12 @@ class TestAAfterModel:
             middleware = SubagentToolLimitMiddleware()
             messages = _make_tool_messages(TOOL_CALL_LIMIT - 1)
             request = _build_request(messages)
-            response = _tool_call_response()
 
-            async def handler(req):
-                raise AssertionError("should not be called")
+            async def handler(req: ModelRequest) -> ModelResponse:
+                return _tool_call_response()
 
-            result = await middleware.aafter_model(request, response, handler)
-            assert result is response
+            result = await middleware.awrap_model_call(request, handler)
+            assert result.result[0].tool_calls
 
         asyncio.run(_run())
 
@@ -235,12 +245,15 @@ class TestAAfterModel:
 
             async def handler(req: ModelRequest) -> ModelResponse:
                 seen.append(req)
+                if len(seen) == 1:
+                    return _tool_call_response()
                 return _text_response()
 
-            result = await middleware.aafter_model(request, _tool_call_response(), handler)
+            result = await middleware.awrap_model_call(request, handler)
 
-            assert len(seen) == 1
-            injected = [str(m.content) for m in seen[0].messages if isinstance(m, HumanMessage)]
+            assert len(seen) == 2
+            retry_human = [m for m in seen[1].messages if isinstance(m, HumanMessage)]
+            injected = [str(m.content) for m in retry_human]
             assert any("上限" in c for c in injected)
             assert result.result[0].content == "Here is my final answer."
 
@@ -255,7 +268,7 @@ class TestAAfterModel:
             async def handler(req: ModelRequest) -> ModelResponse:
                 return _tool_call_response()
 
-            result = await middleware.aafter_model(request, _tool_call_response(), handler)
+            result = await middleware.awrap_model_call(request, handler)
             assert result.result[0].tool_calls
 
         asyncio.run(_run())

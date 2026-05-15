@@ -15,7 +15,7 @@ from typing import override
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ class SubagentToolLimitMiddleware(AgentMiddleware[AgentState]):
         if not self._response_has_tool_calls(response):
             return response
 
-        # First retry: inject the wrap-up instruction
+        # Inject both the wrap-up instruction and the hard-stop reminder, then retry once
         retry_request = self._build_hard_stop_request(
             self._build_wrap_up_request(request, tool_count)
         )
@@ -117,12 +117,12 @@ class SubagentToolLimitMiddleware(AgentMiddleware[AgentState]):
         return retry_response
 
     @override
-    def after_model(
+    def wrap_model_call(
         self,
         request: ModelRequest,
-        response: ModelResponse,
         handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse:
+    ) -> ModelCallResult:
+        response = handler(request)
         tool_count = self._count_tool_calls(request.messages)
         if tool_count < TOOL_CALL_LIMIT:
             return response
@@ -134,12 +134,12 @@ class SubagentToolLimitMiddleware(AgentMiddleware[AgentState]):
         return self._enforce(request, response, handler, tool_count=tool_count)
 
     @override
-    async def aafter_model(
+    async def awrap_model_call(
         self,
         request: ModelRequest,
-        response: ModelResponse,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
-    ) -> ModelResponse:
+    ) -> ModelCallResult:
+        response = await handler(request)
         tool_count = self._count_tool_calls(request.messages)
         if tool_count < TOOL_CALL_LIMIT:
             return response

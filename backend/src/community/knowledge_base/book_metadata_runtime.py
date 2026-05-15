@@ -170,7 +170,6 @@ def generate_book_metadata_record(
     model = create_chat_model(
         name=config.model_name,
         thinking_enabled=False,
-        extra_body={"enable_thinking": False},
     )
     messages = [
         SystemMessage(content=prompt_bundle.system_prompt),

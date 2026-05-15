@@ -418,8 +418,8 @@ knowledge_base:
 
   book_metadata:
     enabled: true
-    model_name: openrouter-qwen3.5-27b
-    front_page_limit: 10
+    model_name: MiniMax-M2.7
+    front_page_limit: 20
     max_excerpt_chars: 1200
 
   translation_rpc:

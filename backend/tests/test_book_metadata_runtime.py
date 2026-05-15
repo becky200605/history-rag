@@ -118,7 +118,8 @@ def test_generate_book_metadata_record_explicitly_disables_provider_thinking(mon
 
     assert captured["name"] == "demo-model"
     assert captured["thinking_enabled"] is False
-    assert captured["kwargs"] == {"extra_body": {"enable_thinking": False}}
+    # No extra kwargs — thinking is suppressed via the model's when_thinking_disabled config
+    assert captured["kwargs"] == {}
 
 
 def test_maybe_generate_book_metadata_returns_none_when_disabled(tmp_path) -> None:

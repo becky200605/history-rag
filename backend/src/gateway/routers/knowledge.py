@@ -41,12 +41,7 @@ from src.community.knowledge_base.folder_registry import (
     rename_folder_path,
 )
 from src.community.knowledge_base.indexer import (
-    _get_upsert_batch_size,
     delete_global_knowledge_documents,
-    rebuild_global_knowledge_index,
-    rebuild_thread_upload_index,
-    upsert_global_knowledge_record,
-    upsert_global_knowledge_records,
 )
 from src.community.knowledge_base.locator import extract_paragraph_location, locate_document
 from src.community.knowledge_base.mineru_grpc import build_structured_document_from_mineru_grpc
@@ -73,11 +68,8 @@ INDEXABLE_EXTENSIONS = {".md", ".txt"}
 _knowledge_operation_lock = threading.Lock()
 _global_queue_condition = threading.Condition()
 _global_ocr_queue: deque[str] = deque()
-_global_embedding_queue: deque[str] = deque()
 _global_queued_ocr: set[str] = set()
-_global_queued_embedding: set[str] = set()
 _global_ocr_worker: threading.Thread | None = None
-_global_embedding_worker: threading.Thread | None = None
 
 
 def _encode_url_path(url: str | None) -> str | None:
@@ -98,14 +90,11 @@ def _release_knowledge_operation_lock() -> None:
 
 
 def _remove_global_queued_filename(filename: str) -> None:
-    global _global_ocr_queue, _global_embedding_queue
+    global _global_ocr_queue
     with _global_queue_condition:
         if filename in _global_queued_ocr:
             _global_queued_ocr.discard(filename)
             _global_ocr_queue = deque(item for item in _global_ocr_queue if item != filename)
-        if filename in _global_queued_embedding:
-            _global_queued_embedding.discard(filename)
-            _global_embedding_queue = deque(item for item in _global_embedding_queue if item != filename)
 
 
 def _enqueue_global_ocr(filename: str) -> None:
@@ -117,14 +106,6 @@ def _enqueue_global_ocr(filename: str) -> None:
         _global_queue_condition.notify_all()
 
 
-def _enqueue_global_embedding(filename: str) -> None:
-    with _global_queue_condition:
-        if filename in _global_queued_embedding:
-            return
-        _global_queued_embedding.add(filename)
-        _global_embedding_queue.append(filename)
-        _global_queue_condition.notify_all()
-
 
 def _recover_pending_global_jobs() -> None:
     for record in _list_global_records():
@@ -134,13 +115,10 @@ def _recover_pending_global_jobs() -> None:
         status = str(record.get("parse_status") or "")
         if status in {"queued", "queued_ocr", "pending_parse"}:
             _enqueue_global_ocr(str(filename))
-            continue
-        if status in {"parsed", "queued_embedding", "index_failed"}:
-            _enqueue_global_embedding(str(filename))
 
 
 def _ensure_global_queue_workers_started() -> None:
-    global _global_ocr_worker, _global_embedding_worker
+    global _global_ocr_worker
     started_worker = False
     with _global_queue_condition:
         if _global_ocr_worker is None or not _global_ocr_worker.is_alive():
@@ -151,23 +129,16 @@ def _ensure_global_queue_workers_started() -> None:
             )
             _global_ocr_worker.start()
             started_worker = True
-        if _global_embedding_worker is None or not _global_embedding_worker.is_alive():
-            _global_embedding_worker = threading.Thread(
-                target=_global_embedding_worker_loop,
-                name="global-knowledge-embedding-worker",
-                daemon=True,
-                )
-            _global_embedding_worker.start()
-            started_worker = True
     if started_worker:
         _recover_pending_global_jobs()
 
 
-def _current_global_queue_positions() -> tuple[dict[str, int], dict[str, int]]:
+def _current_global_queue_positions() -> dict[str, int]:
     with _global_queue_condition:
         ocr_positions = {filename: index + 1 for index, filename in enumerate(_global_ocr_queue)}
-        embedding_positions = {filename: index + 1 for index, filename in enumerate(_global_embedding_queue)}
-    return ocr_positions, embedding_positions
+    return ocr_positions
+
+
 
 
 class KnowledgeBaseStatus(BaseModel):
@@ -176,12 +147,6 @@ class KnowledgeBaseStatus(BaseModel):
     doc_count: int
     collection_name: str
     docs_path: str
-
-
-class ReindexResponse(BaseModel):
-    """Response model for reindex operation."""
-    status: str
-    message: str
 
 
 class SearchResult(BaseModel):
@@ -325,6 +290,8 @@ class KnowledgeMetadataUpdateRequest(BaseModel):
     regions: list[str] | None = None
     keywords: list[str] | None = None
     summary: str | None = None
+    author: str | None = None
+    publisher: str | None = None
     language_hint: str | None = None
     layout_hint: str | None = None
     document_type_hint: str | None = None
@@ -556,6 +523,8 @@ def _load_global_book_metadata(filename: str) -> dict[str, Any]:
         "regions": regions,
         "keywords": keywords,
         "summary": summary,
+        "author": _metadata_value(suggestion.author) if suggestion else None,
+        "publisher": _metadata_value(suggestion.publisher) if suggestion else None,
         "tags": tags,
         "language_hint": (ingestion_record or {}).get("hints", {}).get("language_hint"),
         "layout_hint": (ingestion_record or {}).get("hints", {}).get("layout_hint"),
@@ -689,7 +658,6 @@ def _build_global_ingestion_record(
         "folder_path": normalize_folder_path(folder_path),
         "error": None,
         "replace_existing_index": False,
-        "embedding_checkpoint": None,
     }
 
 
@@ -702,7 +670,7 @@ def _mark_global_record_parsed(
 ) -> dict[str, Any]:
     record.update(
         {
-            "parse_status": "queued_embedding",
+            "parse_status": "parsed",
             "structured_filename": structured_filename,
             "structured_path": structured_path,
             "structured_artifact_url": None,
@@ -711,7 +679,6 @@ def _mark_global_record_parsed(
             "index_target_artifact_url": None,
             "index_target_format": "structured_json",
             "error": None,
-            "embedding_checkpoint": None,
         }
     )
     if preview_filename:
@@ -732,7 +699,6 @@ def _mark_global_record_failed(record: dict[str, Any], error: str) -> dict[str, 
             "index_target_artifact_url": None,
             "index_target_format": None,
             "error": error,
-            "embedding_checkpoint": None,
         }
     )
     return record
@@ -750,53 +716,9 @@ def _mark_global_record_pending(record: dict[str, Any], error: str) -> dict[str,
             "index_target_artifact_url": None,
             "index_target_format": None,
             "error": error,
-            "embedding_checkpoint": None,
         }
     )
     return record
-
-
-def _save_global_embedding_checkpoint(
-    filename: str,
-    *,
-    next_chunk_index: int,
-    total_chunks: int,
-    content_fingerprint: str,
-) -> None:
-    record = _load_global_record(filename)
-    if not record:
-        return
-    record["embedding_checkpoint"] = {
-        "next_chunk_index": next_chunk_index,
-        "total_chunks": total_chunks,
-        "content_fingerprint": content_fingerprint,
-        "batch_size": _get_upsert_batch_size(),
-    }
-    record["parse_status"] = "indexing"
-    record["error"] = None
-    _save_global_record(filename, record)
-
-
-def _clear_global_embedding_checkpoint(record: dict[str, Any]) -> dict[str, Any]:
-    record["embedding_checkpoint"] = None
-    return record
-
-
-def _mark_global_records_indexed(source_filenames: list[str] | None = None) -> None:
-    allowed_filenames = {str(filename) for filename in source_filenames} if source_filenames else None
-    for record in _list_global_records():
-        source_filename = str(record.get("source_filename") or "")
-        if allowed_filenames is not None and source_filename not in allowed_filenames:
-            continue
-        target_path = record.get("index_target_path")
-        if not record.get("indexable") or not target_path:
-            continue
-        if not Path(str(target_path)).exists():
-            continue
-        record["parse_status"] = "indexed"
-        record["error"] = None
-        _clear_global_embedding_checkpoint(record)
-        _save_global_record(record["source_filename"], record)
 
 
 def _process_single_global_ocr(filename: str) -> None:
@@ -852,72 +774,10 @@ def _process_single_global_ocr(filename: str) -> None:
             record["parse_status"] = "uploaded"
 
         _save_global_record(filename, record)
-        if record.get("index_target_path"):
-            _enqueue_global_embedding(filename)
     except Exception as exc:
         logger.exception("Failed to OCR/parse global upload %s: %s", filename, exc)
         record = _mark_global_record_failed(record, f"parse failed: {exc}")
         _save_global_record(filename, record)
-
-
-def _process_single_global_embedding(filename: str) -> None:
-    record = _load_global_record(filename)
-    if not record or not record.get("index_target_path"):
-        return
-
-    record["parse_status"] = "indexing"
-    record["error"] = None
-    _save_global_record(filename, record)
-
-    try:
-        _acquire_knowledge_operation_lock()
-    except HTTPException:
-        record = _load_global_record(filename)
-        if not record:
-            return
-        record["parse_status"] = "queued_embedding"
-        record["error"] = None
-        _save_global_record(filename, record)
-        _enqueue_global_embedding(filename)
-        return
-
-    try:
-        checkpoint = record.get("embedding_checkpoint")
-        resume_chunk_index = 0
-        expected_fingerprint = None
-        if isinstance(checkpoint, dict):
-            try:
-                resume_chunk_index = int(checkpoint.get("next_chunk_index") or 0)
-            except (TypeError, ValueError):
-                resume_chunk_index = 0
-            candidate_fingerprint = str(checkpoint.get("content_fingerprint") or "").strip()
-            expected_fingerprint = candidate_fingerprint or None
-
-        indexed_chunks, _fingerprint = upsert_global_knowledge_record(
-            filename,
-            resume_chunk_index=resume_chunk_index,
-            expected_fingerprint=expected_fingerprint,
-            on_batch_complete=lambda next_chunk_index, total_chunks, content_fingerprint: _save_global_embedding_checkpoint(
-                filename,
-                next_chunk_index=next_chunk_index,
-                total_chunks=total_chunks,
-                content_fingerprint=content_fingerprint,
-            ),
-        )
-        if indexed_chunks <= 0:
-            raise ValueError("No chunks were indexed into Qdrant")
-        _mark_global_records_indexed([filename])
-        logger.info("Background global knowledge reindex completed for %s", filename)
-    except Exception as exc:
-        logger.exception("Background global knowledge reindex failed for %s: %s", filename, exc)
-        record = _load_global_record(filename)
-        if not record:
-            return
-        record["parse_status"] = "index_failed"
-        record["error"] = f"reindex failed: {exc}"
-        _save_global_record(filename, record)
-    finally:
-        _release_knowledge_operation_lock()
 
 
 def _global_ocr_worker_loop() -> None:
@@ -930,25 +790,12 @@ def _global_ocr_worker_loop() -> None:
         _process_single_global_ocr(filename)
 
 
-def _global_embedding_worker_loop() -> None:
-    while True:
-        with _global_queue_condition:
-            while not _global_embedding_queue:
-                _global_queue_condition.wait()
-            filename = _global_embedding_queue.popleft()
-            _global_queued_embedding.discard(filename)
-        _process_single_global_embedding(filename)
-
-
 def _process_global_knowledge_uploads(filenames: list[str]) -> None:
-    """Parse uploaded global knowledge files and rebuild the index in the background."""
+    """Parse uploaded global knowledge files in the background."""
     try:
         docs_dir = get_global_docs_dir()
         ingestion_dir = get_global_ingestion_dir()
         metadata_config = get_knowledge_base_config().book_metadata
-        needs_reindex = False
-        force_reindex = False
-        parsed_filenames: list[str] = []
 
         for safe_filename in filenames:
             record = _load_global_record(safe_filename)
@@ -964,7 +811,6 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
 
             record["parse_status"] = "parsing"
             record["error"] = None
-            force_reindex = force_reindex or bool(record.get("replace_existing_index"))
             _save_global_record(safe_filename, record)
 
             try:
@@ -998,8 +844,6 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
                         structured_path=str(structured_path),
                         preview_filename=safe_filename if file_ext in INDEXABLE_EXTENSIONS else None,
                     )
-                    needs_reindex = True
-                    parsed_filenames.append(safe_filename)
                 else:
                     record["parse_status"] = "uploaded"
             except Exception as exc:
@@ -1007,45 +851,6 @@ def _process_global_knowledge_uploads(filenames: list[str]) -> None:
                 record = _mark_global_record_failed(record, f"parse failed: {exc}")
 
             _save_global_record(safe_filename, record)
-
-        if not needs_reindex and not force_reindex:
-            return
-
-        for safe_filename in parsed_filenames:
-            record = _load_global_record(safe_filename)
-            if not record or not record.get("index_target_path"):
-                continue
-            record["parse_status"] = "indexing"
-            record["error"] = None
-            _save_global_record(safe_filename, record)
-
-        try:
-            indexed_chunks = upsert_global_knowledge_records(parsed_filenames)
-            if indexed_chunks <= 0:
-                raise ValueError("No chunks were indexed into Qdrant")
-            _mark_global_records_indexed(parsed_filenames)
-            logger.info("Background global knowledge reindex completed for %s", parsed_filenames)
-        except Exception as exc:
-            logger.exception("Background global knowledge reindex failed: %s", exc)
-            for safe_filename in parsed_filenames:
-                record = _load_global_record(safe_filename)
-                if not record:
-                    continue
-                record["parse_status"] = "index_failed"
-                record["error"] = f"reindex failed: {exc}"
-                _save_global_record(safe_filename, record)
-    finally:
-        _release_knowledge_operation_lock()
-
-
-def _reindex_global_knowledge_in_background() -> None:
-    """Rebuild the global knowledge index without blocking the request thread."""
-    try:
-        rebuild_global_knowledge_index()
-        _mark_global_records_indexed()
-        logger.info("Background global knowledge reindex completed")
-    except Exception as exc:
-        logger.exception("Background global knowledge reindex failed: %s", exc)
     finally:
         _release_knowledge_operation_lock()
 
@@ -1078,28 +883,6 @@ def get_status() -> KnowledgeBaseStatus:
         docs_path=config.docs_path
     )
 
-
-@router.post("/reindex", response_model=ReindexResponse, summary="Trigger Reindexing")
-def reindex_knowledge_base(thread_id: str | None = None) -> ReindexResponse:
-    """Trigger a full reindexing of the knowledge base documents."""
-    config = get_knowledge_base_config()
-    if not config.enabled:
-        raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
-
-    _acquire_knowledge_operation_lock()
-    try:
-        global_chunks = rebuild_global_knowledge_index()
-        if thread_id:
-            thread_chunks = rebuild_thread_upload_index(thread_id)
-            message = f"Knowledge base reindexed successfully (global={global_chunks}, thread={thread_chunks})"
-        else:
-            message = f"Knowledge base reindexed successfully (global={global_chunks})"
-        return ReindexResponse(status="success", message=message)
-    except Exception as e:
-        logger.exception("Failed to reindex knowledge base")
-        raise HTTPException(status_code=500, detail=f"Failed to reindex: {str(e)}")
-    finally:
-        _release_knowledge_operation_lock()
 
 
 @router.post("/uploads", response_model=KnowledgeUploadResponse, summary="Upload Global Knowledge Documents")
@@ -1204,7 +987,7 @@ async def upload_global_knowledge_files(
         files=uploaded_files,
         message=(
             f"Successfully uploaded {len(uploaded_files)} file(s); "
-            "files are queued for OCR and embedding in the background"
+            "files are queued for OCR parsing in the background"
         ),
     )
     
@@ -1218,7 +1001,7 @@ def list_global_knowledge_files() -> dict:
         raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
 
     docs_dir = get_global_docs_dir()
-    ocr_positions, embedding_positions = _current_global_queue_positions()
+    ocr_positions = _current_global_queue_positions()
     source_records, target_records = _build_global_record_lookup()
     preview_filenames = {
         str(record.get("preview_filename"))
@@ -1256,9 +1039,6 @@ def list_global_knowledge_files() -> dict:
             if file_path.name in ocr_positions:
                 queue_stage = "ocr"
                 queue_position = ocr_positions[file_path.name]
-            elif file_path.name in embedding_positions:
-                queue_stage = "embedding"
-                queue_position = embedding_positions[file_path.name]
             entry.update(
                 {
                     "parse_method": record.get("parse_method"),
@@ -1416,7 +1196,16 @@ async def update_global_knowledge_metadata(
 
     suggestion = {
         "title": str((existing_suggestion.title if existing_suggestion else None) or (record or {}).get("display_title") or Path(filename).stem),
-        "author": existing_suggestion.author if existing_suggestion else None,
+        "author": (
+            _manual_metadata_field(payload.author)
+            if "author" in provided_fields
+            else (existing_suggestion.author if existing_suggestion else None)
+        ),
+        "publisher": (
+            _manual_metadata_field(payload.publisher)
+            if "publisher" in provided_fields
+            else (existing_suggestion.publisher if existing_suggestion else None)
+        ),
         "type": (
             _manual_metadata_field(payload.type)
             if "type" in provided_fields
@@ -1556,7 +1345,6 @@ async def delete_global_knowledge_file(filename: str) -> dict:
             raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
         delete_global_knowledge_documents([record.get("source_filename") or filename] if record else [filename])
-        _mark_global_records_indexed()
         return {
             "success": True,
             "message": f"Deleted {filename} from global knowledge base and updated the index",
@@ -1588,32 +1376,14 @@ async def retry_global_knowledge_file(filename: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Source file missing: {source_filename}")
 
     current_status = str(record.get("parse_status") or "")
-    if current_status in {"queued", "queued_ocr", "parsing", "queued_embedding", "indexing"}:
+    if current_status in {"queued", "queued_ocr", "parsing"}:
         raise HTTPException(status_code=409, detail="This file is already being processed")
 
-    should_enqueue_embedding = bool(record.get("index_target_path")) and current_status in {
-        "parsed",
-        "index_failed",
-        "indexed",
-    }
-    should_enqueue_ocr = current_status in {"failed", "uploaded", "pending_parse"} or not should_enqueue_embedding
-
     record["error"] = None
-    if should_enqueue_embedding:
-        record["parse_status"] = "queued_embedding"
-        _save_global_record(source_filename, record)
-        _ensure_global_queue_workers_started()
-        _enqueue_global_embedding(source_filename)
-        return {
-            "success": True,
-            "message": f"已重新加入入库队列：{source_filename}",
-        }
-
     record["parse_status"] = "queued_ocr"
     _save_global_record(source_filename, record)
     _ensure_global_queue_workers_started()
-    if should_enqueue_ocr:
-        _enqueue_global_ocr(source_filename)
+    _enqueue_global_ocr(source_filename)
     return {
         "success": True,
         "message": f"已重新加入解析队列：{source_filename}",
@@ -1641,11 +1411,10 @@ async def reparse_global_knowledge_file(filename: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Source file missing: {source_filename}")
 
     current_status = str(record.get("parse_status") or "")
-    if current_status in {"queued", "queued_ocr", "parsing", "queued_embedding", "indexing"}:
+    if current_status in {"queued", "queued_ocr", "parsing"}:
         raise HTTPException(status_code=409, detail="This file is already being processed")
 
     record["error"] = None
-    record["embedding_checkpoint"] = None
     record["parse_status"] = "queued_ocr"
     _save_global_record(source_filename, record)
     _ensure_global_queue_workers_started()

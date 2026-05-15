@@ -105,187 +105,7 @@ assert _KNOWLEDGE_ROUTER_SPEC and _KNOWLEDGE_ROUTER_SPEC.loader
 _KNOWLEDGE_ROUTER_SPEC.loader.exec_module(knowledge_router)
 
 
-def test_process_single_global_embedding_failure_is_isolated(monkeypatch) -> None:
-    records = {
-        "a.pdf": {
-            "source_filename": "a.pdf",
-            "indexable": True,
-            "parse_status": "queued_embedding",
-            "index_target_path": "/tmp/a.json",
-            "error": None,
-        },
-        "b.pdf": {
-            "source_filename": "b.pdf",
-            "indexable": True,
-            "parse_status": "queued_embedding",
-            "index_target_path": "/tmp/b.json",
-            "error": None,
-        },
-    }
-    calls: list[list[str]] = []
-
-    monkeypatch.setattr(
-        knowledge_router,
-        "_load_global_record",
-        lambda filename: dict(records[filename]) if filename in records else None,
-    )
-    monkeypatch.setattr(
-        knowledge_router,
-        "_save_global_record",
-        lambda filename, record: records.__setitem__(filename, dict(record)),
-    )
-    monkeypatch.setattr(knowledge_router, "_list_global_records", lambda: [dict(record) for record in records.values()])
-    monkeypatch.setattr(knowledge_router, "_acquire_knowledge_operation_lock", lambda: None)
-    monkeypatch.setattr(knowledge_router, "_release_knowledge_operation_lock", lambda: None)
-
-    def fake_upsert(
-        filename: str,
-        *,
-        resume_chunk_index: int = 0,
-        expected_fingerprint: str | None = None,
-        on_batch_complete=None,
-    ) -> tuple[int, str]:
-        calls.append([filename])
-        if filename == "a.pdf" and on_batch_complete is not None:
-            on_batch_complete(16, 30, "fp-a")
-        if filename == "a.pdf":
-            raise RuntimeError("boom")
-        return 3, "fp-b"
-
-    monkeypatch.setattr(knowledge_router, "upsert_global_knowledge_record", fake_upsert)
-
-    def fake_mark_indexed(source_filenames: list[str] | None = None) -> None:
-        for filename in source_filenames or []:
-            record = dict(records[filename])
-            record["parse_status"] = "indexed"
-            records[filename] = record
-
-    monkeypatch.setattr(knowledge_router, "_mark_global_records_indexed", fake_mark_indexed)
-
-    knowledge_router._process_single_global_embedding("a.pdf")
-
-    assert calls == [["a.pdf"]]
-    assert records["a.pdf"]["parse_status"] == "index_failed"
-    assert records["a.pdf"]["error"] == "reindex failed: boom"
-    assert records["a.pdf"]["embedding_checkpoint"] == {
-        "next_chunk_index": 16,
-        "total_chunks": 30,
-        "content_fingerprint": "fp-a",
-        "batch_size": knowledge_router._get_upsert_batch_size(),
-    }
-    assert records["b.pdf"]["parse_status"] == "queued_embedding"
-    assert records["b.pdf"]["error"] is None
-
-    knowledge_router._process_single_global_embedding("b.pdf")
-
-    assert calls == [["a.pdf"], ["b.pdf"]]
-    assert records["b.pdf"]["parse_status"] == "indexed"
-    assert records["b.pdf"]["error"] is None
-
-
-def test_process_single_global_embedding_requeues_only_current_file_on_lock_conflict(
-    monkeypatch,
-) -> None:
-    records = {
-        "a.pdf": {
-            "source_filename": "a.pdf",
-            "indexable": True,
-            "parse_status": "queued_embedding",
-            "index_target_path": "/tmp/a.json",
-            "error": None,
-        },
-    }
-    requeued: list[str] = []
-
-    monkeypatch.setattr(
-        knowledge_router,
-        "_load_global_record",
-        lambda filename: dict(records[filename]) if filename in records else None,
-    )
-    monkeypatch.setattr(
-        knowledge_router,
-        "_save_global_record",
-        lambda filename, record: records.__setitem__(filename, dict(record)),
-    )
-    monkeypatch.setattr(
-        knowledge_router,
-        "_acquire_knowledge_operation_lock",
-        lambda: (_ for _ in ()).throw(HTTPException(status_code=409, detail="busy")),
-    )
-    monkeypatch.setattr(knowledge_router, "_enqueue_global_embedding", requeued.append)
-
-    knowledge_router._process_single_global_embedding("a.pdf")
-
-    assert requeued == ["a.pdf"]
-    assert records["a.pdf"]["parse_status"] == "queued_embedding"
-    assert records["a.pdf"]["error"] is None
-
-
-def test_process_single_global_embedding_resumes_from_checkpoint(monkeypatch, tmp_path) -> None:
-    target_path = tmp_path / "a.json"
-    target_path.write_text("{}", encoding="utf-8")
-    records = {
-        "a.pdf": {
-            "source_filename": "a.pdf",
-            "indexable": True,
-            "parse_status": "index_failed",
-            "index_target_path": str(target_path),
-            "error": "reindex failed: boom",
-            "embedding_checkpoint": {
-                "next_chunk_index": 16,
-                "total_chunks": 30,
-                "content_fingerprint": "fp-a",
-                "batch_size": 16,
-            },
-        },
-    }
-    captured: list[tuple[str, int, str | None]] = []
-
-    monkeypatch.setattr(
-        knowledge_router,
-        "_load_global_record",
-        lambda filename: dict(records[filename]) if filename in records else None,
-    )
-    monkeypatch.setattr(
-        knowledge_router,
-        "_save_global_record",
-        lambda filename, record: records.__setitem__(filename, dict(record)),
-    )
-    monkeypatch.setattr(knowledge_router, "_list_global_records", lambda: [dict(record) for record in records.values()])
-    monkeypatch.setattr(knowledge_router, "_acquire_knowledge_operation_lock", lambda: None)
-    monkeypatch.setattr(knowledge_router, "_release_knowledge_operation_lock", lambda: None)
-
-    def fake_upsert(
-        filename: str,
-        *,
-        resume_chunk_index: int = 0,
-        expected_fingerprint: str | None = None,
-        on_batch_complete=None,
-    ) -> tuple[int, str]:
-        captured.append((filename, resume_chunk_index, expected_fingerprint))
-        if on_batch_complete is not None:
-            on_batch_complete(30, 30, "fp-a")
-        return 30, "fp-a"
-
-    monkeypatch.setattr(knowledge_router, "upsert_global_knowledge_record", fake_upsert)
-
-    knowledge_router._process_single_global_embedding("a.pdf")
-
-    assert captured == [("a.pdf", 16, "fp-a")]
-    assert records["a.pdf"]["parse_status"] == "indexed"
-    assert records["a.pdf"]["error"] is None
-    assert records["a.pdf"]["embedding_checkpoint"] is None
-
-
-async def _call_retry_global_knowledge_file(filename: str):
-    return await knowledge_router.retry_global_knowledge_file(filename)
-
-
-async def _call_reparse_global_knowledge_file(filename: str):
-    return await knowledge_router.reparse_global_knowledge_file(filename)
-
-
-def test_retry_global_knowledge_file_requeues_indexed_document_for_embedding(monkeypatch, tmp_path) -> None:
+def test_retry_global_knowledge_file_requeues_document_for_ocr(monkeypatch, tmp_path) -> None:
     source_path = tmp_path / "indexed.pdf"
     source_path.write_text("pdf", encoding="utf-8")
     records = {
@@ -316,16 +136,24 @@ def test_retry_global_knowledge_file_requeues_indexed_document_for_embedding(mon
         lambda filename, record: records.__setitem__(filename, dict(record)),
     )
     monkeypatch.setattr(knowledge_router, "_ensure_global_queue_workers_started", lambda: None)
-    monkeypatch.setattr(knowledge_router, "_enqueue_global_embedding", enqueued.append)
+    monkeypatch.setattr(knowledge_router, "_enqueue_global_ocr", enqueued.append)
 
     import asyncio
 
     result = asyncio.run(_call_retry_global_knowledge_file("indexed.pdf"))
 
     assert result["success"] is True
-    assert "重新加入入库队列" in result["message"]
-    assert records["indexed.pdf"]["parse_status"] == "queued_embedding"
+    assert "重新加入解析队列" in result["message"]
+    assert records["indexed.pdf"]["parse_status"] == "queued_ocr"
     assert enqueued == ["indexed.pdf"]
+
+
+async def _call_retry_global_knowledge_file(filename: str):
+    return await knowledge_router.retry_global_knowledge_file(filename)
+
+
+async def _call_reparse_global_knowledge_file(filename: str):
+    return await knowledge_router.reparse_global_knowledge_file(filename)
 
 
 def test_reparse_global_knowledge_file_requeues_indexed_document_for_ocr(monkeypatch, tmp_path) -> None:
@@ -338,12 +166,6 @@ def test_reparse_global_knowledge_file_requeues_indexed_document_for_ocr(monkeyp
             "parse_status": "indexed",
             "index_target_path": "/tmp/indexed.structured.json",
             "error": "old error",
-            "embedding_checkpoint": {
-                "next_chunk_index": 8,
-                "total_chunks": 24,
-                "content_fingerprint": "fp-old",
-                "batch_size": 8,
-            },
         },
     }
     enqueued: list[str] = []
@@ -375,7 +197,6 @@ def test_reparse_global_knowledge_file_requeues_indexed_document_for_ocr(monkeyp
     assert "重新加入解析队列" in result["message"]
     assert records["indexed.pdf"]["parse_status"] == "queued_ocr"
     assert records["indexed.pdf"]["error"] is None
-    assert records["indexed.pdf"]["embedding_checkpoint"] is None
     assert enqueued == ["indexed.pdf"]
 
 

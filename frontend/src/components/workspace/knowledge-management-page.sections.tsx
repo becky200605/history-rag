@@ -586,6 +586,22 @@ export function KnowledgeFileCard({
                       <span className="font-bold text-primary/60 mr-1.5">摘要：</span>
                       {file.summary?.trim() ?? "无"}
                     </p>
+                    {(file.author?.trim() || file.publisher?.trim()) && (
+                      <p className="mt-1 text-[11px] leading-relaxed text-stone-500/80 font-serif">
+                        {file.author?.trim() && (
+                          <>
+                            <span className="font-bold text-primary/60 mr-1">作者：</span>
+                            <span className="mr-3">{file.author}</span>
+                          </>
+                        )}
+                        {file.publisher?.trim() && (
+                          <>
+                            <span className="font-bold text-primary/60 mr-1">出版社：</span>
+                            <span>{file.publisher}</span>
+                          </>
+                        )}
+                      </p>
+                    )}
                   </div>
                 </div>
 

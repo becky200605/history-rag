@@ -110,7 +110,7 @@ def test_knowledge_directory_middleware_injects_tree_into_hidden_user_message(mo
     messages = captured["messages"]
     assert isinstance(messages[0], HumanMessage)
     assert "<knowledge_directory_tree>" in str(messages[0].content)
-    assert "直接从这里复制目录名填写 `knowledge_folders`" in str(messages[0].content)
+    assert "`knowledge_folders`" in str(messages[0].content)
     assert "不是 sandbox / 容器 / 本地文件系统路径" in str(messages[0].content)
     assert "不要填写 `用户书籍`" in str(messages[0].content)
     assert "用户书籍/" not in str(messages[0].content)

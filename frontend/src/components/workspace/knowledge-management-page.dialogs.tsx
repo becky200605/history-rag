@@ -432,6 +432,31 @@ export function MetadataDialog({
             />
           </div>
 
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-2">
+              <label className="text-sm font-medium text-slate-800">作者</label>
+              <Input
+                value={form.author}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, author: event.target.value }))
+                }
+                placeholder="张之洞"
+                className="bg-white"
+              />
+            </div>
+            <div className="grid gap-2">
+              <label className="text-sm font-medium text-slate-800">出版社</label>
+              <Input
+                value={form.publisher}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, publisher: event.target.value }))
+                }
+                placeholder="商务印书馆"
+                className="bg-white"
+              />
+            </div>
+          </div>
+
           {errorMessage ? <p className="text-sm text-destructive">{errorMessage}</p> : null}
         </div>
 

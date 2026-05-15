@@ -51,6 +51,8 @@ export type ManagedKnowledgeFile = {
   regions?: string[];
   keywords?: string[];
   summary?: string | null;
+  author?: string | null;
+  publisher?: string | null;
   tags?: string[];
   hints?: Record<string, string>;
   knowledgeSpaceId?: string | null;
@@ -73,6 +75,8 @@ export type MetadataFormState = {
   regions: string;
   keywords: string;
   summary: string;
+  author: string;
+  publisher: string;
   languageHint: LanguageHint;
   layoutHint: LayoutHint;
   documentTypeHint: DocumentTypeHint;
@@ -134,6 +138,8 @@ export function createEmptyMetadataFormState(): MetadataFormState {
     regions: "",
     keywords: "",
     summary: "",
+    author: "",
+    publisher: "",
     languageHint: "unknown",
     layoutHint: "unknown",
     documentTypeHint: "unknown",
@@ -596,6 +602,8 @@ export function buildManagedFiles(params: {
     regions: file.regions,
     keywords: file.keywords,
     summary: file.summary,
+    author: file.author,
+    publisher: file.publisher,
     tags: file.tags,
     hints: file.hints,
   }));
@@ -835,6 +843,8 @@ export function buildMetadataFormState(metadata: {
   regions?: string[];
   keywords?: string[];
   summary?: string | null;
+  author?: string | null;
+  publisher?: string | null;
   hints?: Record<string, string>;
   language_hint?: string | null;
   layout_hint?: string | null;
@@ -855,6 +865,8 @@ export function buildMetadataFormState(metadata: {
     regions: joinTagInput(metadata.regions),
     keywords: joinTagInput(metadata.keywords),
     summary: metadata.summary ?? "",
+    author: metadata.author ?? "",
+    publisher: metadata.publisher ?? "",
     languageHint: (languageHint as LanguageHint) ?? "unknown",
     layoutHint: (layoutHint as LayoutHint) ?? "unknown",
     documentTypeHint: (documentTypeHint as DocumentTypeHint) ?? "unknown",
@@ -870,6 +882,8 @@ export function buildMetadataPayload(form: MetadataFormState): KnowledgeMetadata
     regions: splitTagInput(form.regions),
     keywords: splitTagInput(form.keywords),
     summary: form.summary.trim() || null,
+    author: form.author.trim() || null,
+    publisher: form.publisher.trim() || null,
     language_hint: form.languageHint === "unknown" ? null : form.languageHint,
     layout_hint: form.layoutHint === "unknown" ? null : form.layoutHint,
     document_type_hint:

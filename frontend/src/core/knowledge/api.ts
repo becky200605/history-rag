@@ -38,6 +38,8 @@ export interface KnowledgeFileInfo {
   regions?: string[];
   keywords?: string[];
   summary?: string | null;
+  author?: string | null;
+  publisher?: string | null;
   tags?: string[];
   queue_stage?: string | null;
   queue_position?: number | null;
@@ -51,6 +53,8 @@ export interface KnowledgeMetadataUpdateInput {
   regions?: string[];
   keywords?: string[];
   summary?: string | null;
+  author?: string | null;
+  publisher?: string | null;
   language_hint?: string | null;
   layout_hint?: string | null;
   document_type_hint?: string | null;

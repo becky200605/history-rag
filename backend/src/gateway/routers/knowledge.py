@@ -3,7 +3,7 @@ import logging
 import mimetypes
 import threading
 import time
-from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -31,7 +31,7 @@ from src.community.knowledge_base.citations import (
     encode_source_url,
     resolve_result_citation_context,
 )
-from src.community.knowledge_base.common import resolve_project_path
+from src.community.knowledge_base.common import derive_global_doc_id, resolve_project_path
 from src.community.knowledge_base.document_parsers import OFFICE_EXTENSIONS, PDF_EXTENSIONS
 from src.community.knowledge_base.folder_registry import (
     delete_folder_path,
@@ -55,7 +55,6 @@ from src.community.knowledge_base.structured_document import (
 from src.community.knowledge_base.tools import knowledge_search_tool
 from src.community.knowledge_base.translation_grpc import translate_blocks_to_chinese_via_grpc
 from src.config.knowledge_base_config import get_knowledge_base_config
-from src.community.knowledge_base.common import derive_global_doc_id
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +65,10 @@ UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 INDEXABLE_EXTENSIONS = {".md", ".txt"}
 _knowledge_operation_lock = threading.Lock()
-_global_queue_condition = threading.Condition()
-_global_ocr_queue: deque[str] = deque()
-_global_queued_ocr: set[str] = set()
-_global_ocr_worker: threading.Thread | None = None
+_global_inflight_lock = threading.Lock()
+_global_inflight_ocr: set[str] = set()
+_global_ocr_executor: ThreadPoolExecutor | None = None
+_global_ocr_executor_workers: int = 0
 
 
 def _encode_url_path(url: str | None) -> str | None:
@@ -90,21 +89,66 @@ def _release_knowledge_operation_lock() -> None:
 
 
 def _remove_global_queued_filename(filename: str) -> None:
-    global _global_ocr_queue
-    with _global_queue_condition:
-        if filename in _global_queued_ocr:
-            _global_queued_ocr.discard(filename)
-            _global_ocr_queue = deque(item for item in _global_ocr_queue if item != filename)
+    """Allow the same filename to be resubmitted.
+
+    The executor cannot cancel a task that is already mid-flight, but clearing
+    the inflight marker lets a subsequent ``_submit_global_ocr`` call enqueue a
+    fresh run (mirrors the previous deque-based behaviour).
+    """
+    with _global_inflight_lock:
+        _global_inflight_ocr.discard(filename)
 
 
-def _enqueue_global_ocr(filename: str) -> None:
-    with _global_queue_condition:
-        if filename in _global_queued_ocr:
+def _resolve_ocr_max_workers() -> int:
+    try:
+        mineru_config = get_knowledge_base_config().mineru
+    except Exception:  # pragma: no cover - defensive: config not loaded yet
+        return 4
+    if mineru_config is None:
+        return 4
+    return max(1, int(getattr(mineru_config, "max_concurrent_ocr_jobs", 4) or 4))
+
+
+def _ensure_global_queue_workers_started() -> None:
+    """Lazily create the OCR executor and recover any pending records."""
+    global _global_ocr_executor, _global_ocr_executor_workers
+    started = False
+    with _global_inflight_lock:
+        if _global_ocr_executor is None:
+            _global_ocr_executor_workers = _resolve_ocr_max_workers()
+            _global_ocr_executor = ThreadPoolExecutor(
+                max_workers=_global_ocr_executor_workers,
+                thread_name_prefix="global-ocr",
+            )
+            started = True
+    if started:
+        _recover_pending_global_jobs()
+
+
+def _submit_global_ocr(filename: str) -> None:
+    """Submit a file for OCR processing.
+
+    The ThreadPoolExecutor caps concurrent gRPC calls at
+    ``mineru.max_concurrent_ocr_jobs``; anything beyond that waits in the
+    executor's own work queue. Duplicate submissions for the same filename are
+    ignored while one is still inflight.
+    """
+    _ensure_global_queue_workers_started()
+    with _global_inflight_lock:
+        if filename in _global_inflight_ocr:
             return
-        _global_queued_ocr.add(filename)
-        _global_ocr_queue.append(filename)
-        _global_queue_condition.notify_all()
+        _global_inflight_ocr.add(filename)
+        executor = _global_ocr_executor
+    assert executor is not None  # _ensure_global_queue_workers_started guarantees it
+    executor.submit(_run_global_ocr_task, filename)
 
+
+def _run_global_ocr_task(filename: str) -> None:
+    try:
+        _process_single_global_ocr(filename)
+    finally:
+        with _global_inflight_lock:
+            _global_inflight_ocr.discard(filename)
 
 
 def _recover_pending_global_jobs() -> None:
@@ -114,29 +158,20 @@ def _recover_pending_global_jobs() -> None:
             continue
         status = str(record.get("parse_status") or "")
         if status in {"queued", "queued_ocr", "pending_parse"}:
-            _enqueue_global_ocr(str(filename))
-
-
-def _ensure_global_queue_workers_started() -> None:
-    global _global_ocr_worker
-    started_worker = False
-    with _global_queue_condition:
-        if _global_ocr_worker is None or not _global_ocr_worker.is_alive():
-            _global_ocr_worker = threading.Thread(
-                target=_global_ocr_worker_loop,
-                name="global-knowledge-ocr-worker",
-                daemon=True,
-            )
-            _global_ocr_worker.start()
-            started_worker = True
-    if started_worker:
-        _recover_pending_global_jobs()
+            _submit_global_ocr(str(filename))
 
 
 def _current_global_queue_positions() -> dict[str, int]:
-    with _global_queue_condition:
-        ocr_positions = {filename: index + 1 for index, filename in enumerate(_global_ocr_queue)}
-    return ocr_positions
+    """Return inflight filenames.
+
+    Precise queue positions are no longer tracked (the executor owns the
+    pending queue). All entries report position ``1`` so callers can still
+    detect "this file is being processed / waiting" without exposing internal
+    queue ordering. The frontend only renders the status label, so this is
+    sufficient.
+    """
+    with _global_inflight_lock:
+        return {filename: 1 for filename in _global_inflight_ocr}
 
 
 
@@ -780,16 +815,6 @@ def _process_single_global_ocr(filename: str) -> None:
         _save_global_record(filename, record)
 
 
-def _global_ocr_worker_loop() -> None:
-    while True:
-        with _global_queue_condition:
-            while not _global_ocr_queue:
-                _global_queue_condition.wait()
-            filename = _global_ocr_queue.popleft()
-            _global_queued_ocr.discard(filename)
-        _process_single_global_ocr(filename)
-
-
 def _process_global_knowledge_uploads(filenames: list[str]) -> None:
     """Parse uploaded global knowledge files in the background."""
     try:
@@ -977,10 +1002,8 @@ async def upload_global_knowledge_files(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to upload {safe_filename}: {exc}")
 
-    if queued_filenames:
-        _ensure_global_queue_workers_started()
-        for filename in queued_filenames:
-            _enqueue_global_ocr(filename)
+    for filename in queued_filenames:
+        _submit_global_ocr(filename)
 
     return KnowledgeUploadResponse(
         success=True,
@@ -1382,8 +1405,7 @@ async def retry_global_knowledge_file(filename: str) -> dict:
     record["error"] = None
     record["parse_status"] = "queued_ocr"
     _save_global_record(source_filename, record)
-    _ensure_global_queue_workers_started()
-    _enqueue_global_ocr(source_filename)
+    _submit_global_ocr(source_filename)
     return {
         "success": True,
         "message": f"已重新加入解析队列：{source_filename}",
@@ -1417,8 +1439,7 @@ async def reparse_global_knowledge_file(filename: str) -> dict:
     record["error"] = None
     record["parse_status"] = "queued_ocr"
     _save_global_record(source_filename, record)
-    _ensure_global_queue_workers_started()
-    _enqueue_global_ocr(source_filename)
+    _submit_global_ocr(source_filename)
     return {
         "success": True,
         "message": f"已重新加入解析队列：{source_filename}",

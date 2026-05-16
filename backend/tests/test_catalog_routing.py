@@ -1419,3 +1419,90 @@ def test_knowledge_locate_tool_supports_multi_page_ranges(monkeypatch) -> None:
     assert "第 12 页片段。" in output
     assert "第 13 页片段。" in output
     assert "连续页范围展开" in output
+
+
+def _make_entry(*, doc_id: str, title: str, scope: str, folder: str, pages: int, book_type: str = "unknown") -> BookCatalogEntry:
+    return BookCatalogEntry(
+        doc_id=doc_id,
+        title=title,
+        filename=f"{doc_id}.pdf",
+        scope=scope,
+        source_path=f"/tmp/{doc_id}.pdf",
+        source_url=f"/api/knowledge/docs/{doc_id}.pdf",
+        original_url=None,
+        preview="",
+        search_text=title,
+        search_tokens=[title],
+        type=book_type if scope == "global" else scope,
+        folder_path=folder,
+        page_count=pages,
+    )
+
+
+def test_render_directory_tree_rolls_up_page_counts() -> None:
+    from src.community.knowledge_base.catalog import render_book_catalog_directory_tree
+
+    entries = [
+        _make_entry(doc_id="a", title="清史稿", scope="global", folder="清史/晚清", pages=15000, book_type="core"),
+        _make_entry(doc_id="b", title="财政通史", scope="global", folder="财政史/民国", pages=3000, book_type="specialized"),
+        _make_entry(doc_id="c", title="财政小册", scope="global", folder="财政史/民国", pages=500, book_type="specialized"),
+    ]
+
+    tree = render_book_catalog_directory_tree(entries)
+
+    assert tree is not None
+    # Folder names appear, book titles do not.
+    assert "清史/" in tree
+    assert "财政史/" in tree
+    assert "清史稿" not in tree
+    assert "doc_id=" not in tree
+    # 财政史/ rolls up 3000 + 500 = 3500, formatted without 万 suffix.
+    assert "财政史/ (3500页)" in tree
+    # 清史/ rolls up 15000 → "1.5万页".
+    assert "清史/ (1.5万页)" in tree
+
+
+def test_render_directory_tree_groups_scopes_as_sections_in_priority_order() -> None:
+    from src.community.knowledge_base.catalog import render_book_catalog_directory_tree
+
+    entries = [
+        _make_entry(doc_id="g1", title="清史稿", scope="global", folder="清史/晚清", pages=15000, book_type="core"),
+        _make_entry(doc_id="u1", title="个人笔记", scope="user", folder="笔记/日记", pages=120),
+        _make_entry(doc_id="t1", title="本轮上传", scope="thread", folder="临时材料", pages=80),
+    ]
+
+    tree = render_book_catalog_directory_tree(entries, include_scope_roots=True)
+
+    assert tree is not None
+    # All three scope sections render with full-width bracket headers.
+    assert "【当前线程书籍】" in tree
+    assert "【用户书籍】" in tree
+    assert "【系统知识库】" in tree
+    # Ordered: thread → user → system.
+    thread_idx = tree.index("【当前线程书籍】")
+    user_idx = tree.index("【用户书籍】")
+    system_idx = tree.index("【系统知识库】")
+    assert thread_idx < user_idx < system_idx
+    # Section headers carry a rollup page count in full-width parentheses.
+    assert "【系统知识库】（1.5万页）" in tree
+    assert "【用户书籍】（120页）" in tree
+    # Folder names INSIDE a section never include the section label as a path
+    # segment (that would mislead the agent into copying it into knowledge_folders).
+    assert "用户书籍/" not in tree
+    assert "系统知识库/" not in tree
+
+
+def test_render_directory_tree_omits_suffix_when_no_page_counts_known() -> None:
+    from src.community.knowledge_base.catalog import render_book_catalog_directory_tree
+
+    entries = [
+        _make_entry(doc_id="x", title="未解析的书", scope="global", folder="待整理", pages=0, book_type="unknown"),
+    ]
+
+    tree = render_book_catalog_directory_tree(entries)
+
+    assert tree is not None
+    assert "待整理/" in tree
+    # No "(0页)" noise when we genuinely don't know the size yet.
+    assert "(0页)" not in tree
+    assert "页)" not in tree

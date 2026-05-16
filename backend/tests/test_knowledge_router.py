@@ -136,7 +136,7 @@ def test_retry_global_knowledge_file_requeues_document_for_ocr(monkeypatch, tmp_
         lambda filename, record: records.__setitem__(filename, dict(record)),
     )
     monkeypatch.setattr(knowledge_router, "_ensure_global_queue_workers_started", lambda: None)
-    monkeypatch.setattr(knowledge_router, "_enqueue_global_ocr", enqueued.append)
+    monkeypatch.setattr(knowledge_router, "_submit_global_ocr", enqueued.append)
 
     import asyncio
 
@@ -187,7 +187,7 @@ def test_reparse_global_knowledge_file_requeues_indexed_document_for_ocr(monkeyp
         lambda filename, record: records.__setitem__(filename, dict(record)),
     )
     monkeypatch.setattr(knowledge_router, "_ensure_global_queue_workers_started", lambda: None)
-    monkeypatch.setattr(knowledge_router, "_enqueue_global_ocr", enqueued.append)
+    monkeypatch.setattr(knowledge_router, "_submit_global_ocr", enqueued.append)
 
     import asyncio
 
@@ -292,6 +292,8 @@ def test_load_global_book_metadata_uses_explicit_folder(monkeypatch, tmp_path) -
         regions=[],
         keywords=[],
         summary=None,
+        author=None,
+        publisher=None,
     )
     record = SimpleNamespace(suggestion=suggestion)
 
@@ -313,6 +315,8 @@ def test_load_global_book_metadata_falls_back_to_first_tag_for_legacy_records(mo
         regions=[],
         keywords=[],
         summary=None,
+        author=None,
+        publisher=None,
     )
     record = SimpleNamespace(suggestion=suggestion)
 
@@ -448,3 +452,81 @@ def test_debug_knowledge_search_tool_returns_rendered_output(monkeypatch) -> Non
     assert "## 检索结果" in result.output
     assert "張之洞 生平 官職" in result.output
     assert "doc-1" in result.output
+
+
+def test_submit_global_ocr_runs_inflight_jobs_concurrently(monkeypatch) -> None:
+    """Concurrent submissions should all execute (no single-worker serialization)."""
+
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Reset module state so the test does not depend on whatever previous tests
+    # might have initialised on the executor singleton.
+    monkeypatch.setattr(knowledge_router, "_global_ocr_executor", None)
+    monkeypatch.setattr(knowledge_router, "_global_inflight_ocr", set())
+
+    executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="test-ocr")
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_global_queue_workers_started",
+        lambda: setattr(knowledge_router, "_global_ocr_executor", executor),
+    )
+
+    started = threading.Event()
+    release = threading.Event()
+    processed: list[str] = []
+    processed_lock = threading.Lock()
+
+    def fake_process(filename: str) -> None:
+        with processed_lock:
+            processed.append(filename)
+        if filename == "slow.pdf":
+            started.set()
+            assert release.wait(timeout=2), "fast job did not unblock the slow one in time"
+
+    monkeypatch.setattr(knowledge_router, "_process_single_global_ocr", fake_process)
+
+    try:
+        knowledge_router._submit_global_ocr("slow.pdf")
+        assert started.wait(timeout=2), "slow job never started"
+
+        # While slow.pdf is still mid-flight, a second submission must not be
+        # blocked behind it — it should run on another executor thread.
+        knowledge_router._submit_global_ocr("fast.pdf")
+
+        # Give the executor a moment to schedule the fast job.
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            with processed_lock:
+                if "fast.pdf" in processed:
+                    break
+            time.sleep(0.01)
+
+        with processed_lock:
+            assert "fast.pdf" in processed, "fast job did not run while slow job was inflight"
+        release.set()
+    finally:
+        release.set()
+        executor.shutdown(wait=True)
+
+
+def test_submit_global_ocr_is_idempotent_for_inflight_filename(monkeypatch) -> None:
+    """A duplicate submission for an already-inflight filename should be ignored."""
+
+    monkeypatch.setattr(knowledge_router, "_global_inflight_ocr", set())
+    monkeypatch.setattr(knowledge_router, "_ensure_global_queue_workers_started", lambda: None)
+
+    submitted: list[str] = []
+
+    class _RecordingExecutor:
+        def submit(self, _fn, *args, **kwargs):  # noqa: ANN001 - test stub
+            submitted.append(args[0])
+
+    monkeypatch.setattr(knowledge_router, "_global_ocr_executor", _RecordingExecutor())
+
+    knowledge_router._submit_global_ocr("dup.pdf")
+    knowledge_router._submit_global_ocr("dup.pdf")
+    knowledge_router._submit_global_ocr("other.pdf")
+
+    assert submitted == ["dup.pdf", "other.pdf"]

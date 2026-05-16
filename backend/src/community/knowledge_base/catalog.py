@@ -100,6 +100,7 @@ class BookCatalogEntry:
     metadata_source: str | None = None
     folder_path: str | None = None
     language_hint: str | None = None
+    page_count: int = 0
 
 
 @dataclass
@@ -120,17 +121,25 @@ class CatalogMetadataRecord:
     source_path: str | None = None
     folder_path: str | None = None
     language_hint: str | None = None
+    page_count: int = 0
 
 
-TREE_FILE_KEY = "__files__"
+# Scope roots used when ``include_scope_roots=True``. We keep the user / thread /
+# system distinction so the model can tell apart "user-provided sources" (to be
+# prioritised) from the shared system library, but we no longer further bucket
+# the system library by internal type tags (核心 / 专题 / 参考) — those tags are
+# implementation detail and only added noise to the prompt.
 TREE_SCOPE_ROOTS = {
     "user": ("用户书籍",),
     "thread": ("当前线程书籍",),
-    CORE_TYPE: ("系统知识库", "核心通用书"),
-    SPECIALIZED_TYPE: ("系统知识库", "专题支撑书"),
-    REFERENCE_TYPE: ("系统知识库", "补充材料 / 参考工具书"),
-    "unknown": ("系统知识库", "其他资料"),
+    CORE_TYPE: ("系统知识库",),
+    SPECIALIZED_TYPE: ("系统知识库",),
+    REFERENCE_TYPE: ("系统知识库",),
+    "unknown": ("系统知识库",),
 }
+
+# Fixed display order for top-level scope roots: user-supplied material first.
+TREE_SCOPE_ROOT_ORDER = ("当前线程书籍", "用户书籍", "系统知识库")
 
 
 def _read_preview(path: Path, max_chars: int = 800) -> str:
@@ -265,6 +274,7 @@ def _coerce_catalog_metadata_record(payload: dict[str, object], source_path: str
         source_path=source_path,
         folder_path=normalize_folder_path(payload.get("folder")),
         language_hint=str(payload.get("language_hint") or "").strip() or None,
+        page_count=_as_optional_int(payload.get("page_count")) or 0,
     )
 
 
@@ -299,6 +309,7 @@ def _merge_metadata_record(
         source_path=record.source_path or existing.source_path,
         folder_path=record.folder_path or existing.folder_path,
         language_hint=record.language_hint or existing.language_hint,
+        page_count=max(record.page_count, existing.page_count),
     )
 
 
@@ -330,6 +341,7 @@ def _load_generated_book_metadata_index(directory: Path) -> dict[str, CatalogMet
             search_terms=tokenize_search_text(summary),
             source_path=str(path),
             folder_path=resolve_book_folder(suggestion),
+            page_count=int(generated.page_count or 0),
         )
         for key in _metadata_index_keys(record):
             metadata_index[key] = _merge_metadata_record(metadata_index.get(key), record)
@@ -413,6 +425,7 @@ def _apply_metadata_to_entry(
         metadata_source=metadata.source_path,
         folder_path=resolved_folder_path,
         language_hint=metadata.language_hint or entry.language_hint,
+        page_count=metadata.page_count if metadata.page_count > 0 else entry.page_count,
     )
 
 
@@ -1014,9 +1027,72 @@ def _entry_folder_segments(entry: BookCatalogEntry) -> list[str]:
     return [UNFILED_FOLDER_NAME]
 
 
-def _entry_tree_leaf(entry: BookCatalogEntry) -> str:
-    display_title = entry.title or Path(entry.filename).stem or entry.filename or entry.doc_id
-    return f"{display_title} [doc_id={entry.doc_id}]"
+def _format_chinese_page_count(total_pages: int) -> str:
+    """Format a page total using Chinese myriad ("万") notation when large.
+
+    Examples
+    --------
+    >>> _format_chinese_page_count(850)
+    '850页'
+    >>> _format_chinese_page_count(2300)
+    '2300页'
+    >>> _format_chinese_page_count(10000)
+    '1万页'
+    >>> _format_chinese_page_count(12000)
+    '1.2万页'
+    >>> _format_chinese_page_count(120000)
+    '12万页'
+    """
+    n = max(0, int(total_pages))
+    if n < 10000:
+        return f"{n}页"
+    value = n / 10000
+    rounded = round(value, 1)
+    if rounded == int(rounded):
+        return f"{int(rounded)}万页"
+    return f"{rounded:.1f}万页"
+
+
+def _render_folder_subtree(entries: list[BookCatalogEntry]) -> list[str]:
+    """Render a single set of entries as a folder-only tree (returns lines)."""
+    tree: dict[str, object] = {"children": {}, "direct_pages": 0}
+
+    def _children(node: dict[str, object]) -> dict[str, dict[str, object]]:
+        existing = node.get("children")
+        assert isinstance(existing, dict)
+        return existing  # type: ignore[return-value]
+
+    def _new_node() -> dict[str, object]:
+        return {"children": {}, "direct_pages": 0}
+
+    for entry in entries:
+        node = tree
+        for segment in _entry_folder_segments(entry):
+            node = _children(node).setdefault(segment, _new_node())  # type: ignore[assignment]
+        node["direct_pages"] = int(node.get("direct_pages", 0)) + max(
+            0, int(getattr(entry, "page_count", 0) or 0)
+        )
+
+    def _rollup_pages(node: dict[str, object]) -> int:
+        total = int(node.get("direct_pages", 0) or 0)
+        for child in _children(node).values():
+            total += _rollup_pages(child)
+        return total
+
+    lines: list[str] = []
+
+    def _render(node: dict[str, object], prefix: str = "") -> None:
+        items = sorted(_children(node).items(), key=lambda item: item[0])
+        for index, (name, child) in enumerate(items):
+            is_last = index == len(items) - 1
+            branch = "`-- " if is_last else "|-- "
+            total_pages = _rollup_pages(child)
+            suffix = f" ({_format_chinese_page_count(total_pages)})" if total_pages > 0 else ""
+            lines.append(f"{prefix}{branch}{name}/{suffix}")
+            _render(child, prefix + ("    " if is_last else "|   "))
+
+    _render(tree)
+    return lines
 
 
 def render_book_catalog_directory_tree(
@@ -1024,76 +1100,68 @@ def render_book_catalog_directory_tree(
     *,
     include_scope_roots: bool = False,
 ) -> str | None:
-    """Render visible catalog entries as a simple directory tree."""
+    """Render visible catalog entries as a folder-only directory tree.
+
+    Each folder line is suffixed with ``(N页)`` reflecting the *rollup* page
+    total of every book filed at that folder or any of its descendants. Books
+    themselves are intentionally not listed — the prompt elsewhere tells the
+    agent to discover specific titles via ``book_search``. Folders whose
+    rollup is zero (no ``page_count`` metadata yet) render without a suffix.
+
+    When ``include_scope_roots=True`` entries are grouped by scope (user /
+    thread / system) and rendered as separate ``【…】`` sections with their
+    own sub-tree. Section headers use full-width brackets so the agent can
+    visually tell them apart from real folder names (which use ``/``-separated
+    paths and tree branches). This avoids the model accidentally copying
+    ``用户书籍/财政史`` as a ``knowledge_folders`` value.
+    """
     started_at = time.perf_counter()
     if not entries:
         return None
 
-    tree: dict[str, object] = {}
-
-    def _children(node: dict[str, object]) -> dict[str, object]:
-        existing = node.get("children")
-        if isinstance(existing, dict):
-            return existing
-        created: dict[str, object] = {}
-        node["children"] = created
-        return created
-
-    def _files(node: dict[str, object]) -> list[str]:
-        existing = node.get(TREE_FILE_KEY)
-        if isinstance(existing, list):
-            return existing
-        created: list[str] = []
-        node[TREE_FILE_KEY] = created
-        return created
-
-    ordered_entries = sorted(
-        entries,
-        key=lambda entry: (
-            _entry_tree_root(entry) if include_scope_roots else (),
-            _entry_folder_segments(entry),
-            entry.title,
-            entry.doc_id,
-        ),
-    )
-    for entry in ordered_entries:
-        node = tree
-        root_segments = _entry_tree_root(entry) if include_scope_roots else ()
-        for segment in [*root_segments, *_entry_folder_segments(entry)]:
-            node = _children(node).setdefault(segment, {})  # type: ignore[assignment]
-        leaf = _entry_tree_leaf(entry)
-        node_files = _files(node)
-        if leaf not in node_files:
-            node_files.append(leaf)
-
-    lines = ["."]
-
-    def _render(node: dict[str, object], prefix: str = "") -> None:
-        folder_items = sorted(
-            ((name, child) for name, child in _children(node).items()),
-            key=lambda item: item[0],
+    if not include_scope_roots:
+        lines = ["."]
+        lines.extend(_render_folder_subtree(entries))
+        rendered = "\n".join(lines)
+        logger.info(
+            "Book catalog tree rendered: entries=%s include_scope_roots=False lines=%s elapsed_ms=%.1f",
+            len(entries),
+            len(lines),
+            (time.perf_counter() - started_at) * 1000,
         )
-        file_items = sorted(_files(node))
-        entries_to_render: list[tuple[str, str, object | None]] = [
-            ("folder", name, child) for name, child in folder_items
-        ]
-        entries_to_render.extend(("file", name, None) for name in file_items)
+        return rendered
 
-        for index, (entry_type, name, child) in enumerate(entries_to_render):
-            is_last = index == len(entries_to_render) - 1
-            branch = "`-- " if is_last else "|-- "
-            suffix = "/" if entry_type == "folder" else ""
-            lines.append(f"{prefix}{branch}{name}{suffix}")
-            if entry_type == "folder" and isinstance(child, dict):
-                _render(child, prefix + ("    " if is_last else "|   "))
+    # Group entries by their (single-segment) scope root.
+    groups: dict[str, list[BookCatalogEntry]] = {}
+    for entry in entries:
+        root_segments = _entry_tree_root(entry)
+        root_name = root_segments[0] if root_segments else "系统知识库"
+        groups.setdefault(root_name, []).append(entry)
 
-    _render(tree)
-    rendered = "\n".join(lines)
+    ordered_root_names = [name for name in TREE_SCOPE_ROOT_ORDER if name in groups]
+    ordered_root_names.extend(
+        sorted(name for name in groups if name not in TREE_SCOPE_ROOT_ORDER)
+    )
+
+    sections: list[str] = []
+    for root_name in ordered_root_names:
+        group_entries = groups[root_name]
+        subtree_lines = _render_folder_subtree(group_entries)
+        if not subtree_lines:
+            continue
+        total = sum(max(0, int(getattr(e, "page_count", 0) or 0)) for e in group_entries)
+        header_suffix = f"（{_format_chinese_page_count(total)}）" if total > 0 else ""
+        sections.append(f"【{root_name}】{header_suffix}\n" + "\n".join(subtree_lines))
+
+    rendered = "\n\n".join(sections) or None
+    if rendered is None:
+        return None
+
     logger.info(
-        "Book catalog tree rendered: entries=%s include_scope_roots=%s lines=%s elapsed_ms=%.1f",
+        "Book catalog tree rendered: entries=%s include_scope_roots=True sections=%s lines=%s elapsed_ms=%.1f",
         len(entries),
-        include_scope_roots,
-        len(lines),
+        len(sections),
+        rendered.count("\n") + 1,
         (time.perf_counter() - started_at) * 1000,
     )
     return rendered

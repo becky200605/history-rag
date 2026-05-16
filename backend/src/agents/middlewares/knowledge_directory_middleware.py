@@ -12,12 +12,12 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
 from langchain_core.messages import HumanMessage
 
+from src.community.knowledge_base.book_metadata import normalize_folder_path
 from src.community.knowledge_base.catalog import (
     filter_book_catalog_entries,
     list_book_catalog,
     render_book_catalog_directory_tree,
 )
-from src.community.knowledge_base.book_metadata import normalize_folder_path
 from src.community.knowledge_base.common import resolve_project_path
 from src.community.knowledge_base.folder_registry import list_folder_paths
 from src.config.knowledge_base_config import get_knowledge_base_config
@@ -195,7 +195,7 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
     def _build_directory_block(self, entries: list) -> HumanMessage | None:
         started_at = time.perf_counter()
         try:
-            directory_tree = render_book_catalog_directory_tree(entries)
+            directory_tree = render_book_catalog_directory_tree(entries, include_scope_roots=True)
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.warning("Failed to build knowledge directory tree: %s", exc)
             return None
@@ -218,13 +218,20 @@ class KnowledgeDirectoryMiddleware(AgentMiddleware[AgentState]):
             content=(
                 f"{KNOWLEDGE_DIRECTORY_TAG}\n"
                 "下面是当前可见知识资料的目录树。它是导航线索，不是证据。"
+                "目录树**只列文件夹**、不列书名 —— 文件夹后括号里的「X页」是该文件夹及其全部子目录所含书籍的页数合计，"
+                "粗略反映该话题在库中的厚度；具体书名/`doc_id` 不在这里展示，需要时由子任务用 `book_search` 取。"
+                "目录被分成 `【当前线程书籍】` / `【用户书籍】` / `【系统知识库】` 三段："
+                "**优先尊重「当前线程书籍」和「用户书籍」分支下的资料**，"
+                "因为那是用户主动上传/整理的；「系统知识库」是共享语料，用于补充而不是替代。"
+                "`【…】` 只是分段标题、不是路径段；填 `knowledge_folders` 时只能填 `【…】` 下面那棵子树里的目录名（如 `财政史/清代`），"
+                "不要把 `用户书籍`、`系统知识库` 这类段名当成路径前缀拼上去。"
                 "在启用子任务时，主任务不要自行调用 `book_search` 选书；主任务只判断已有历史结果是否足够，"
                 "若不足则按任务目标、证据缺口、阶段、人物、机构或机制派发子任务。"
                 "`knowledge_search` 现在只检索历史主任务/子任务结果，不检索书籍正文；不要把书籍 `doc_ids` 传给 `knowledge_search`。"
                 "子任务会用 `book_search` 选择相关资料、检查 metadata（尤其 `语言` / `language_hint`、目录、摘要），"
                 "再用 `knowledge_locate` 读目录、章节页、命中页或连续页正文。"
                 "如果涉及多本书，不要在主任务里继续串行深挖，也不要把任务预先硬绑到某本书。"
-                "不要填写 `用户书籍`、`当前线程书籍`、`核心通用书`、`专题支撑书`、`补充材料`、`参考工具书` 这类层级标签。"
+                "不要填写「核心通用书」「专题支撑书」「补充材料」「参考工具书」这类目录树里未出现的层级标签 —— 它们是内部桶概念，不是可检索目录。"
                 "`knowledge_folders` 是知识库逻辑目录，不是 sandbox / 容器 / 本地文件系统路径；不要用 `ls`、`read_file`、`bash` 等其他工具去推断。\n\n"
                 f"{directory_tree}\n"
                 "</knowledge_directory_tree>"

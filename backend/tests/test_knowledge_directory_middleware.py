@@ -80,6 +80,7 @@ def test_knowledge_directory_middleware_injects_tree_into_hidden_user_message(mo
             search_tokens=["晚清财政史料", "财政史", "清代", "晚清"],
             type="user",
             folder_path="财政史/清代/晚清",
+            page_count=420,
         )
     ]
     monkeypatch.setattr(
@@ -109,13 +110,19 @@ def test_knowledge_directory_middleware_injects_tree_into_hidden_user_message(mo
     assert "base-system" in str(system_message.content)
     messages = captured["messages"]
     assert isinstance(messages[0], HumanMessage)
-    assert "<knowledge_directory_tree>" in str(messages[0].content)
-    assert "`knowledge_folders`" in str(messages[0].content)
-    assert "不是 sandbox / 容器 / 本地文件系统路径" in str(messages[0].content)
-    assert "不要填写 `用户书籍`" in str(messages[0].content)
-    assert "用户书籍/" not in str(messages[0].content)
-    assert "财政史/" in str(messages[0].content)
-    assert "晚清财政史料 [doc_id=uk_1]" in str(messages[0].content)
+    content = str(messages[0].content)
+    assert "<knowledge_directory_tree>" in content
+    assert "`knowledge_folders`" in content
+    assert "不是 sandbox / 容器 / 本地文件系统路径" in content
+    # Scope sections are rendered as 【…】 headers, NOT as path segments. Book
+    # titles / doc_id are no longer leaked into the tree — the agent must use
+    # ``book_search`` to look those up.
+    assert "【用户书籍】" in content
+    assert "用户书籍/" not in content  # not a path segment
+    assert "财政史/" in content
+    assert "(420页)" in content  # rollup page count at the leaf folder
+    assert "晚清财政史料" not in content
+    assert "doc_id=uk_1" not in content
 
 
 def test_knowledge_directory_middleware_does_not_mistake_prompt_reference_for_injected_tree(monkeypatch) -> None:
@@ -160,8 +167,11 @@ def test_knowledge_directory_middleware_does_not_mistake_prompt_reference_for_in
     assert result == "ok"
     messages = captured["messages"]
     assert isinstance(messages[0], HumanMessage)
-    assert str(messages[0].content).startswith("<knowledge_directory_tree>")
-    assert "doc_id=g_1" in str(messages[0].content)
+    content = str(messages[0].content)
+    assert content.startswith("<knowledge_directory_tree>")
+    # The fixture entry's folder lands under the 【系统知识库】 section.
+    assert "【系统知识库】" in content
+    assert "清史/" in content
 
 
 def test_knowledge_directory_middleware_injects_empty_folder_candidates(monkeypatch, tmp_path) -> None:

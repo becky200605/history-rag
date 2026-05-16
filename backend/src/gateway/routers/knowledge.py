@@ -3,7 +3,7 @@ import logging
 import mimetypes
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -155,19 +155,87 @@ def _submit_global_ocr(filename: str) -> None:
     _ensure_global_queue_workers_started()
     with _global_inflight_lock:
         if filename in _global_inflight_ocr:
+            logger.info(
+                "[ocr-task] %s SUBMIT skipped: already inflight (inflight=%s)",
+                filename,
+                len(_global_inflight_ocr),
+            )
             return
         _global_inflight_ocr.add(filename)
         executor = _global_ocr_executor
+        inflight_after = len(_global_inflight_ocr)
     assert executor is not None  # _ensure_global_queue_workers_started guarantees it
-    executor.submit(_run_global_ocr_task, filename)
+    logger.info(
+        "[ocr-task] %s SUBMIT accepted (inflight=%s, workers=%s)",
+        filename,
+        inflight_after,
+        _global_ocr_executor_workers,
+    )
+    future = executor.submit(_run_global_ocr_task, filename)
+    # ThreadPoolExecutor silently swallows exceptions raised inside the worker
+    # if no one calls ``Future.result()``. Attach a callback so any unhandled
+    # exception from ``_run_global_ocr_task`` shows up in logs instead of
+    # disappearing into the void. Tolerate stubs (used in tests) whose
+    # ``submit`` returns ``None``.
+    if future is not None and hasattr(future, "add_done_callback"):
+        def _log_future_outcome(fut: "Future[None]", _filename: str = filename) -> None:
+            exc = fut.exception()
+            if exc is not None:
+                logger.error(
+                    "[ocr-task] %s WORKER raised uncaught exception: %s: %s",
+                    _filename,
+                    type(exc).__name__,
+                    exc,
+                    exc_info=exc,
+                )
+
+        future.add_done_callback(_log_future_outcome)
 
 
 def _run_global_ocr_task(filename: str) -> None:
+    started_at = time.monotonic()
+    logger.info("[ocr-task] %s WORKER picked up task (start)", filename)
     try:
         _process_single_global_ocr(filename)
+        logger.info(
+            "[ocr-task] %s WORKER finished cleanly in %.2fs",
+            filename,
+            time.monotonic() - started_at,
+        )
+    except BaseException as exc:
+        # ``_process_single_global_ocr`` already wraps its OCR/parse phase in a
+        # try/except, but pre- and post-OCR steps (load record, initial save,
+        # final save) are NOT wrapped. Anything escaping from those must still
+        # be marked on the record AND surfaced in logs — otherwise the file
+        # silently disappears from view.
+        logger.exception(
+            "[ocr-task] %s WORKER unexpected exception after %.2fs: %s",
+            filename,
+            time.monotonic() - started_at,
+            exc,
+        )
+        try:
+            record = _load_global_record(filename) or {}
+            record = _mark_global_record_failed(
+                record,
+                f"worker crashed: {type(exc).__name__}: {exc}",
+            )
+            _save_global_record(filename, record)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception(
+                "[ocr-task] %s failed to persist failure record after worker crash",
+                filename,
+            )
+        raise
     finally:
         with _global_inflight_lock:
             _global_inflight_ocr.discard(filename)
+            inflight_after = len(_global_inflight_ocr)
+        logger.info(
+            "[ocr-task] %s WORKER inflight marker released (remaining inflight=%s)",
+            filename,
+            inflight_after,
+        )
 
 
 def _recover_pending_global_jobs() -> None:
@@ -835,15 +903,25 @@ def _mark_global_record_pending(record: dict[str, Any], error: str) -> dict[str,
 
 
 def _process_single_global_ocr(filename: str) -> None:
+    logger.info("[ocr-step] %s STEP 1: loading record", filename)
     docs_dir = get_global_docs_dir()
     ingestion_dir = get_global_ingestion_dir()
     metadata_config = get_knowledge_base_config().book_metadata
     record = _load_global_record(filename)
-    if not record or not record.get("indexable"):
+    if not record:
+        logger.warning("[ocr-step] %s ABORT: record not found in ingestion dir", filename)
+        return
+    if not record.get("indexable"):
+        logger.warning(
+            "[ocr-step] %s ABORT: record.indexable=False (parse_status=%s)",
+            filename,
+            record.get("parse_status"),
+        )
         return
 
     file_path = docs_dir / filename
     if not file_path.exists():
+        logger.error("[ocr-step] %s ABORT: source file missing on disk: %s", filename, file_path)
         record = _mark_global_record_failed(record, "source file missing")
         _save_global_record(filename, record)
         return
@@ -851,6 +929,7 @@ def _process_single_global_ocr(filename: str) -> None:
     record["parse_status"] = "parsing"
     record["error"] = None
     _save_global_record(filename, record)
+    logger.info("[ocr-step] %s STEP 2: marked parsing, status saved", filename)
 
     try:
         file_ext = file_path.suffix.lower()
@@ -858,6 +937,11 @@ def _process_single_global_ocr(filename: str) -> None:
             hints = record.get("hints") or {}
             record["parse_method"] = "ocr_pdf_mineru_grpc"
             _save_global_record(filename, record)
+            logger.info(
+                "[ocr-step] %s STEP 3: calling MinerU gRPC (file_ext=%s)",
+                filename,
+                file_ext,
+            )
             structured_payload = build_structured_document_from_mineru_grpc(
                 file_path,
                 title=record["display_title"],
@@ -865,10 +949,20 @@ def _process_single_global_ocr(filename: str) -> None:
                 hints=hints,
                 language_hint=hints.get("language_hint"),
             )
+            logger.info(
+                "[ocr-step] %s STEP 4: gRPC returned payload (pages=%s); writing structured JSON",
+                filename,
+                len((structured_payload or {}).get("pages") or []),
+            )
             structured_path = save_structured_document(
                 ingestion_dir,
                 filename,
                 structured_payload,
+            )
+            logger.info(
+                "[ocr-step] %s STEP 5: structured JSON written to %s; generating book metadata",
+                filename,
+                structured_path,
             )
             maybe_generate_book_metadata(
                 structured_payload=structured_payload,
@@ -877,6 +971,7 @@ def _process_single_global_ocr(filename: str) -> None:
                 output_dir=docs_dir,
                 config=metadata_config,
             )
+            logger.info("[ocr-step] %s STEP 6: book metadata done; marking parsed", filename)
             record = _mark_global_record_parsed(
                 record,
                 structured_filename=structured_path.name,
@@ -884,11 +979,17 @@ def _process_single_global_ocr(filename: str) -> None:
                 preview_filename=filename if file_ext in INDEXABLE_EXTENSIONS else None,
             )
         else:
+            logger.info(
+                "[ocr-step] %s STEP 3 (alt): non-parseable extension %s, marking uploaded",
+                filename,
+                file_ext,
+            )
             record["parse_status"] = "uploaded"
 
         _save_global_record(filename, record)
+        logger.info("[ocr-step] %s STEP 7: final record saved (parse_status=%s)", filename, record.get("parse_status"))
     except Exception as exc:
-        logger.exception("Failed to OCR/parse global upload %s: %s", filename, exc)
+        logger.exception("[ocr-step] %s FAILED inside try block: %s", filename, exc)
         record = _mark_global_record_failed(record, f"parse failed: {exc}")
         _save_global_record(filename, record)
 

@@ -407,8 +407,8 @@ knowledge_base:
     api_token: null
     model_version: $MINERU_MODEL_VERSION
     request_timeout: ${MINERU_GRPC_REQUEST_TIMEOUT:-14400}
-    keepalive_time_ms: ${MINERU_GRPC_KEEPALIVE_TIME_MS:-180000}
-    keepalive_timeout_ms: ${MINERU_GRPC_KEEPALIVE_TIMEOUT_MS:-180000}
+    keepalive_time_ms: ${MINERU_GRPC_KEEPALIVE_TIME_MS:-20000}
+    keepalive_timeout_ms: ${MINERU_GRPC_KEEPALIVE_TIMEOUT_MS:-20000}
     keepalive_permit_without_calls: ${MINERU_GRPC_KEEPALIVE_PERMIT_WITHOUT_CALLS:-true}
     max_message_bytes: ${MINERU_GRPC_MAX_MESSAGE_BYTES:-536870912}
     enable_pdf_chunking: ${MINERU_GRPC_ENABLE_PDF_CHUNKING:-true}

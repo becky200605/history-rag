@@ -125,20 +125,17 @@ def _build_channel(config: MineruConfig) -> grpc.Channel:
 def _watch_channel_connectivity(channel: grpc.Channel, tag: str) -> threading.Event:
     """Log every channel connectivity transition for the lifetime of ``channel``.
 
-    Returns an ``Event`` the caller can set to stop the watcher early.
+    Returns an ``Event`` the caller can set to stop the watcher early. The
+    callback is registered exactly once — ``grpc.Channel.subscribe`` is sticky
+    (each state change re-invokes the callback automatically), so resubscribing
+    inside the callback would produce duplicate log lines.
     """
     stop_event = threading.Event()
 
     def _on_state(state: grpc.ChannelConnectivity) -> None:
-        logger.info("[mineru-grpc] %s channel state -> %s", tag, state.name)
         if stop_event.is_set():
             return
-        if state is grpc.ChannelConnectivity.SHUTDOWN:
-            return
-        try:
-            channel.subscribe(_on_state, try_to_connect=False)
-        except Exception:  # pragma: no cover - defensive
-            logger.debug("[mineru-grpc] %s failed to resubscribe to channel state", tag, exc_info=True)
+        logger.info("[mineru-grpc] %s channel state -> %s", tag, state.name)
 
     try:
         channel.subscribe(_on_state, try_to_connect=True)
@@ -199,26 +196,34 @@ def _parse_pdf_response_via_mineru_grpc(
             )
             return response
     except grpc.RpcError as exc:
-        # ``exc`` is also a Call object — pull every diagnostic we can.
-        code = exc.code() if callable(getattr(exc, "code", None)) else None
-        details = exc.details() if callable(getattr(exc, "details", None)) else None
-        debug_error = getattr(exc, "debug_error_string", lambda: None)()
-        initial_md = list(getattr(exc, "initial_metadata", lambda: [])() or [])
-        trailing_md = list(getattr(exc, "trailing_metadata", lambda: [])() or [])
+        # Pull diagnostics defensively — any of these accessors can in theory
+        # raise, and we'd rather log "unknown" than mask the original RpcError.
+        def _safe(getter, default=None):
+            try:
+                value = getter()
+                return value if value is not None else default
+            except Exception:  # pragma: no cover - defensive
+                return default
+
+        code = _safe(lambda: exc.code())
+        details = _safe(lambda: exc.details(), default="")
+        debug_error = _safe(lambda: exc.debug_error_string(), default="")
+        initial_md = _safe(lambda: list(exc.initial_metadata() or []), default=[])
+        trailing_md = _safe(lambda: list(exc.trailing_metadata() or []), default=[])
         elapsed = time.monotonic() - started_at
+        code_name = code.name if code is not None else "UNKNOWN"
         logger.error(
             "[mineru-grpc] %s FAILED after %.2fs code=%s details=%r initial_md=%s trailing_md=%s debug_error=%s",
             tag,
             elapsed,
-            code.name if code is not None else "UNKNOWN",
+            code_name,
             details,
             initial_md,
             trailing_md,
             debug_error,
         )
         raise RuntimeError(
-            f"MinerU gRPC failed after {elapsed:.1f}s: "
-            f"{code.name if code is not None else 'UNKNOWN'} {details}"
+            f"MinerU gRPC failed after {elapsed:.1f}s: {code_name} {details}"
         ) from exc
 
 

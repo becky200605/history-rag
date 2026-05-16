@@ -117,14 +117,24 @@ class MineruConfig(BaseModel):
         description="Timeout in seconds for the MinerU gRPC request, tuned for large OCR jobs.",
     )
     keepalive_time_ms: int = Field(
-        default=180000,
+        default=20000,
         ge=1,
-        description="Interval in milliseconds between gRPC keepalive pings for MinerU during long OCR jobs.",
+        description=(
+            "Interval in milliseconds between gRPC keepalive pings. Tuned short "
+            "(20s) so that long server-side OCR queueing does not let any "
+            "intermediary (or the OS) decide the TCP connection is idle. "
+            "Override via MINERU_GRPC_KEEPALIVE_TIME_MS."
+        ),
     )
     keepalive_timeout_ms: int = Field(
-        default=180000,
+        default=20000,
         ge=1,
-        description="Timeout in milliseconds for gRPC keepalive ping acknowledgements from MinerU.",
+        description=(
+            "Timeout in milliseconds for gRPC keepalive ping acknowledgements. "
+            "If the server fails to ack within this window we treat the "
+            "connection as dead and the call surfaces an RpcError that can be "
+            "retried instead of hanging forever."
+        ),
     )
     keepalive_permit_without_calls: bool = Field(
         default=True,

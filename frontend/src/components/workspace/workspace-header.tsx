@@ -239,6 +239,7 @@ export function WorkspaceHeader({ className }: { className?: string }) {
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          {/* test */}
           {/* <SidebarMenuItem>
             <SidebarMenuButton
               isActive={isKnowledgeDebugActive}

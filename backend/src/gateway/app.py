@@ -46,6 +46,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     config = get_gateway_config()
     logger.info(f"Starting API Gateway on {config.host}:{config.port}")
 
+    # Resume any global-knowledge documents the previous process left in
+    # ``parsing`` / ``queued_ocr`` / ``failed`` state. Without this, a redeploy
+    # leaves those docs stranded until someone uploads again (which is what
+    # triggers the lazy executor bootstrap). Failed docs are bounded by
+    # ``MAX_FAILED_RETRIES`` so a broken PDF cannot loop forever.
+    knowledge.bootstrap_global_ocr_recovery()
+
     # NOTE: MCP tools initialization is NOT done here because:
     # 1. Gateway doesn't use MCP tools - they are used by Agents in the LangGraph Server
     # 2. Gateway and LangGraph Server are separate processes with independent caches

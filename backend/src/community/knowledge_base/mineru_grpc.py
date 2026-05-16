@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -103,10 +105,46 @@ def _build_channel(config: MineruConfig) -> grpc.Channel:
         ("grpc.http2.min_time_between_pings_ms", config.keepalive_time_ms),
         ("grpc.http2.min_ping_interval_without_data_ms", config.keepalive_time_ms),
     ]
+    logger.info(
+        "[mineru-grpc] building channel target=%s tls=%s max_message_bytes=%s "
+        "keepalive_time_ms=%s keepalive_timeout_ms=%s permit_without_calls=%s request_timeout=%s",
+        config.target,
+        config.use_tls,
+        max_message_bytes,
+        config.keepalive_time_ms,
+        config.keepalive_timeout_ms,
+        config.keepalive_permit_without_calls,
+        config.request_timeout,
+    )
     if config.use_tls:
         credentials = grpc.ssl_channel_credentials()
         return grpc.secure_channel(config.target, credentials, options=options)
     return grpc.insecure_channel(config.target, options=options)
+
+
+def _watch_channel_connectivity(channel: grpc.Channel, tag: str) -> threading.Event:
+    """Log every channel connectivity transition for the lifetime of ``channel``.
+
+    Returns an ``Event`` the caller can set to stop the watcher early.
+    """
+    stop_event = threading.Event()
+
+    def _on_state(state: grpc.ChannelConnectivity) -> None:
+        logger.info("[mineru-grpc] %s channel state -> %s", tag, state.name)
+        if stop_event.is_set():
+            return
+        if state is grpc.ChannelConnectivity.SHUTDOWN:
+            return
+        try:
+            channel.subscribe(_on_state, try_to_connect=False)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("[mineru-grpc] %s failed to resubscribe to channel state", tag, exc_info=True)
+
+    try:
+        channel.subscribe(_on_state, try_to_connect=True)
+    except Exception:  # pragma: no cover - defensive
+        logger.debug("[mineru-grpc] %s could not subscribe to channel state", tag, exc_info=True)
+    return stop_event
 
 
 def _parse_pdf_response_via_mineru_grpc(
@@ -116,22 +154,72 @@ def _parse_pdf_response_via_mineru_grpc(
     hints: dict[str, str] | None = None,
     language_hint: str | None = None,
 ) -> mineru_pb2.ParsePdfResponse:
+    tag = f"ParsePdf({file_path.name})"
+    try:
+        request_size = file_path.stat().st_size
+    except OSError:
+        request_size = -1
     request = _build_parse_pdf_request(
         file_path=file_path,
         config=config,
         hints=hints,
         language_hint=language_hint,
     )
+    started_at = time.monotonic()
+    logger.info(
+        "[mineru-grpc] %s request prepared file_size_bytes=%s hints=%s language_hint=%r",
+        tag,
+        request_size,
+        hints,
+        language_hint,
+    )
     try:
         with _build_channel(config) as channel:
+            stop_watch = _watch_channel_connectivity(channel, tag)
             stub = mineru_pb2_grpc.MineruPdfExtractorStub(channel)
-            return stub.ParsePdf(
-                request,
-                timeout=config.request_timeout,
-                metadata=_build_metadata(config),
+            send_at = time.monotonic()
+            logger.info(
+                "[mineru-grpc] %s SENDING request (waited %.2fs for channel setup, deadline=%ss)",
+                tag,
+                send_at - started_at,
+                config.request_timeout,
             )
+            try:
+                response = stub.ParsePdf(
+                    request,
+                    timeout=config.request_timeout,
+                    metadata=_build_metadata(config),
+                )
+            finally:
+                stop_watch.set()
+            logger.info(
+                "[mineru-grpc] %s RESPONSE received in %.2fs (channel-send→response)",
+                tag,
+                time.monotonic() - send_at,
+            )
+            return response
     except grpc.RpcError as exc:
-        raise RuntimeError(f"MinerU gRPC failed: {exc.code().name} {exc.details()}") from exc
+        # ``exc`` is also a Call object — pull every diagnostic we can.
+        code = exc.code() if callable(getattr(exc, "code", None)) else None
+        details = exc.details() if callable(getattr(exc, "details", None)) else None
+        debug_error = getattr(exc, "debug_error_string", lambda: None)()
+        initial_md = list(getattr(exc, "initial_metadata", lambda: [])() or [])
+        trailing_md = list(getattr(exc, "trailing_metadata", lambda: [])() or [])
+        elapsed = time.monotonic() - started_at
+        logger.error(
+            "[mineru-grpc] %s FAILED after %.2fs code=%s details=%r initial_md=%s trailing_md=%s debug_error=%s",
+            tag,
+            elapsed,
+            code.name if code is not None else "UNKNOWN",
+            details,
+            initial_md,
+            trailing_md,
+            debug_error,
+        )
+        raise RuntimeError(
+            f"MinerU gRPC failed after {elapsed:.1f}s: "
+            f"{code.name if code is not None else 'UNKNOWN'} {details}"
+        ) from exc
 
 
 def _count_pdf_pages(file_path: Path) -> int:

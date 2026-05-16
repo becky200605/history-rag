@@ -64,11 +64,30 @@ logger = logging.getLogger(__name__)
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 INDEXABLE_EXTENSIONS = {".md", ".txt"}
+
+# Recovery is opinionated: we re-queue anything that a prior process left
+# mid-flight, including ``parsing`` (the worker died mid-OCR) and ``failed``
+# (transient gRPC outage, container restart, etc.). To avoid burning gRPC time
+# on genuinely corrupt PDFs, ``failed`` records are auto-recovered at most
+# ``MAX_FAILED_RETRIES`` total failures — past that the UI's manual retry
+# button must be hit (which resets the counter).
+RECOVERABLE_PARSE_STATUSES = frozenset(
+    {"queued", "queued_ocr", "pending_parse", "parsing", "failed"}
+)
+MAX_FAILED_RETRIES = 3
+
 _knowledge_operation_lock = threading.Lock()
 _global_inflight_lock = threading.Lock()
 _global_inflight_ocr: set[str] = set()
+# Two executors so startup-recovery work cannot starve fresh user uploads:
+#   * ``_global_ocr_executor`` — high priority, sized by
+#     ``mineru.max_concurrent_ocr_jobs``. Receives uploads / manual retries.
+#   * ``_recovery_ocr_executor`` — low priority, single worker. Drains the
+#     backlog of ``parsing`` / ``queued_ocr`` / ``failed`` records left by a
+#     prior process without blocking new requests.
 _global_ocr_executor: ThreadPoolExecutor | None = None
 _global_ocr_executor_workers: int = 0
+_recovery_ocr_executor: ThreadPoolExecutor | None = None
 
 
 def _encode_url_path(url: str | None) -> str | None:
@@ -152,13 +171,46 @@ def _run_global_ocr_task(filename: str) -> None:
 
 
 def _recover_pending_global_jobs() -> None:
+    """Re-queue any documents the previous process left mid-flight.
+
+    Catches:
+    - ``queued`` / ``queued_ocr`` / ``pending_parse``: never started
+    - ``parsing``: worker died mid-OCR, no one will finish it
+    - ``failed``: previous attempt errored — give it up to ``MAX_FAILED_RETRIES``
+      total tries before requiring manual intervention
+
+    For ``parsing`` / ``failed`` records we also normalise the status back to
+    ``queued_ocr`` so the UI and listing endpoints reflect reality (otherwise
+    a ``parsing`` record sits there forever pretending work is in progress).
+    """
+    recovered = 0
+    skipped_failed = 0
     for record in _list_global_records():
         filename = record.get("source_filename")
         if not filename or not record.get("indexable"):
             continue
         status = str(record.get("parse_status") or "")
-        if status in {"queued", "queued_ocr", "pending_parse"}:
-            _submit_global_ocr(str(filename))
+        if status not in RECOVERABLE_PARSE_STATUSES:
+            continue
+        if status == "failed":
+            retry_count = int(record.get("retry_count") or 0)
+            if retry_count >= MAX_FAILED_RETRIES:
+                skipped_failed += 1
+                continue
+        # Normalise the status before resubmission so listing endpoints stop
+        # claiming "still parsing" for a record whose worker is long gone.
+        if status in {"parsing", "failed", "queued"}:
+            record["parse_status"] = "queued_ocr"
+            record["error"] = None
+            _save_global_record(str(filename), record)
+        _submit_global_ocr(str(filename))
+        recovered += 1
+    if recovered or skipped_failed:
+        logger.info(
+            "Global OCR recovery scan complete: resubmitted=%s skipped_failed_at_cap=%s",
+            recovered,
+            skipped_failed,
+        )
 
 
 def _current_global_queue_positions() -> dict[str, int]:
@@ -174,6 +226,27 @@ def _current_global_queue_positions() -> dict[str, int]:
         return {filename: 1 for filename in _global_inflight_ocr}
 
 
+def bootstrap_global_ocr_recovery() -> None:
+    """Run once at process startup to resume any in-flight OCR work.
+
+    Recovery is normally lazy — it triggers the first time something is
+    submitted. That means a freshly-deployed process which received no uploads
+    would leave previously-queued docs stuck. This entry point makes recovery
+    eager so users do not need to manually poke the system after a redeploy.
+    """
+    try:
+        config = get_knowledge_base_config()
+    except Exception:
+        logger.exception("Failed to load knowledge base config during OCR recovery bootstrap")
+        return
+    if not getattr(config, "enabled", False):
+        logger.info("Knowledge base disabled; skipping global OCR recovery bootstrap")
+        return
+    try:
+        _ensure_global_queue_workers_started()
+        logger.info("Global OCR recovery bootstrap completed")
+    except Exception:
+        logger.exception("Global OCR recovery bootstrap failed")
 
 
 class KnowledgeBaseStatus(BaseModel):
@@ -723,6 +796,7 @@ def _mark_global_record_parsed(
 
 
 def _mark_global_record_failed(record: dict[str, Any], error: str) -> dict[str, Any]:
+    previous_retry_count = int(record.get("retry_count") or 0)
     record.update(
         {
             "parse_status": "failed",
@@ -734,6 +808,10 @@ def _mark_global_record_failed(record: dict[str, Any], error: str) -> dict[str, 
             "index_target_artifact_url": None,
             "index_target_format": None,
             "error": error,
+            # Bumped every time a parse attempt fails. Capped by
+            # ``MAX_FAILED_RETRIES`` during restart recovery so corrupt PDFs do
+            # not loop forever; manual retry / reparse resets it to 0.
+            "retry_count": previous_retry_count + 1,
         }
     )
     return record
@@ -1404,6 +1482,7 @@ async def retry_global_knowledge_file(filename: str) -> dict:
 
     record["error"] = None
     record["parse_status"] = "queued_ocr"
+    record["retry_count"] = 0  # explicit user intervention — start counting fresh
     _save_global_record(source_filename, record)
     _submit_global_ocr(source_filename)
     return {
@@ -1438,6 +1517,7 @@ async def reparse_global_knowledge_file(filename: str) -> dict:
 
     record["error"] = None
     record["parse_status"] = "queued_ocr"
+    record["retry_count"] = 0  # explicit user intervention — start counting fresh
     _save_global_record(source_filename, record)
     _submit_global_ocr(source_filename)
     return {

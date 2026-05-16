@@ -530,3 +530,129 @@ def test_submit_global_ocr_is_idempotent_for_inflight_filename(monkeypatch) -> N
     knowledge_router._submit_global_ocr("other.pdf")
 
     assert submitted == ["dup.pdf", "other.pdf"]
+
+
+def test_recover_pending_global_jobs_resubmits_parsing_and_failed(monkeypatch) -> None:
+    """Restart recovery picks up everything left mid-flight, including parsing/failed."""
+
+    records: dict[str, dict] = {
+        "queued.pdf":        {"source_filename": "queued.pdf",        "indexable": True, "parse_status": "queued_ocr"},
+        "pending.pdf":       {"source_filename": "pending.pdf",       "indexable": True, "parse_status": "pending_parse"},
+        "crashed.pdf":       {"source_filename": "crashed.pdf",       "indexable": True, "parse_status": "parsing"},
+        "failed_once.pdf":   {"source_filename": "failed_once.pdf",   "indexable": True, "parse_status": "failed", "retry_count": 1, "error": "boom"},
+        "failed_capped.pdf": {"source_filename": "failed_capped.pdf", "indexable": True, "parse_status": "failed", "retry_count": 3},
+        "done.pdf":          {"source_filename": "done.pdf",          "indexable": True, "parse_status": "parsed"},
+        "untracked.pdf":     {"source_filename": "untracked.pdf",     "indexable": False, "parse_status": "uploaded"},
+    }
+    submitted: list[str] = []
+
+    monkeypatch.setattr(knowledge_router, "_list_global_records", lambda: [dict(r) for r in records.values()])
+    monkeypatch.setattr(
+        knowledge_router,
+        "_save_global_record",
+        lambda filename, record: records.__setitem__(filename, dict(record)),
+    )
+    monkeypatch.setattr(knowledge_router, "_submit_global_ocr", submitted.append)
+
+    knowledge_router._recover_pending_global_jobs()
+
+    # Files that should be resubmitted.
+    assert sorted(submitted) == ["crashed.pdf", "failed_once.pdf", "pending.pdf", "queued.pdf"]
+    # Status normalisation: parsing/failed records must not still claim
+    # "parsing" / "failed" — otherwise the UI lies about what is happening.
+    assert records["crashed.pdf"]["parse_status"] == "queued_ocr"
+    assert records["crashed.pdf"]["error"] is None
+    assert records["failed_once.pdf"]["parse_status"] == "queued_ocr"
+    assert records["failed_once.pdf"]["error"] is None
+    # Failed-with-retries kept its retry_count — only manual user retry resets it.
+    assert records["failed_once.pdf"]["retry_count"] == 1
+    # The capped-out record is left untouched (still "failed", still retry_count=3).
+    assert records["failed_capped.pdf"]["parse_status"] == "failed"
+    assert records["failed_capped.pdf"]["retry_count"] == 3
+    # Already-parsed / non-indexable files are untouched.
+    assert records["done.pdf"]["parse_status"] == "parsed"
+    assert records["untracked.pdf"]["parse_status"] == "uploaded"
+
+
+def test_mark_global_record_failed_increments_retry_count() -> None:
+    record = {"source_filename": "a.pdf", "parse_status": "parsing", "retry_count": 0}
+
+    updated = knowledge_router._mark_global_record_failed(record, "ocr exploded")
+
+    assert updated["parse_status"] == "failed"
+    assert updated["retry_count"] == 1
+    assert updated["error"] == "ocr exploded"
+
+    # Second failure bumps it again.
+    updated = knowledge_router._mark_global_record_failed(updated, "ocr exploded again")
+    assert updated["retry_count"] == 2
+
+
+def test_manual_retry_resets_failed_record_retry_count(monkeypatch, tmp_path) -> None:
+    """A user clicking Retry signals 'try this fresh' — counter must reset."""
+
+    import asyncio
+
+    source_path = tmp_path / "bad.pdf"
+    source_path.write_text("pdf", encoding="utf-8")
+    records = {
+        "bad.pdf": {
+            "source_filename": "bad.pdf",
+            "indexable": True,
+            "parse_status": "failed",
+            "retry_count": 3,
+            "error": "auto-recovery gave up",
+        }
+    }
+    submitted: list[str] = []
+
+    monkeypatch.setattr(knowledge_router, "get_knowledge_base_config", lambda: SimpleNamespace(enabled=True))
+    monkeypatch.setattr(
+        knowledge_router,
+        "_find_global_record",
+        lambda filename: dict(records[filename]) if filename in records else None,
+    )
+    monkeypatch.setattr(knowledge_router, "get_global_docs_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        knowledge_router,
+        "_save_global_record",
+        lambda filename, record: records.__setitem__(filename, dict(record)),
+    )
+    monkeypatch.setattr(knowledge_router, "_ensure_global_queue_workers_started", lambda: None)
+    monkeypatch.setattr(knowledge_router, "_submit_global_ocr", submitted.append)
+
+    result = asyncio.run(_call_retry_global_knowledge_file("bad.pdf"))
+
+    assert result["success"] is True
+    assert records["bad.pdf"]["parse_status"] == "queued_ocr"
+    assert records["bad.pdf"]["retry_count"] == 0
+    assert records["bad.pdf"]["error"] is None
+    assert submitted == ["bad.pdf"]
+
+
+def test_bootstrap_global_ocr_recovery_no_ops_when_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(knowledge_router, "get_knowledge_base_config", lambda: SimpleNamespace(enabled=False))
+    called: list[str] = []
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_global_queue_workers_started",
+        lambda: called.append("started"),
+    )
+
+    knowledge_router.bootstrap_global_ocr_recovery()
+
+    assert called == []
+
+
+def test_bootstrap_global_ocr_recovery_starts_workers_when_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(knowledge_router, "get_knowledge_base_config", lambda: SimpleNamespace(enabled=True))
+    called: list[str] = []
+    monkeypatch.setattr(
+        knowledge_router,
+        "_ensure_global_queue_workers_started",
+        lambda: called.append("started"),
+    )
+
+    knowledge_router.bootstrap_global_ocr_recovery()
+
+    assert called == ["started"]

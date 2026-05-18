@@ -165,7 +165,7 @@ class MineruConfig(BaseModel):
         description="Automatically split PDFs when file size exceeds this threshold in bytes.",
     )
     max_concurrent_ocr_jobs: int = Field(
-        default=4,
+        default=12,
         ge=1,
         description="Maximum number of concurrent OCR gRPC requests issued from this process.",
     )

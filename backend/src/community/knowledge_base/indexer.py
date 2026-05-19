@@ -801,7 +801,11 @@ def rebuild_global_knowledge_index() -> int:
             source_filename = payload.get("source_filename")
             if source_filename:
                 records_by_source_filename[str(source_filename)] = payload
-            target_path = payload.get("index_target_path")
+            target_path = payload.get("index_target_path") or (
+                str(ingestion_dir / payload["index_target_filename"])
+                if payload.get("index_target_filename")
+                else None
+            )
             if not payload.get("indexable") or not target_path:
                 continue
             candidate = Path(str(target_path))
@@ -884,10 +888,17 @@ def _load_global_documents_for_sources(
         doc_id = derive_global_doc_id(docs_root, docs_root / str(source_filename))
         replace_doc_ids.append(doc_id)
 
-        if not record.get("indexable") or not record.get("index_target_path"):
+        if not record.get("indexable"):
+            continue
+        raw_target = record.get("index_target_path") or (
+            str(docs_root / ".ingestion" / record["index_target_filename"])
+            if record.get("index_target_filename")
+            else None
+        )
+        if not raw_target:
             continue
 
-        path = Path(str(record["index_target_path"]))
+        path = Path(str(raw_target))
         if not path.exists():
             continue
 

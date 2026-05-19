@@ -739,8 +739,14 @@ def _load_structured_payload_for_metadata(filename: str) -> tuple[dict[str, Any]
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
     structured_payload = None
-    if record and record.get("structured_path"):
-        structured_payload = load_structured_document(Path(str(record["structured_path"])))
+    if record:
+        raw_path = record.get("structured_path") or (
+            str(get_global_ingestion_dir() / record["structured_filename"])
+            if record.get("structured_filename")
+            else None
+        )
+        if raw_path:
+            structured_payload = load_structured_document(Path(raw_path))
     elif file_path.suffix.lower() in INDEXABLE_EXTENSIONS:
         structured_payload = build_structured_document(
             source_filename=filename,

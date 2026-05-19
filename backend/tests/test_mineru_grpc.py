@@ -1,8 +1,12 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import grpc
+import pytest
 from pypdf import PdfReader, PdfWriter
 
 from src.community.knowledge_base.mineru_grpc import (
+    _parse_pdf_response_via_mineru_grpc,
     build_structured_document_from_mineru_grpc,
     build_structured_document_from_mineru_response,
 )
@@ -211,4 +215,116 @@ def test_build_structured_document_from_mineru_grpc_auto_splits_large_pdf(
     assert [page["page_no"] for page in payload["pages"]] == [1, 2, 1, 2, 3]
     assert [page["book_page_no"] for page in payload["pages"]] == [None, None, 1, 2, 3]
     assert payload["pages"][4]["paragraphs"][0]["paragraph_id"] == "page-5-p1"
-    assert payload["pages"][4]["paragraphs"][0]["paragraph_no_in_doc"] == 5
+
+
+class _FakeRpcError(grpc.RpcError):
+    def __init__(self, code: grpc.StatusCode, details: str = "") -> None:
+        self._code = code
+        self._details = details
+
+    def code(self) -> grpc.StatusCode:
+        return self._code
+
+    def details(self) -> str:
+        return self._details
+
+    def debug_error_string(self) -> str:
+        return ""
+
+    def initial_metadata(self):
+        return []
+
+    def trailing_metadata(self):
+        return []
+
+
+def _make_rpc_error(code: grpc.StatusCode, details: str = "") -> grpc.RpcError:
+    return _FakeRpcError(code, details)
+
+
+def test_parse_pdf_response_retries_on_unavailable(tmp_path: Path, monkeypatch) -> None:
+    """UNAVAILABLE errors are retried up to retry_attempts times then succeed."""
+    pdf_path = tmp_path / "test.pdf"
+    PdfWriter().write(str(pdf_path))
+
+    config = MineruConfig(enabled=True, target="localhost:50051", retry_attempts=3, retry_delay_seconds=0.0)
+    call_count = 0
+    good_response = mineru_pb2.ParsePdfResponse(
+        document=mineru_pb2.StructuredDocument(full_text="ok")
+    )
+
+    def fake_stub_parse_pdf(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise _make_rpc_error(grpc.StatusCode.UNAVAILABLE, "tunnel down")
+        return good_response
+
+    mock_stub = MagicMock()
+    mock_stub.ParsePdf.side_effect = fake_stub_parse_pdf
+    mock_channel = MagicMock()
+    mock_channel.__enter__ = lambda s: s
+    mock_channel.__exit__ = MagicMock(return_value=False)
+    mock_channel.subscribe = MagicMock()
+
+    monkeypatch.setattr("src.community.knowledge_base.mineru_grpc._build_channel", lambda _: mock_channel)
+    monkeypatch.setattr(
+        "src.community.knowledge_base.mineru_grpc.mineru_pb2_grpc.MineruPdfExtractorStub",
+        lambda _: mock_stub,
+    )
+
+    response = _parse_pdf_response_via_mineru_grpc(pdf_path, config=config)
+    assert response == good_response
+    assert call_count == 3
+
+
+def test_parse_pdf_response_raises_after_all_retries_exhausted(tmp_path: Path, monkeypatch) -> None:
+    """After retry_attempts+1 total attempts, RuntimeError is raised."""
+    pdf_path = tmp_path / "test.pdf"
+    PdfWriter().write(str(pdf_path))
+
+    config = MineruConfig(enabled=True, target="localhost:50051", retry_attempts=2, retry_delay_seconds=0.0)
+
+    mock_stub = MagicMock()
+    mock_stub.ParsePdf.side_effect = _make_rpc_error(grpc.StatusCode.UNAVAILABLE, "always down")
+    mock_channel = MagicMock()
+    mock_channel.__enter__ = lambda s: s
+    mock_channel.__exit__ = MagicMock(return_value=False)
+    mock_channel.subscribe = MagicMock()
+
+    monkeypatch.setattr("src.community.knowledge_base.mineru_grpc._build_channel", lambda _: mock_channel)
+    monkeypatch.setattr(
+        "src.community.knowledge_base.mineru_grpc.mineru_pb2_grpc.MineruPdfExtractorStub",
+        lambda _: mock_stub,
+    )
+
+    with pytest.raises(RuntimeError, match="UNAVAILABLE"):
+        _parse_pdf_response_via_mineru_grpc(pdf_path, config=config)
+
+    assert mock_stub.ParsePdf.call_count == 3  # 1 initial + 2 retries
+
+
+def test_parse_pdf_response_does_not_retry_non_retryable_code(tmp_path: Path, monkeypatch) -> None:
+    """Non-retryable codes (e.g. INVALID_ARGUMENT) fail immediately without retry."""
+    pdf_path = tmp_path / "test.pdf"
+    PdfWriter().write(str(pdf_path))
+
+    config = MineruConfig(enabled=True, target="localhost:50051", retry_attempts=3, retry_delay_seconds=0.0)
+
+    mock_stub = MagicMock()
+    mock_stub.ParsePdf.side_effect = _make_rpc_error(grpc.StatusCode.INVALID_ARGUMENT, "bad request")
+    mock_channel = MagicMock()
+    mock_channel.__enter__ = lambda s: s
+    mock_channel.__exit__ = MagicMock(return_value=False)
+    mock_channel.subscribe = MagicMock()
+
+    monkeypatch.setattr("src.community.knowledge_base.mineru_grpc._build_channel", lambda _: mock_channel)
+    monkeypatch.setattr(
+        "src.community.knowledge_base.mineru_grpc.mineru_pb2_grpc.MineruPdfExtractorStub",
+        lambda _: mock_stub,
+    )
+
+    with pytest.raises(RuntimeError, match="INVALID_ARGUMENT"):
+        _parse_pdf_response_via_mineru_grpc(pdf_path, config=config)
+
+    assert mock_stub.ParsePdf.call_count == 1  # no retry

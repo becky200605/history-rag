@@ -169,6 +169,16 @@ class MineruConfig(BaseModel):
         ge=1,
         description="Maximum number of concurrent OCR gRPC requests issued from this process.",
     )
+    retry_attempts: int = Field(
+        default=3,
+        ge=0,
+        description="Number of retry attempts on transient gRPC errors (e.g. SSH tunnel reconnect). 0 disables retries.",
+    )
+    retry_delay_seconds: float = Field(
+        default=5.0,
+        ge=0.0,
+        description="Seconds to wait between retry attempts.",
+    )
 
 
 class TranslationRpcConfig(BaseModel):

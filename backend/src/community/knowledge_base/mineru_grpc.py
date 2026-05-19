@@ -144,6 +144,12 @@ def _watch_channel_connectivity(channel: grpc.Channel, tag: str) -> threading.Ev
     return stop_event
 
 
+_RETRYABLE_GRPC_CODES = frozenset([
+    grpc.StatusCode.UNAVAILABLE,
+    grpc.StatusCode.INTERNAL,
+])
+
+
 def _parse_pdf_response_via_mineru_grpc(
     file_path: Path,
     *,
@@ -170,61 +176,84 @@ def _parse_pdf_response_via_mineru_grpc(
         hints,
         language_hint,
     )
-    try:
-        with _build_channel(config) as channel:
-            stop_watch = _watch_channel_connectivity(channel, tag)
-            stub = mineru_pb2_grpc.MineruPdfExtractorStub(channel)
-            send_at = time.monotonic()
-            logger.info(
-                "[mineru-grpc] %s SENDING request (waited %.2fs for channel setup, deadline=%ss)",
-                tag,
-                send_at - started_at,
-                config.request_timeout,
-            )
-            try:
-                response = stub.ParsePdf(
-                    request,
-                    timeout=config.request_timeout,
-                    metadata=_build_metadata(config),
+    max_attempts = max(1, config.retry_attempts + 1)
+    last_exc: grpc.RpcError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with _build_channel(config) as channel:
+                stop_watch = _watch_channel_connectivity(channel, tag)
+                stub = mineru_pb2_grpc.MineruPdfExtractorStub(channel)
+                send_at = time.monotonic()
+                logger.info(
+                    "[mineru-grpc] %s SENDING request attempt=%d/%d (waited %.2fs for channel setup, deadline=%ss)",
+                    tag,
+                    attempt,
+                    max_attempts,
+                    send_at - started_at,
+                    config.request_timeout,
                 )
-            finally:
-                stop_watch.set()
-            logger.info(
-                "[mineru-grpc] %s RESPONSE received in %.2fs (channel-send→response)",
-                tag,
-                time.monotonic() - send_at,
-            )
-            return response
-    except grpc.RpcError as exc:
-        # Pull diagnostics defensively — any of these accessors can in theory
-        # raise, and we'd rather log "unknown" than mask the original RpcError.
-        def _safe(getter, default=None):
-            try:
-                value = getter()
-                return value if value is not None else default
-            except Exception:  # pragma: no cover - defensive
-                return default
+                try:
+                    response = stub.ParsePdf(
+                        request,
+                        timeout=config.request_timeout,
+                        metadata=_build_metadata(config),
+                    )
+                finally:
+                    stop_watch.set()
+                logger.info(
+                    "[mineru-grpc] %s RESPONSE received in %.2fs (channel-send→response)",
+                    tag,
+                    time.monotonic() - send_at,
+                )
+                return response
+        except grpc.RpcError as exc:
+            def _safe(getter, default=None):
+                try:
+                    value = getter()
+                    return value if value is not None else default
+                except Exception:  # pragma: no cover - defensive
+                    return default
 
-        code = _safe(lambda: exc.code())
-        details = _safe(lambda: exc.details(), default="")
-        debug_error = _safe(lambda: exc.debug_error_string(), default="")
-        initial_md = _safe(lambda: list(exc.initial_metadata() or []), default=[])
-        trailing_md = _safe(lambda: list(exc.trailing_metadata() or []), default=[])
-        elapsed = time.monotonic() - started_at
-        code_name = code.name if code is not None else "UNKNOWN"
-        logger.error(
-            "[mineru-grpc] %s FAILED after %.2fs code=%s details=%r initial_md=%s trailing_md=%s debug_error=%s",
-            tag,
-            elapsed,
-            code_name,
-            details,
-            initial_md,
-            trailing_md,
-            debug_error,
-        )
-        raise RuntimeError(
-            f"MinerU gRPC failed after {elapsed:.1f}s: {code_name} {details}"
-        ) from exc
+            code = _safe(lambda: exc.code())
+            details = _safe(lambda: exc.details(), default="")
+            debug_error = _safe(lambda: exc.debug_error_string(), default="")
+            initial_md = _safe(lambda: list(exc.initial_metadata() or []), default=[])
+            trailing_md = _safe(lambda: list(exc.trailing_metadata() or []), default=[])
+            elapsed = time.monotonic() - started_at
+            code_name = code.name if code is not None else "UNKNOWN"
+
+            is_retryable = code in _RETRYABLE_GRPC_CODES
+            if is_retryable and attempt < max_attempts:
+                logger.warning(
+                    "[mineru-grpc] %s attempt %d/%d FAILED code=%s details=%r — retrying in %.1fs",
+                    tag,
+                    attempt,
+                    max_attempts,
+                    code_name,
+                    details,
+                    config.retry_delay_seconds,
+                )
+                time.sleep(config.retry_delay_seconds)
+                last_exc = exc
+                continue
+
+            logger.error(
+                "[mineru-grpc] %s FAILED after %.2fs attempt=%d/%d code=%s details=%r initial_md=%s trailing_md=%s debug_error=%s",
+                tag,
+                elapsed,
+                attempt,
+                max_attempts,
+                code_name,
+                details,
+                initial_md,
+                trailing_md,
+                debug_error,
+            )
+            raise RuntimeError(
+                f"MinerU gRPC failed after {elapsed:.1f}s: {code_name} {details}"
+            ) from exc
+
+    raise RuntimeError("MinerU gRPC retry loop exhausted without result") from last_exc
 
 
 def _count_pdf_pages(file_path: Path) -> int:

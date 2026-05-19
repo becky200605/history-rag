@@ -20,6 +20,12 @@ Ctrl-C to stop watch mode gracefully.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Make 'src' importable regardless of where the script is invoked from
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import argparse
 import json
 import logging

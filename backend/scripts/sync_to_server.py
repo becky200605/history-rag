@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""
+Watch res/ and sync completed OCR results to the server.
+
+For each new parsed file:
+  1. Generate AI metadata (summary, categories, eras, regions, ...)
+  2. *.pdf.json + *.pdf.structured.json  →  server:.ingestion/
+  3. .book-metadata/*.book-metadata.json →  server:docs/.book-metadata/
+  4. done/*.pdf                          →  server:docs/
+
+Usage:
+    python scripts/sync_to_server.py --res ./res --config ../config.yaml --watch
+
+    # custom host / paths
+    python scripts/sync_to_server.py --res ./res --config ../config.yaml \\
+        --host root@124.221.234.124 \\
+        --remote-docs /var/lib/history-rag/knowledge/docs \\
+        --watch
+
+Ctrl-C to stop.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import argparse
+import json
+import logging
+import os
+import signal
+import subprocess
+import time
+from typing import Any
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+MARKER_SUFFIX = ".synced"
+
+
+# ---------------------------------------------------------------------------
+# App config
+# ---------------------------------------------------------------------------
+
+def _setup_app_config(config_path: str) -> None:
+    from src.config.app_config import reload_app_config
+    from src.config.knowledge_base_config import load_knowledge_base_config_from_dict
+    import yaml
+
+    reload_app_config(config_path)
+    with open(config_path) as f:
+        full = yaml.safe_load(f) or {}
+    kb = dict(full.get("knowledge_base", {}) or {})
+    kb["enabled"] = True
+    load_knowledge_base_config_from_dict(kb)
+
+
+# ---------------------------------------------------------------------------
+# Metadata generation
+# ---------------------------------------------------------------------------
+
+def _generate_metadata(filename: str, res_dir: Path, model_name: str | None) -> bool:
+    """Generate AI metadata from the structured JSON and save to res/.book-metadata/.
+    Returns True on success."""
+    from src.community.knowledge_base.book_metadata import get_book_metadata_dir
+    from src.community.knowledge_base.book_metadata_runtime import generate_book_metadata_record
+    from src.config.knowledge_base_config import BookMetadataConfig
+
+    structured_path = res_dir / f"{filename}.structured.json"
+    if not structured_path.exists():
+        logger.warning("META  %s  structured JSON missing, skipping metadata", filename)
+        return False
+
+    try:
+        structured_payload = json.loads(structured_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("META  %s  cannot read structured JSON: %s", filename, exc)
+        return False
+
+    record_path = res_dir / f"{filename}.json"
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except Exception:
+        record = {}
+    title = str(record.get("display_title") or Path(filename).stem)
+
+    metadata_dir = get_book_metadata_dir(res_dir)
+    metadata_dir.mkdir(exist_ok=True)
+
+    config = BookMetadataConfig(enabled=True, model_name=model_name)
+    logger.info("META  %s  generating (summary / categories / eras ...)", filename)
+    try:
+        meta_record, saved_path = generate_book_metadata_record(
+            structured_payload=structured_payload,
+            source_filename=filename,
+            title=title,
+            output_dir=res_dir,
+            config=config,
+        )
+        suggestion = meta_record.suggestion
+        if suggestion:
+            folder = getattr(getattr(suggestion, "folder", None), "value", None)
+            summary_field = getattr(suggestion, "summary", None)
+            summary = str(getattr(summary_field, "value", "") or "")[:80]
+            logger.info("META  %s  folder=%s  summary=%s...", filename, folder, summary)
+        return True
+    except Exception as exc:
+        logger.warning("META  %s  failed (non-fatal): %s", filename, exc)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Sync helpers
+# ---------------------------------------------------------------------------
+
+def _marker(res_dir: Path, filename: str) -> Path:
+    return res_dir / f"{filename}{MARKER_SUFFIX}"
+
+
+def _is_synced(res_dir: Path, filename: str) -> bool:
+    return _marker(res_dir, filename).exists()
+
+
+def _mark_synced(res_dir: Path, filename: str) -> None:
+    _marker(res_dir, filename).touch()
+
+
+def _rsync(local: Path, remote: str) -> None:
+    subprocess.run(["rsync", "-az", "--mkpath", str(local), remote], check=True)
+
+
+def _scan(res_dir: Path) -> list[str]:
+    results = []
+    for p in sorted(res_dir.glob("*.pdf.json")):
+        filename = p.stem  # "book.pdf"
+        if _is_synced(res_dir, filename):
+            continue
+        try:
+            record = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if record.get("parse_status") != "parsed":
+            continue
+        if not (res_dir / f"{filename}.structured.json").exists():
+            continue
+        results.append(filename)
+    return results
+
+
+def _sync_one(filename: str, res_dir: Path, host: str, remote_docs: str, model_name: str | None, skip_metadata: bool) -> None:
+    ingestion_dst = f"{host}:{remote_docs}/.ingestion/"
+    metadata_dst = f"{host}:{remote_docs}/.book-metadata/"
+    pdf_dst = f"{host}:{remote_docs}/"
+
+    # Step 1: AI metadata (before sync, so we can upload it too)
+    if not skip_metadata:
+        _generate_metadata(filename, res_dir, model_name)
+
+    # Step 2: ingestion record + structured JSON → .ingestion/
+    logger.info("SYNC  %s  → .ingestion/", filename)
+    _rsync(res_dir / f"{filename}.json", ingestion_dst)
+    _rsync(res_dir / f"{filename}.structured.json", ingestion_dst)
+
+    # Step 3: book metadata sidecar → .book-metadata/
+    metadata_file = res_dir / ".book-metadata" / f"{filename}.book-metadata.json"
+    if metadata_file.exists():
+        logger.info("SYNC  %s  → .book-metadata/", filename)
+        _rsync(metadata_file, metadata_dst)
+
+    # Step 4: source PDF → docs/
+    pdf_file = res_dir / "done" / filename
+    if pdf_file.exists():
+        logger.info("SYNC  %s  → docs/", filename)
+        _rsync(pdf_file, pdf_dst)
+    else:
+        logger.warning("SYNC  %s  PDF not in done/ — skipping PDF upload", filename)
+
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+
+def _run(args: argparse.Namespace) -> int:
+    res_dir = Path(args.res).resolve()
+    if not res_dir.is_dir():
+        logger.error("res dir not found: %s", res_dir)
+        return 1
+
+    if not args.skip_metadata:
+        if not args.config:
+            logger.error("--config is required for metadata generation (or pass --skip-metadata)")
+            return 1
+        try:
+            _setup_app_config(args.config)
+        except Exception as exc:
+            logger.error("Failed to load config: %s", exc)
+            return 1
+
+    def _stop(*_):
+        logger.info("Interrupted.")
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+
+    logger.info("Watching %s  →  %s:%s  (poll every %ds)",
+                res_dir, args.host, args.remote_docs, args.poll_interval)
+
+    while True:
+        for filename in _scan(res_dir):
+            try:
+                _sync_one(filename, res_dir, args.host, args.remote_docs, args.metadata_model, args.skip_metadata)
+                _mark_synced(res_dir, filename)
+                logger.info("DONE  %s", filename)
+            except subprocess.CalledProcessError as exc:
+                logger.error("FAIL  %s: rsync error (rc=%d)", filename, exc.returncode)
+            except Exception as exc:
+                logger.exception("FAIL  %s: %s", filename, exc)
+
+        if not args.watch:
+            break
+        time.sleep(args.poll_interval)
+
+    return 0
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Sync completed OCR results to the server.")
+    parser.add_argument("--res", default="./res", metavar="DIR",
+                        help="Local res/ directory (default: ./res)")
+    parser.add_argument("--host", default="root@124.221.234.124", metavar="USER@HOST")
+    parser.add_argument("--remote-docs", default="/var/lib/history-rag/knowledge/docs", metavar="PATH")
+    parser.add_argument("--watch", action="store_true",
+                        help="Keep running and pick up new files as they appear")
+    parser.add_argument("--poll-interval", type=int, default=15, metavar="SEC")
+    parser.add_argument("--config", default=None, metavar="PATH",
+                        help="config.yaml — needed for AI metadata generation")
+    parser.add_argument("--metadata-model", default=None, metavar="MODEL",
+                        help="LLM model for metadata (default: app default)")
+    parser.add_argument("--skip-metadata", action="store_true",
+                        help="Skip AI metadata generation, sync files only")
+    args = parser.parse_args()
+    sys.exit(_run(args))
+
+
+if __name__ == "__main__":
+    main()

@@ -1591,6 +1591,47 @@ async def delete_global_knowledge_file(filename: str) -> dict:
         _release_knowledge_operation_lock()
 
 
+@router.post("/uploads/{filename}/build-index", response_model=dict, summary="Build Qdrant Index for Pre-parsed File")
+def build_index_for_global_file(filename: str) -> dict:
+    """Build the Qdrant vector index for a file that already has a structured JSON.
+
+    Intended for the local-OCR workflow: after syncing pre-built ingestion records
+    to the server, call this to embed and index the file without re-running OCR.
+    """
+    config = get_knowledge_base_config()
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    record = _find_global_record(filename)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Ingestion record not found — sync the .json files first")
+    if not record.get("indexable"):
+        raise HTTPException(status_code=400, detail="File is not indexable")
+    if record.get("parse_status") != "parsed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Expected parse_status=parsed, got {record.get('parse_status')}",
+        )
+
+    ingestion_dir = get_global_ingestion_dir()
+    structured_filename = record.get("index_target_filename") or record.get("structured_filename")
+    if not structured_filename:
+        raise HTTPException(status_code=400, detail="No structured_filename in record")
+    structured_path = Path(record["index_target_path"]) if record.get("index_target_path") else ingestion_dir / structured_filename
+    if not structured_path.exists():
+        raise HTTPException(status_code=404, detail=f"Structured JSON not found: {structured_path.name}")
+
+    try:
+        from src.community.knowledge_base.indexer import upsert_global_knowledge_record
+        chunks, _ = upsert_global_knowledge_record(filename)
+        return {"success": True, "message": f"Indexed {chunks} chunks for {filename}", "chunks": chunks}
+    except Exception as exc:
+        logger.exception("build-index failed for %s: %s", filename, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.post("/uploads/{filename}/reindex", response_model=dict, summary="Retry Global Knowledge Indexing")
 async def retry_global_knowledge_file(filename: str) -> dict:
     """Retry OCR or indexing for a single tracked global knowledge file."""

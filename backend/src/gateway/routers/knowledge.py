@@ -155,8 +155,9 @@ def _ensure_global_queue_workers_started() -> None:
                 thread_name_prefix="global-ocr",
             )
             started = True
-    if started:
-        _recover_pending_global_jobs()
+    # Recovery disabled: OCR is run locally via scripts/local_ocr.py.
+    # Pending records are left in their current status; use the UI retry
+    # button or re-upload to reprocess individual files.
 
 
 def _submit_global_ocr(filename: str) -> None:

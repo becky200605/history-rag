@@ -79,6 +79,21 @@ MAX_FAILED_RETRIES = 3
 _knowledge_operation_lock = threading.Lock()
 _global_inflight_lock = threading.Lock()
 _global_inflight_ocr: set[str] = set()
+# Limits concurrent disk-heavy phases (file read + JSON write) independently of
+# the total OCR worker count. Workers waiting for gRPC responses (remote OCR) do
+# not hold this semaphore, so the disk stays free for the next worker's read/write.
+_disk_io_semaphore: threading.Semaphore | None = None
+_disk_io_semaphore_lock = threading.Lock()
+
+
+def _get_disk_io_semaphore() -> threading.Semaphore:
+    global _disk_io_semaphore
+    with _disk_io_semaphore_lock:
+        if _disk_io_semaphore is None:
+            workers = _resolve_ocr_max_workers()
+            slots = max(2, workers // 3)
+            _disk_io_semaphore = threading.Semaphore(slots)
+    return _disk_io_semaphore
 # Two executors so startup-recovery work cannot starve fresh user uploads:
 #   * ``_global_ocr_executor`` — high priority, sized by
 #     ``mineru.max_concurrent_ocr_jobs``. Receives uploads / manual retries.
@@ -937,28 +952,40 @@ def _process_single_global_ocr(filename: str) -> None:
             hints = record.get("hints") or {}
             record["parse_method"] = "ocr_pdf_mineru_grpc"
             _save_global_record(filename, record)
-            logger.info(
-                "[ocr-step] %s STEP 3: calling MinerU gRPC (file_ext=%s)",
-                filename,
-                file_ext,
-            )
+
+            disk_sem = _get_disk_io_semaphore()
+
+            # Phase 1: read file from disk (gated — limits concurrent reads)
+            logger.info("[ocr-step] %s STEP 3a: waiting for disk-read slot", filename)
+            with disk_sem:
+                logger.info("[ocr-step] %s STEP 3b: reading file from disk (%s bytes)", filename, file_path.stat().st_size)
+                file_content = file_path.read_bytes()
+
+            # Phase 2: remote OCR via gRPC (ungated — disk is free while we wait)
+            logger.info("[ocr-step] %s STEP 3c: calling MinerU gRPC (file_ext=%s)", filename, file_ext)
             structured_payload = build_structured_document_from_mineru_grpc(
                 file_path,
                 title=record["display_title"],
                 parser_name=record["parse_method"],
                 hints=hints,
                 language_hint=hints.get("language_hint"),
+                file_content=file_content,
             )
+            del file_content  # release memory before acquiring disk semaphore again
+
+            # Phase 3: write structured JSON to disk (gated — limits concurrent writes)
             logger.info(
-                "[ocr-step] %s STEP 4: gRPC returned payload (pages=%s); writing structured JSON",
+                "[ocr-step] %s STEP 4a: gRPC returned payload (pages=%s); waiting for disk-write slot",
                 filename,
                 len((structured_payload or {}).get("pages") or []),
             )
-            structured_path = save_structured_document(
-                ingestion_dir,
-                filename,
-                structured_payload,
-            )
+            with disk_sem:
+                logger.info("[ocr-step] %s STEP 4b: writing structured JSON", filename)
+                structured_path = save_structured_document(
+                    ingestion_dir,
+                    filename,
+                    structured_payload,
+                )
             logger.info(
                 "[ocr-step] %s STEP 5: structured JSON written to %s; generating book metadata",
                 filename,

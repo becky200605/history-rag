@@ -77,11 +77,12 @@ def _build_parse_pdf_request(
     config: MineruConfig,
     hints: dict[str, str] | None,
     language_hint: str | None,
+    file_content: bytes | None = None,
 ) -> mineru_pb2.ParsePdfRequest:
     hints = hints or {}
     return mineru_pb2.ParsePdfRequest(
         filename=file_path.name,
-        file_content=file_path.read_bytes(),
+        file_content=file_content if file_content is not None else file_path.read_bytes(),
         language_hint=language_hint or "",
         layout_hint=hints.get("layout_hint", ""),
         document_type_hint=hints.get("document_type_hint", ""),
@@ -156,6 +157,7 @@ def _parse_pdf_response_via_mineru_grpc(
     config: MineruConfig,
     hints: dict[str, str] | None = None,
     language_hint: str | None = None,
+    file_content: bytes | None = None,
 ) -> mineru_pb2.ParsePdfResponse:
     tag = f"ParsePdf({file_path.name})"
     try:
@@ -167,6 +169,7 @@ def _parse_pdf_response_via_mineru_grpc(
         config=config,
         hints=hints,
         language_hint=language_hint,
+        file_content=file_content,
     )
     started_at = time.monotonic()
     logger.info(
@@ -256,10 +259,12 @@ def _parse_pdf_response_via_mineru_grpc(
     raise RuntimeError("MinerU gRPC retry loop exhausted without result") from last_exc
 
 
-def _count_pdf_pages(file_path: Path) -> int:
+def _count_pdf_pages(file_path: Path, file_content: bytes | None = None) -> int:
+    import io
+
     from pypdf import PdfReader
 
-    reader = PdfReader(str(file_path))
+    reader = PdfReader(io.BytesIO(file_content) if file_content is not None else str(file_path))
     return len(reader.pages)
 
 
@@ -277,16 +282,16 @@ def _build_pdf_chunk_ranges(total_pages: int, chunk_page_count: int) -> list[tup
     ]
 
 
-def _maybe_build_pdf_chunk_plan(file_path: Path, config: MineruConfig) -> PdfChunkPlan | None:
+def _maybe_build_pdf_chunk_plan(file_path: Path, config: MineruConfig, file_content: bytes | None = None) -> PdfChunkPlan | None:
     if file_path.suffix.lower() != ".pdf" or not config.enable_pdf_chunking:
         return None
 
-    file_size_bytes = file_path.stat().st_size
+    file_size_bytes = len(file_content) if file_content is not None else file_path.stat().st_size
     size_threshold_bytes = _coerce_positive_int(config.pdf_split_size_threshold_bytes)
     if size_threshold_bytes is None:
         size_threshold_bytes = _default_pdf_split_size_threshold_bytes(config)
 
-    total_pages = _count_pdf_pages(file_path)
+    total_pages = _count_pdf_pages(file_path, file_content)
     should_split = (
         total_pages > config.pdf_split_page_threshold
         or file_size_bytes > size_threshold_bytes
@@ -597,16 +602,18 @@ def build_structured_document_from_mineru_grpc(
     parser_name: str,
     hints: dict[str, str] | None = None,
     language_hint: str | None = None,
+    file_content: bytes | None = None,
 ) -> dict[str, Any]:
     config = _get_mineru_config()
     hints = hints or {}
-    chunk_plan = _maybe_build_pdf_chunk_plan(file_path, config)
+    chunk_plan = _maybe_build_pdf_chunk_plan(file_path, config, file_content)
     if chunk_plan is None:
         response = _parse_pdf_response_via_mineru_grpc(
             file_path,
             config=config,
             hints=hints,
             language_hint=language_hint,
+            file_content=file_content,
         )
         return build_structured_document_from_mineru_response(
             source_filename=file_path.name,
@@ -627,9 +634,11 @@ def build_structured_document_from_mineru_grpc(
 
     chunk_payloads: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="mineru-pdf-chunks-") as temp_dir:
+        import io
+
         from pypdf import PdfReader, PdfWriter
 
-        reader = PdfReader(str(file_path))
+        reader = PdfReader(io.BytesIO(file_content) if file_content is not None else str(file_path))
         temp_dir_path = Path(temp_dir)
         for chunk_index, (start_page_index, end_page_index) in enumerate(chunk_plan.chunk_ranges, start=1):
             chunk_path = temp_dir_path / f"{file_path.stem}.part{chunk_index:03d}.pdf"

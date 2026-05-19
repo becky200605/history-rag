@@ -287,11 +287,9 @@ def _run(args: argparse.Namespace) -> int:
     inflight_lock = threading.Lock()
     futures: dict[Future, str] = {}
 
-    stop_event = threading.Event()
-
     def _handle_sigint(*_):
-        logger.info("Stopping — waiting for in-flight jobs to finish...")
-        stop_event.set()
+        logger.info("Interrupted — exiting.")
+        os._exit(0)
 
     signal.signal(signal.SIGINT, _handle_sigint)
     signal.signal(signal.SIGTERM, _handle_sigint)

@@ -53,14 +53,10 @@ MARKER_SUFFIX = ".synced"
 def _setup_app_config(config_path: str) -> None:
     from src.config.app_config import reload_app_config
     from src.config.knowledge_base_config import load_knowledge_base_config_from_dict
-    import yaml
 
-    reload_app_config(config_path)
-    with open(config_path) as f:
-        full = yaml.safe_load(f) or {}
-    kb = dict(full.get("knowledge_base", {}) or {})
-    kb["enabled"] = True
-    load_knowledge_base_config_from_dict(kb)
+    app_config = reload_app_config(config_path)
+    # Use the already env-var-resolved KB config from AppConfig
+    load_knowledge_base_config_from_dict(app_config.knowledge_base.model_dump())
 
 
 # ---------------------------------------------------------------------------

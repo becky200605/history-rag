@@ -91,7 +91,7 @@ def _get_disk_io_semaphore() -> threading.Semaphore:
     with _disk_io_semaphore_lock:
         if _disk_io_semaphore is None:
             workers = _resolve_ocr_max_workers()
-            slots = max(2, workers // 3)
+            slots = 2
             _disk_io_semaphore = threading.Semaphore(slots)
     return _disk_io_semaphore
 # Two executors so startup-recovery work cannot starve fresh user uploads:

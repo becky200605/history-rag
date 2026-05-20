@@ -81,6 +81,7 @@ MAX_FAILED_RETRIES = 3
 _knowledge_operation_lock = threading.Lock()
 _global_inflight_lock = threading.Lock()
 _global_inflight_ocr: set[str] = set()
+_UNSET: object = object()
 # Limits concurrent disk-heavy phases (file read + JSON write) independently of
 # the total OCR worker count. Workers waiting for gRPC responses (remote OCR) do
 # not hold this semaphore, so the disk stays free for the next worker's read/write.
@@ -691,9 +692,10 @@ def _manual_metadata_fields(values: list[str] | None) -> list[MetadataField]:
     return fields
 
 
-def _load_global_book_metadata(filename: str) -> dict[str, Any]:
+def _load_global_book_metadata(filename: str, ingestion_record: dict[str, Any] | None | object = _UNSET) -> dict[str, Any]:
     record = load_book_metadata_for_source(get_global_docs_dir(), filename)
-    ingestion_record = _find_global_record(filename)
+    if ingestion_record is _UNSET:
+        ingestion_record = _find_global_record(filename)
     suggestion = record.suggestion if record else None
     book_type = _metadata_value(suggestion.type) if suggestion else None
     categories = _metadata_values(suggestion.categories) if suggestion else []
@@ -1275,7 +1277,7 @@ def list_global_knowledge_files() -> dict:
             "modified": stat.st_mtime,
             "artifact_url": _build_global_urls(file_path.name)["source_url"],
         }
-        entry.update(_load_global_book_metadata(file_path.name))
+        entry.update(_load_global_book_metadata(file_path.name, ingestion_record=record))
         if record:
             queue_position = None
             queue_stage = None

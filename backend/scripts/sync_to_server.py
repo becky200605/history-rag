@@ -34,6 +34,7 @@ import os
 import signal
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 logging.basicConfig(
@@ -129,8 +130,14 @@ def _mark_synced(res_dir: Path, filename: str) -> None:
     _marker(res_dir, filename).touch()
 
 
+def _ensure_remote_dirs(host: str, remote_docs: str) -> None:
+    """Create required remote directories via SSH (one round-trip)."""
+    dirs = f"{remote_docs} {remote_docs}/.ingestion {remote_docs}/.book-metadata"
+    subprocess.run(["ssh", host, f"mkdir -p {dirs}"], check=True)
+
+
 def _rsync(local: Path, remote: str) -> None:
-    subprocess.run(["rsync", "-az", "--mkpath", str(local), remote], check=True)
+    subprocess.run(["rsync", "-az", str(local), remote], check=True)
 
 
 def _scan(res_dir: Path) -> list[str]:
@@ -207,23 +214,41 @@ def _run(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
 
-    logger.info("Watching %s  →  %s:%s  (poll every %ds)",
-                res_dir, args.host, args.remote_docs, args.poll_interval)
+    # Ensure remote dirs exist (one SSH round-trip)
+    try:
+        _ensure_remote_dirs(args.host, args.remote_docs)
+    except subprocess.CalledProcessError as exc:
+        logger.error("Cannot create remote dirs (rc=%d) — check SSH access", exc.returncode)
+        return 1
 
-    while True:
-        for filename in _scan(res_dir):
-            try:
-                _sync_one(filename, res_dir, args.host, args.remote_docs, args.metadata_model, args.skip_metadata)
-                _mark_synced(res_dir, filename)
-                logger.info("DONE  %s", filename)
-            except subprocess.CalledProcessError as exc:
-                logger.error("FAIL  %s: rsync error (rc=%d)", filename, exc.returncode)
-            except Exception as exc:
-                logger.exception("FAIL  %s: %s", filename, exc)
+    logger.info("Watching %s  →  %s:%s  concurrency=%d  (poll every %ds)",
+                res_dir, args.host, args.remote_docs, args.concurrency, args.poll_interval)
 
-        if not args.watch:
-            break
-        time.sleep(args.poll_interval)
+    with ThreadPoolExecutor(max_workers=args.concurrency, thread_name_prefix="sync") as pool:
+        while True:
+            pending = _scan(res_dir)
+            if pending:
+                futures = {
+                    pool.submit(
+                        _sync_one, f, res_dir, args.host, args.remote_docs,
+                        args.metadata_model, args.skip_metadata
+                    ): f
+                    for f in pending
+                }
+                for fut in as_completed(futures):
+                    filename = futures[fut]
+                    try:
+                        fut.result()
+                        _mark_synced(res_dir, filename)
+                        logger.info("DONE  %s", filename)
+                    except subprocess.CalledProcessError as exc:
+                        logger.error("FAIL  %s: rsync error (rc=%d)", filename, exc.returncode)
+                    except Exception as exc:
+                        logger.exception("FAIL  %s: %s", filename, exc)
+
+            if not args.watch:
+                break
+            time.sleep(args.poll_interval)
 
     return 0
 
@@ -243,6 +268,8 @@ def main() -> None:
                         help="LLM model for metadata (default: app default)")
     parser.add_argument("--skip-metadata", action="store_true",
                         help="Skip AI metadata generation, sync files only")
+    parser.add_argument("--concurrency", type=int, default=5, metavar="N",
+                        help="Max parallel sync jobs (default: 5)")
     args = parser.parse_args()
     sys.exit(_run(args))
 

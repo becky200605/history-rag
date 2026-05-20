@@ -64,9 +64,9 @@ def _setup_app_config(config_path: str) -> None:
 # Metadata generation
 # ---------------------------------------------------------------------------
 
-def _generate_metadata(filename: str, res_dir: Path, model_name: str | None) -> bool:
+def _generate_metadata(filename: str, res_dir: Path, model_name: str | None) -> str | None:
     """Generate AI metadata from the structured JSON and save to res/.book-metadata/.
-    Returns True on success."""
+    Returns the suggested folder_path on success, None on failure."""
     from src.community.knowledge_base.book_metadata import get_book_metadata_dir
     from src.community.knowledge_base.book_metadata_runtime import generate_book_metadata_record
     from src.config.knowledge_base_config import BookMetadataConfig
@@ -74,13 +74,13 @@ def _generate_metadata(filename: str, res_dir: Path, model_name: str | None) -> 
     structured_path = res_dir / f"{filename}.structured.json"
     if not structured_path.exists():
         logger.warning("META  %s  structured JSON missing, skipping metadata", filename)
-        return False
+        return None
 
     try:
         structured_payload = json.loads(structured_path.read_text(encoding="utf-8"))
     except Exception as exc:
         logger.warning("META  %s  cannot read structured JSON: %s", filename, exc)
-        return False
+        return None
 
     record_path = res_dir / f"{filename}.json"
     try:
@@ -103,15 +103,16 @@ def _generate_metadata(filename: str, res_dir: Path, model_name: str | None) -> 
             config=config,
         )
         suggestion = meta_record.suggestion
+        folder: str | None = None
         if suggestion:
             folder = getattr(getattr(suggestion, "folder", None), "value", None)
             summary_field = getattr(suggestion, "summary", None)
             summary = str(getattr(summary_field, "value", "") or "")[:80]
             logger.info("META  %s  folder=%s  summary=%s...", filename, folder, summary)
-        return True
+        return folder
     except Exception as exc:
         logger.warning("META  %s  failed (non-fatal): %s", filename, exc)
-        return False
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +166,18 @@ def _sync_one(filename: str, res_dir: Path, host: str, remote_docs: str, model_n
 
     # Step 1: AI metadata (before sync, so we can upload it too)
     if not skip_metadata:
-        _generate_metadata(filename, res_dir, model_name)
+        folder_path = _generate_metadata(filename, res_dir, model_name)
+        # Write folder_path back into the ingestion record so the server sees it
+        if folder_path:
+            record_path = res_dir / f"{filename}.json"
+            try:
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+                if not record.get("folder_path"):
+                    record["folder_path"] = folder_path
+                    record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+                    logger.info("META  %s  folder_path written to record", filename)
+            except Exception as exc:
+                logger.warning("META  %s  could not update folder_path in record: %s", filename, exc)
 
     # Step 2: ingestion record + structured JSON → .ingestion/
     logger.info("SYNC  %s  → .ingestion/", filename)

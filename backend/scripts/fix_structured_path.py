@@ -11,13 +11,7 @@
 
 import argparse
 import json
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from src.community.knowledge_base.common import resolve_project_path
-from src.config.knowledge_base_config import get_knowledge_base_config
 
 
 def find_structured_file(docs_root: Path, structured_filename: str) -> Path | None:
@@ -42,9 +36,14 @@ def find_structured_file(docs_root: Path, structured_filename: str) -> Path | No
 def main() -> None:
     parser = argparse.ArgumentParser(description="修复全局知识库 ingestion record 的 structured_path")
     parser.add_argument("--dry-run", action="store_true", help="只打印不写入")
+    parser.add_argument(
+        "--docs-root",
+        default="/var/lib/history-rag/knowledge/docs",
+        help="知识库文档根目录（默认: /var/lib/history-rag/knowledge/docs）",
+    )
     args = parser.parse_args()
 
-    docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
+    docs_root = Path(args.docs_root).resolve()
     ingestion_dir = docs_root / ".ingestion"
 
     if not ingestion_dir.exists():

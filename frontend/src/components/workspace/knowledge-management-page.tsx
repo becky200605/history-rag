@@ -706,11 +706,9 @@ export default function KnowledgeManagementPage() {
       return;
     }
 
-    router.push(
-      `/workspace/chats/new?materials=${encodeURIComponent(
-        JSON.stringify(selectedMaterialsPayload),
-      )}`,
-    );
+    const key = `selected_materials_${Date.now()}`;
+    sessionStorage.setItem(key, JSON.stringify(selectedMaterialsPayload));
+    router.push(`/workspace/chats/new?materials_key=${encodeURIComponent(key)}`);
   };
 
   const isLoading = globalFilesQuery.isLoading || personalRecordsQuery.isLoading;

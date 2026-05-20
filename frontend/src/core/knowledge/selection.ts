@@ -5,13 +5,26 @@ export type SelectedMaterial = {
   scope: "global" | "thread" | "user";
 };
 
-export function parseSelectedMaterials(raw: string | null): SelectedMaterial[] {
-  if (!raw) {
+export function parseSelectedMaterials(
+  raw: string | null,
+  key: string | null = null,
+): SelectedMaterial[] {
+  let json = raw;
+
+  if (key && typeof sessionStorage !== "undefined") {
+    const stored = sessionStorage.getItem(key);
+    if (stored) {
+      sessionStorage.removeItem(key);
+      json = stored;
+    }
+  }
+
+  if (!json) {
     return [];
   }
 
   try {
-    const payload = JSON.parse(raw) as unknown;
+    const payload = JSON.parse(json) as unknown;
     if (!Array.isArray(payload)) {
       return [];
     }

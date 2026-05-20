@@ -639,7 +639,7 @@ export default function KnowledgeManagementPage() {
 
   const handleStartChat = () => {
     if (selectedMaterialsPayload.length === 0) {
-      toast.error("请先勾选已入库的资料");
+      toast.error("请先勾选已解析的资料");
       return;
     }
 

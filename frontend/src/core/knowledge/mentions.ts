@@ -31,7 +31,7 @@ function buildGlobalMentionable(
   file: KnowledgeFileInfo,
 ): MentionableKnowledgeMaterial | null {
   const docId = String(file.doc_id ?? "").trim();
-  if (!docId || file.parse_status !== "indexed") {
+  if (!docId || (file.parse_status !== "indexed" && file.parse_status !== "parsed")) {
     return null;
   }
 
@@ -76,7 +76,7 @@ function buildUserMentionable(
   record: UserKnowledgeRecord,
 ): MentionableKnowledgeMaterial | null {
   const docId = String(record.id ?? "").trim();
-  if (!docId || record.parse_status !== "indexed") {
+  if (!docId || (record.parse_status !== "indexed" && record.parse_status !== "parsed")) {
     return null;
   }
 

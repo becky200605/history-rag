@@ -781,7 +781,7 @@ export function getCascadingLevels(
 }
 
 export function isSelectableForChat(file: ManagedKnowledgeFile) {
-  return Boolean(file.docId) && file.parseStatus === "indexed";
+  return Boolean(file.docId) && (file.parseStatus === "indexed" || file.parseStatus === "parsed");
 }
 
 export function canOpenManagedFile(file: ManagedKnowledgeFile, readerHref: string | null) {

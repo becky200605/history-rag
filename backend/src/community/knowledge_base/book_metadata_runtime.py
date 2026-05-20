@@ -153,6 +153,9 @@ def generate_book_metadata_record(
     """Run an AI metadata pass and persist the resulting record."""
     from src.models import create_chat_model
 
+    registry_path = output_dir / ".folders.json"
+    valid_folder_paths: set[str] = set(list_folder_paths(registry_path)) if registry_path.exists() else set()
+
     prompt_bundle = build_book_metadata_prompt_bundle(
         structured_payload,
         source_filename=source_filename,
@@ -163,7 +166,7 @@ def generate_book_metadata_record(
         existing_folder_tree=build_existing_folder_tree(
             output_dir,
             exclude_source_filename=source_filename,
-            folder_registry_path=output_dir / ".folders.json",
+            folder_registry_path=registry_path,
         ),
     )
 
@@ -178,23 +181,47 @@ def generate_book_metadata_record(
     suggestion = None
     last_error: Exception | None = None
     for attempt in range(1, BOOK_METADATA_RETRY_ATTEMPTS + 1):
+        # ── Call model ────────────────────────────────────────────────────────
         try:
             response = model.invoke(messages)
             response_text = _extract_response_text(response)
             suggestion = parse_book_metadata_suggestion(response_text)
-            break
         except Exception as exc:
             last_error = exc
             if not _is_retryable_metadata_error(exc) or attempt >= BOOK_METADATA_RETRY_ATTEMPTS:
                 raise
             logger.warning(
                 "Book metadata generation transient failure for %s on attempt %s/%s: %s",
-                source_filename,
-                attempt,
-                BOOK_METADATA_RETRY_ATTEMPTS,
-                exc,
+                source_filename, attempt, BOOK_METADATA_RETRY_ATTEMPTS, exc,
             )
             sleep(BOOK_METADATA_RETRY_DELAY_SECONDS)
+            continue
+
+        # ── Validate folder against registry ──────────────────────────────────
+        if valid_folder_paths and suggestion is not None:
+            folder_val = getattr(getattr(suggestion, "folder", None), "value", None)
+            if folder_val and folder_val not in valid_folder_paths:
+                if attempt < BOOK_METADATA_RETRY_ATTEMPTS:
+                    valid_list = "\n".join(f"  - {p}" for p in sorted(valid_folder_paths))
+                    correction = (
+                        f'The folder path "{folder_val}" does not exist in the knowledge base.\n'
+                        f"You MUST choose an existing folder from this exact list:\n{valid_list}\n"
+                        "Return the corrected JSON only, with no explanation."
+                    )
+                    logger.warning(
+                        "META  %s  folder %r not in registry (attempt %d/%d) — retrying",
+                        source_filename, folder_val, attempt, BOOK_METADATA_RETRY_ATTEMPTS,
+                    )
+                    messages.append(AIMessage(content=response_text))
+                    messages.append(HumanMessage(content=correction))
+                    sleep(BOOK_METADATA_RETRY_DELAY_SECONDS)
+                    continue
+                else:
+                    logger.warning(
+                        "META  %s  folder %r still not in registry after %d attempts — keeping as-is",
+                        source_filename, folder_val, BOOK_METADATA_RETRY_ATTEMPTS,
+                    )
+        break
 
     if suggestion is None:
         raise ValueError(f"Book metadata generation failed for {source_filename}: {last_error}")

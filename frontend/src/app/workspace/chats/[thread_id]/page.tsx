@@ -390,9 +390,8 @@ export default function ChatPage() {
 
     return readThreadRouteHandoff()?.threadId === threadIdFromPath;
   }, [isNewThread, threadIdFromPath]);
-  const selectedMaterials = useMemo(
-    () => parseSelectedMaterials(searchParams.get("materials"), searchParams.get("materials_key")),
-    [searchParams],
+  const [selectedMaterials] = useState<SelectedMaterial[]>(() =>
+    parseSelectedMaterials(searchParams.get("materials"), searchParams.get("materials_key")),
   );
   const selectedMaterialScopes = useMemo(
     () =>

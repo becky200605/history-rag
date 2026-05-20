@@ -7,8 +7,16 @@ Usage (on server):
     python3 scripts/fetch_remote_folders.py
     python3 scripts/fetch_remote_folders.py --docs /var/lib/history-rag/knowledge/docs
 
-    # Also write/update the folder registry used by the AI metadata prompt:
+    # Refresh the registry (preserves empty folders, respects user deletions):
     python3 scripts/fetch_remote_folders.py --write-registry
+
+    # Bootstrap: populate registry from ingestion records (first-time setup only):
+    python3 scripts/fetch_remote_folders.py --write-registry --sync-from-records
+
+IMPORTANT: --write-registry without --sync-from-records treats the registry as the
+source of truth.  Folders the user deleted via the UI will NOT be re-added even if
+ingestion records still reference them.  Use --sync-from-records only when
+bootstrapping a fresh registry from scratch.
 """
 
 from __future__ import annotations
@@ -34,6 +42,16 @@ def main() -> None:
         "--write-registry",
         action="store_true",
         help="Write/update docs/.folders.json so sync_to_server.py can download it",
+    )
+    parser.add_argument(
+        "--sync-from-records",
+        action="store_true",
+        help=(
+            "When writing the registry, also add folders inferred from ingestion records "
+            "that are not yet in the registry. Use only for initial bootstrap — "
+            "by default the registry is treated as the source of truth and deleted "
+            "folders are NOT re-added from ingestion records."
+        ),
     )
     args = parser.parse_args()
 
@@ -84,16 +102,41 @@ def main() -> None:
             except Exception:
                 pass
 
-        # Add any folders found in ingestion records (+ their parent segments)
+        # Optionally add folders inferred from ingestion records.
+        # Only done when --sync-from-records is set (bootstrap / first-time setup).
+        # By default the registry is the source of truth: folders the user deleted
+        # must NOT be resurrected just because a book still carries that folder_path.
         now = _utc_now()
-        for folder in folder_map:
-            if folder == "(未分类)":
-                continue
-            parts = folder.split("/")
-            for depth in range(1, len(parts) + 1):
-                path = "/".join(parts[:depth])
-                if path not in existing:
-                    existing[path] = {"path": path, "created_at": now, "updated_at": now}
+        if args.sync_from_records:
+            for folder in folder_map:
+                if folder == "(未分类)":
+                    continue
+                parts = folder.split("/")
+                for depth in range(1, len(parts) + 1):
+                    path = "/".join(parts[:depth])
+                    if path not in existing:
+                        existing[path] = {"path": path, "created_at": now, "updated_at": now}
+        else:
+            # Report folders in ingestion records that are absent from the registry
+            # so the operator knows which books are "orphaned" without silently fixing it.
+            orphaned: list[str] = []
+            for folder in folder_map:
+                if folder == "(未分类)":
+                    continue
+                parts = folder.split("/")
+                for depth in range(1, len(parts) + 1):
+                    path = "/".join(parts[:depth])
+                    if path not in existing:
+                        orphaned.append(path)
+                        break  # only report the deepest missing segment per book-folder
+            if orphaned:
+                unique_orphaned = sorted(set(orphaned))
+                print(
+                    f"⚠️  {len(unique_orphaned)} folder(s) appear in ingestion records but are absent from "
+                    f"the registry (add --sync-from-records to include them):"
+                )
+                for p in unique_orphaned:
+                    print(f"   • {p}")
 
         entries = sorted(existing.values(), key=lambda e: e["path"])
         registry_path.write_text(

@@ -1374,30 +1374,64 @@ async def rename_global_knowledge_folder(payload: FolderMutationRequest) -> dict
     }
 
 
+def _clear_book_folder_in_metadata(docs_dir: Path, filename: str) -> None:
+    """Clear the folder field from a book's metadata sidecar (best-effort)."""
+    meta_path = get_book_metadata_dir(docs_dir) / derive_book_metadata_filename(filename)
+    if not meta_path.exists():
+        return
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        suggestion = data.get("suggestion")
+        if isinstance(suggestion, dict) and suggestion.get("folder"):
+            suggestion["folder"] = None
+            data["suggestion"] = suggestion
+            meta_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 @router.delete("/folders", response_model=dict, summary="Delete Global Knowledge Folder")
 def delete_global_knowledge_folder(path: str = Query(..., description="Logical folder path to delete")) -> dict:
     normalized_path = normalize_folder_path(path)
     if not normalized_path:
         raise HTTPException(status_code=400, detail="path is required")
 
+    docs_dir = get_global_docs_dir()
+
+    # Clear folder_path on every file that belongs to this folder or its subfolders.
+    # This resets both the ingestion record (read by fetch_remote_folders.py) and
+    # the book-metadata sidecar (prevents the UI from falling back to the stale folder).
     current_files = list_global_knowledge_files().get("files", [])
+    cleared_count = 0
     for file_info in current_files:
         current_folder = normalize_folder_path(file_info.get("folder"))
         if current_folder == normalized_path or (
             current_folder and current_folder.startswith(f"{normalized_path}/")
         ):
-            raise HTTPException(status_code=400, detail="Folder is not empty")
+            filename = str(file_info.get("filename") or "")
+            if not filename:
+                continue
+            record = _load_global_record(filename)
+            if record is not None:
+                record["folder_path"] = None
+                _save_global_record(filename, record)
+            _clear_book_folder_in_metadata(docs_dir, filename)
+            cleared_count += 1
 
     try:
         folders = delete_folder_path(_global_folder_registry_path(), normalized_path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    message = f"Deleted folder '{normalized_path}'"
+    if cleared_count:
+        message += f", cleared folder assignment for {cleared_count} file(s)"
     return {
         "success": True,
         "folders": folders,
         "deleted_path": normalized_path,
-        "message": "Deleted global knowledge folder",
+        "cleared_files": cleared_count,
+        "message": message,
     }
 
 

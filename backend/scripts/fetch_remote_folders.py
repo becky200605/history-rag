@@ -28,9 +28,9 @@ def main() -> None:
 
     ingestion_dir = f"{args.remote_docs}/.ingestion"
 
-    # Pull every *.pdf.json from the server in one SSH call
-    cmd = ["ssh", args.host,
-           f"find {ingestion_dir} -maxdepth 1 -name '*.pdf.json' -exec cat {{}} \\;"]
+    # Run Python on the server to emit a single JSON array — no parsing ambiguity
+    remote_py = f"python3 -c \"import json,glob; print(json.dumps([json.load(open(f)) for f in glob.glob('{ingestion_dir}/*.pdf.json')]))\""
+    cmd = ["ssh", args.host, remote_py]
     print(f"# Fetching folder structure from {args.host}:{ingestion_dir} …\n", flush=True)
 
     try:
@@ -42,26 +42,16 @@ def main() -> None:
         print("ssh not found in PATH", file=sys.stderr)
         sys.exit(1)
 
-    # The output is a stream of concatenated JSON objects — split on "}\n{"
     raw = result.stdout.strip()
     if not raw:
         print("No ingestion records found.")
         return
 
-    # Parse records one by one (each file is a single JSON object on its own)
-    records: list[dict] = []
-    decoder = json.JSONDecoder()
-    pos = 0
-    while pos < len(raw):
-        try:
-            obj, offset = decoder.raw_decode(raw, pos)
-            records.append(obj)
-            pos += offset
-            # skip whitespace between records
-            while pos < len(raw) and raw[pos] in " \t\n\r":
-                pos += 1
-        except json.JSONDecodeError:
-            pos += 1
+    try:
+        records: list[dict] = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"Failed to parse server response: {exc}\n{raw[:200]}", file=sys.stderr)
+        sys.exit(1)
 
     # Collect folder_path → list of display_title
     folder_map: dict[str, list[str]] = defaultdict(list)

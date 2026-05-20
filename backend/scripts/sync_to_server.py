@@ -119,6 +119,13 @@ def _generate_metadata(filename: str, res_dir: Path, model_name: str | None) -> 
 # Sync helpers
 # ---------------------------------------------------------------------------
 
+def _count_folders(registry_path: Path) -> int:
+    try:
+        return len(json.loads(registry_path.read_text(encoding="utf-8")).get("folders") or [])
+    except Exception:
+        return 0
+
+
 def _marker(res_dir: Path, filename: str) -> Path:
     return res_dir / f"{filename}{MARKER_SUFFIX}"
 
@@ -232,6 +239,15 @@ def _run(args: argparse.Namespace) -> int:
     except subprocess.CalledProcessError as exc:
         logger.error("Cannot create remote dirs (rc=%d) — check SSH access", exc.returncode)
         return 1
+
+    # Download server's .folders.json so AI metadata sees the full folder tree
+    remote_registry = f"{args.host}:{args.remote_docs}/.folders.json"
+    local_registry = res_dir / ".folders.json"
+    try:
+        subprocess.run(["rsync", "-az", remote_registry, str(local_registry)], check=True)
+        logger.info("Synced .folders.json from server (%d folders)", _count_folders(local_registry))
+    except subprocess.CalledProcessError:
+        logger.warning("No .folders.json on server yet — run fetch_remote_folders.py --write-registry first")
 
     logger.info("Watching %s  →  %s:%s  concurrency=%d  (poll every %ds)",
                 res_dir, args.host, args.remote_docs, args.concurrency, args.poll_interval)

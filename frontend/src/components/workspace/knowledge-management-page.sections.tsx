@@ -251,6 +251,8 @@ export function KnowledgeManagementToolbar({
   selectedCount,
   onToggleAllVisible,
   allVisibleSelected,
+  onBatchDelete,
+  isBatchDeleting,
 }: {
   breadcrumbs: Array<{ name: string; path: string }>;
   onSelectFolder: (path: string) => void;
@@ -262,6 +264,8 @@ export function KnowledgeManagementToolbar({
   selectedCount: number;
   onToggleAllVisible: () => void;
   allVisibleSelected: boolean;
+  onBatchDelete: () => void;
+  isBatchDeleting: boolean;
 }) {
   return (
     <div className="sticky top-0 z-20 flex flex-col gap-4 border-b border-primary/5 bg-white/40 backdrop-blur-xl px-8 py-5 lg:flex-row lg:items-center lg:justify-between">
@@ -330,6 +334,23 @@ export function KnowledgeManagementToolbar({
           <BookmarkPlusIcon className="mr-2 size-4" />
           选中提问 ({selectedCount})
         </Button>
+        {selectedCount > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 rounded-sm border-red-300 bg-red-50 px-4 text-xs text-red-600 hover:bg-red-600 hover:text-white shadow-[2px_2px_0_rgba(220,38,38,0.1)] transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none font-serif font-bold tracking-widest"
+            onClick={onBatchDelete}
+            disabled={isBatchDeleting}
+          >
+            {isBatchDeleting ? (
+              <Loader2Icon className="mr-2 size-4 animate-spin" />
+            ) : (
+              <Trash2Icon className="mr-2 size-4" />
+            )}
+            批量删除 ({selectedCount})
+          </Button>
+        )}
         <button
           type="button"
           className="flex h-9 items-center gap-2 px-3 text-xs font-medium text-stone-500 transition hover:text-primary group"

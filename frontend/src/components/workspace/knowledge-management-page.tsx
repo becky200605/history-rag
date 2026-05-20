@@ -81,6 +81,7 @@ export default function KnowledgeManagementPage() {
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [retryingRowId, setRetryingRowId] = useState<string | null>(null);
   const [reparsingRowId, setReparsingRowId] = useState<string | null>(null);
   const [movingRecord, setMovingRecord] = useState<ManagedKnowledgeFile | null>(null);
@@ -405,6 +406,35 @@ export default function KnowledgeManagementPage() {
       toast.error(deleteError instanceof Error ? deleteError.message : "删除失败");
     } finally {
       setDeletingRecordId(null);
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedFiles.length === 0) return;
+    const confirmed = window.confirm(`确定要删除选中的 ${selectedFiles.length} 份档案吗？此操作不可撤销。`);
+    if (!confirmed) return;
+
+    setIsBatchDeleting(true);
+    let successCount = 0;
+    let failCount = 0;
+    for (const file of selectedFiles) {
+      try {
+        if (file.source === "global") {
+          await deleteMutation.mutateAsync(file.filename);
+        } else {
+          await deleteUserRecordMutation.mutateAsync(file.userRecordId ?? "");
+        }
+        successCount++;
+      } catch {
+        failCount++;
+      }
+    }
+    setIsBatchDeleting(false);
+    setSelectedRowIds([]);
+    if (failCount === 0) {
+      toast.success(`已删除 ${successCount} 份档案`);
+    } else {
+      toast.warning(`成功删除 ${successCount} 份，${failCount} 份删除失败`);
     }
   };
 
@@ -783,6 +813,8 @@ export default function KnowledgeManagementPage() {
                   selectedCount={selectedRowIds.length}
                   onToggleAllVisible={handleToggleAllVisible}
                   allVisibleSelected={allVisibleSelected}
+                  onBatchDelete={() => void handleBatchDelete()}
+                  isBatchDeleting={isBatchDeleting}
                 />
 
                 {isLoading ? <KnowledgeLoadingState /> : null}

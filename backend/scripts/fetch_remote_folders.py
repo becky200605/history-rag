@@ -73,7 +73,7 @@ def main() -> None:
     if args.write_registry:
         registry_path = Path(args.docs) / ".folders.json"
 
-        # Load existing entries to preserve timestamps
+        # Start from all existing entries (preserves empty folders + timestamps)
         existing: dict[str, dict] = {}
         if registry_path.exists():
             try:
@@ -84,29 +84,23 @@ def main() -> None:
             except Exception:
                 pass
 
-        # Collect all known folder paths (expand parent segments too)
-        known_folders: set[str] = set()
+        # Add any folders found in ingestion records (+ their parent segments)
+        now = _utc_now()
         for folder in folder_map:
             if folder == "(未分类)":
                 continue
-            # Add the folder and all its parent paths
             parts = folder.split("/")
             for depth in range(1, len(parts) + 1):
-                known_folders.add("/".join(parts[:depth]))
+                path = "/".join(parts[:depth])
+                if path not in existing:
+                    existing[path] = {"path": path, "created_at": now, "updated_at": now}
 
-        now = _utc_now()
-        entries: list[dict] = []
-        for path in sorted(known_folders):
-            if path in existing:
-                entries.append(existing[path])
-            else:
-                entries.append({"path": path, "created_at": now, "updated_at": now})
-
+        entries = sorted(existing.values(), key=lambda e: e["path"])
         registry_path.write_text(
             json.dumps({"folders": entries}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        print(f"✅ Wrote {len(entries)} folder paths to {registry_path}")
+        print(f"✅ Wrote {len(entries)} folder paths to {registry_path} (including empty folders)")
 
 
 if __name__ == "__main__":

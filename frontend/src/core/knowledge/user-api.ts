@@ -349,6 +349,29 @@ export async function deleteUserKnowledgeRecord(recordId: string): Promise<{
   return (await response.json()) as { success: boolean; message: string };
 }
 
+export async function deleteUserKnowledgeRecordArtifactsOnly(recordId: string): Promise<{
+  success: boolean;
+  message: string;
+}> {
+  const response = await fetch(
+    `${USER_KNOWLEDGE_API_BASE}/${encodeURIComponent(recordId)}/artifacts-only`,
+    {
+      method: "DELETE",
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: "Failed to delete personal knowledge record artifacts" }));
+    throw new Error(
+      error.message ??
+        error.detail ??
+        "Failed to delete personal knowledge record artifacts",
+    );
+  }
+  return (await response.json()) as { success: boolean; message: string };
+}
+
 export async function retryUserKnowledgeRecordIndexing(
   recordId: string,
 ): Promise<{

@@ -8,6 +8,7 @@ import {
   deleteUserKnowledgeFolder,
   deleteUserKnowledgeSpace,
   deleteUserKnowledgeRecord,
+  deleteUserKnowledgeRecordArtifactsOnly,
   getUserKnowledgeRecordContent,
   importGlobalKnowledgeToPersonal,
   listUserKnowledgeSpaces,
@@ -199,6 +200,21 @@ export function useDeleteUserKnowledgeRecord() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (recordId: string) => deleteUserKnowledgeRecord(recordId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_QUERY_KEY,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: USER_KNOWLEDGE_SPACES_QUERY_KEY,
+      });
+    },
+  });
+}
+
+export function useDeleteUserKnowledgeRecordArtifactsOnly() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (recordId: string) => deleteUserKnowledgeRecordArtifactsOnly(recordId),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: USER_KNOWLEDGE_QUERY_KEY,

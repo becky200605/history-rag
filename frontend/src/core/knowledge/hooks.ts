@@ -6,6 +6,7 @@ import {
   deleteKnowledgeFolder,
   deleteKnowledgeDocument,
   deleteKnowledgeFile,
+  deleteKnowledgeFileArtifactsOnly,
   listKnowledgeDocuments,
   listKnowledgeFiles,
   loadKnowledgeStatus,
@@ -76,6 +77,18 @@ export function useDeleteKnowledgeFile() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (filename: string) => deleteKnowledgeFile(filename),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
+    },
+  });
+}
+
+export function useDeleteKnowledgeFileArtifactsOnly() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (filename: string) => deleteKnowledgeFileArtifactsOnly(filename),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });

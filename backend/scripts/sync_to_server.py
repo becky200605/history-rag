@@ -148,11 +148,11 @@ def _rsync(local: Path, remote: str) -> None:
     subprocess.run(["rsync", "-az", str(local), remote], check=True)
 
 
-def _scan(res_dir: Path) -> list[str]:
+def _scan(res_dir: Path, force: bool = False) -> list[str]:
     results = []
     for p in sorted(res_dir.glob("*.pdf.json")):
         filename = p.stem  # "book.pdf"
-        if _is_synced(res_dir, filename):
+        if not force and _is_synced(res_dir, filename):
             continue
         try:
             record = json.loads(p.read_text(encoding="utf-8"))

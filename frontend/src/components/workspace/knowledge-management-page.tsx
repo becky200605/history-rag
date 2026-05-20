@@ -14,6 +14,7 @@ import {
   useCreateKnowledgeFolder,
   useDeleteKnowledgeFolder,
   useDeleteKnowledgeFile,
+  useDeleteKnowledgeFileArtifactsOnly,
   useKnowledgeFiles,
   useReparseKnowledgeFile,
   useRenameKnowledgeFolder,
@@ -26,6 +27,7 @@ import {
   useCreateUserKnowledgeFolder,
   useDeleteUserKnowledgeFolder,
   useDeleteUserKnowledgeRecord,
+  useDeleteUserKnowledgeRecordArtifactsOnly,
   useMoveUserKnowledgeRecord,
   useReparseUserKnowledgeRecord,
   useRenameUserKnowledgeFolder,
@@ -109,7 +111,9 @@ export default function KnowledgeManagementPage() {
   const renameUserFolderMutation = useRenameUserKnowledgeFolder();
   const deleteUserFolderMutation = useDeleteUserKnowledgeFolder();
   const deleteMutation = useDeleteKnowledgeFile();
+  const deleteArtifactsOnlyMutation = useDeleteKnowledgeFileArtifactsOnly();
   const deleteUserRecordMutation = useDeleteUserKnowledgeRecord();
+  const deleteUserRecordArtifactsOnlyMutation = useDeleteUserKnowledgeRecordArtifactsOnly();
   const retryMutation = useRetryKnowledgeFileIndexing();
   const reparseMutation = useReparseKnowledgeFile();
   const retryUserRecordMutation = useRetryUserKnowledgeRecordIndexing();
@@ -409,6 +413,9 @@ export default function KnowledgeManagementPage() {
     }
   };
 
+  // Active processing statuses — files in these states cannot be deleted at all.
+  const ACTIVE_STATUSES = new Set(["queued", "queued_ocr", "parsing", "queued_embedding", "indexing"]);
+
   const handleBatchDelete = async () => {
     if (selectedFiles.length === 0) return;
     const confirmed = window.confirm(`确定要删除选中的 ${selectedFiles.length} 份档案吗？此操作不可撤销。`);
@@ -417,24 +424,50 @@ export default function KnowledgeManagementPage() {
     setIsBatchDeleting(true);
     let successCount = 0;
     let failCount = 0;
+    let skippedCount = 0;
+
     for (const file of selectedFiles) {
+      const status = file.parseStatus ?? "";
+
+      // Skip files that are currently being processed — deleting them mid-flight is unsafe.
+      if (ACTIVE_STATUSES.has(status)) {
+        skippedCount++;
+        continue;
+      }
+
       try {
-        if (file.source === "global") {
-          await deleteMutation.mutateAsync(file.filename);
+        if (status === "indexed") {
+          // File is in the vector index → must go through the full delete path so the
+          // Qdrant index is updated accordingly.
+          if (file.source === "global") {
+            await deleteMutation.mutateAsync(file.filename);
+          } else {
+            await deleteUserRecordMutation.mutateAsync(file.userRecordId ?? "");
+          }
         } else {
-          await deleteUserRecordMutation.mutateAsync(file.userRecordId ?? "");
+          // File is only uploaded / parsed / failed → skip the vector DB entirely and
+          // just remove the physical files (.book-metadata, .ingestion record, PDF).
+          if (file.source === "global") {
+            await deleteArtifactsOnlyMutation.mutateAsync(file.filename);
+          } else {
+            await deleteUserRecordArtifactsOnlyMutation.mutateAsync(file.userRecordId ?? "");
+          }
         }
         successCount++;
       } catch {
         failCount++;
       }
     }
+
     setIsBatchDeleting(false);
     setSelectedRowIds([]);
-    if (failCount === 0) {
+
+    if (skippedCount > 0 && failCount === 0) {
+      toast.success(`已删除 ${successCount} 份档案，${skippedCount} 份正在处理中已跳过`);
+    } else if (failCount === 0) {
       toast.success(`已删除 ${successCount} 份档案`);
     } else {
-      toast.warning(`成功删除 ${successCount} 份，${failCount} 份删除失败`);
+      toast.warning(`成功删除 ${successCount} 份，${failCount} 份删除失败${skippedCount > 0 ? `，${skippedCount} 份跳过` : ""}`);
     }
   };
 

@@ -568,7 +568,7 @@ def _cleanup_existing_upload(user_id: str, source_filename: str) -> None:
         existing_record_id = existing.get("id")
         if existing_record_id:
             delete_user_knowledge_records(user_id, [str(existing_record_id)])
-        cleanup_user_record_artifacts(existing)
+        cleanup_user_record_artifacts(existing, user_id=user_id)
         remove_user_record(user_id, str(existing["id"]))
 
 
@@ -1022,7 +1022,7 @@ def delete_user_knowledge_record(user_id: str, record_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Personal knowledge record not found")
 
     record_id_value = str(record.get("id") or record_id)
-    cleanup_user_record_artifacts(record)
+    cleanup_user_record_artifacts(record, user_id=user_id)
     remove_user_record(user_id, record_id)
     delete_user_knowledge_records(user_id, [record_id_value])
     mark_user_records_indexed(user_id)
@@ -1030,6 +1030,31 @@ def delete_user_knowledge_record(user_id: str, record_id: str) -> dict:
         "success": True,
         "message": f"Deleted personal knowledge record {record_id}",
     }
+
+
+@router.delete("/{record_id}/artifacts-only", response_model=dict)
+def delete_user_knowledge_record_artifacts_only(user_id: str, record_id: str) -> dict:
+    """Delete all on-disk artifacts for a personal knowledge record that has NOT been indexed yet.
+
+    Skips the Qdrant operation, making it fast for batch-deleting records in the
+    uploaded / parsed / failed state.  Returns 409 if the record is currently being
+    processed or has already been indexed (use the regular DELETE endpoint instead).
+    """
+    record = load_user_record(user_id, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Personal knowledge record not found")
+
+    parse_status = str(record.get("parse_status") or "")
+    active_statuses = {"queued", "queued_ocr", "parsing", "queued_embedding", "indexing"}
+    if parse_status in active_statuses:
+        raise HTTPException(status_code=409, detail=f"Record is currently being processed (status={parse_status}); cannot delete now")
+    if parse_status == "indexed":
+        raise HTTPException(status_code=409, detail="Record is already indexed; use the regular delete endpoint to also update the vector index")
+
+    cleanup_user_record_artifacts(record, user_id=user_id)
+    remove_user_record(user_id, record_id)
+    mark_user_records_indexed(user_id)
+    return {"success": True, "message": f"Deleted all artifacts for personal knowledge record {record_id}"}
 
 
 @router.post("/{record_id}/reindex", response_model=dict)

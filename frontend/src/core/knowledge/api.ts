@@ -397,6 +397,24 @@ export async function deleteKnowledgeFile(
   return (await response.json()) as { success: boolean; message: string };
 }
 
+export async function deleteKnowledgeFileArtifactsOnly(
+  filename: string,
+): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/knowledge/uploads/${encodeURIComponent(filename)}/artifacts-only`,
+    {
+      method: "DELETE",
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ detail: "Failed to delete file artifacts" }));
+    throw new Error(error.detail ?? "Failed to delete file artifacts");
+  }
+  return (await response.json()) as { success: boolean; message: string };
+}
+
 export async function retryKnowledgeFileIndexing(
   filename: string,
 ): Promise<{ success: boolean; message: string }> {

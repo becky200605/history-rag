@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
 
-from src.community.knowledge_base.book_metadata import normalize_folder_path
+from src.community.knowledge_base.book_metadata import derive_book_metadata_filename, get_book_metadata_dir, normalize_folder_path
 from src.community.knowledge_base.document_parsers import infer_parse_method as infer_document_parse_method
 from src.community.knowledge_base.structured_document import save_structured_document
 from src.community.knowledge_base.user_spaces import (
@@ -472,7 +472,7 @@ def persist_user_text_document(
     return path.name
 
 
-def cleanup_user_record_artifacts(record: dict[str, Any]) -> None:
+def cleanup_user_record_artifacts(record: dict[str, Any], *, user_id: str | None = None) -> None:
     def _unlink_if_exists(path_value: Any) -> None:
         if not path_value:
             return
@@ -494,3 +494,8 @@ def cleanup_user_record_artifacts(record: dict[str, Any]) -> None:
     preview_path = record.get("preview_path")
     if preview_path and preview_filename and preview_filename != source_filename:
         _unlink_if_exists(preview_path)
+
+    if user_id and source_filename:
+        docs_dir = get_user_docs_dir(user_id)
+        book_meta_path = get_book_metadata_dir(docs_dir) / derive_book_metadata_filename(str(source_filename))
+        _unlink_if_exists(book_meta_path)

@@ -16,6 +16,8 @@ from src.community.knowledge_base.book_metadata import (
     MetadataField,
     build_book_metadata_prompt_input,
     build_book_metadata_record,
+    derive_book_metadata_filename,
+    get_book_metadata_dir,
     load_book_metadata_for_source,
     normalize_folder_path,
     resolve_book_folder,
@@ -817,6 +819,11 @@ def _cleanup_global_record_artifacts(record: dict[str, Any], *, remove_source_fi
         if preview_path.exists():
             preview_path.unlink()
 
+    if source_filename:
+        book_meta_path = get_book_metadata_dir(docs_dir) / derive_book_metadata_filename(str(source_filename))
+        if book_meta_path.exists():
+            book_meta_path.unlink()
+
 
 def _build_global_ingestion_record(
     filename: str,
@@ -1589,6 +1596,47 @@ async def delete_global_knowledge_file(filename: str) -> dict:
         raise HTTPException(status_code=500, detail=f"Failed to delete {filename}: {exc}")
     finally:
         _release_knowledge_operation_lock()
+
+
+@router.delete("/uploads/{filename}/artifacts-only", response_model=dict, summary="Delete Artifacts for Non-indexed Global File")
+async def delete_global_knowledge_file_artifacts_only(filename: str) -> dict:
+    """Delete all on-disk artifacts for a file that has NOT been indexed yet.
+
+    Unlike the full delete endpoint, this path skips the Qdrant operation and the
+    global operation lock, making it safe and fast for batch-deleting files that are
+    only in the uploaded / parsed / failed state.  Returns 409 if the file is currently
+    being processed or has already been indexed (use the regular DELETE endpoint instead).
+    """
+    config = get_knowledge_base_config()
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
+    if "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    record = _find_global_record(filename)
+    if record is None:
+        docs_dir = get_global_docs_dir()
+        file_path = docs_dir / filename
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+        file_path.unlink()
+        return {"success": True, "message": f"Deleted {filename}"}
+
+    parse_status = str(record.get("parse_status") or "")
+    active_statuses = {"queued", "queued_ocr", "parsing", "queued_embedding", "indexing"}
+    if parse_status in active_statuses:
+        raise HTTPException(status_code=409, detail=f"File is currently being processed (status={parse_status}); cannot delete now")
+    if parse_status == "indexed":
+        raise HTTPException(status_code=409, detail="File is already indexed; use the regular delete endpoint to also update the vector index")
+
+    source_filename = str(record.get("source_filename") or filename)
+    try:
+        _cleanup_global_record_artifacts(record, remove_source_file=True)
+        _remove_global_record(source_filename)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete artifacts for {filename}: {exc}")
+
+    return {"success": True, "message": f"Deleted all artifacts for {filename}"}
 
 
 @router.post("/uploads/{filename}/build-index", response_model=dict, summary="Build Qdrant Index for Pre-parsed File")

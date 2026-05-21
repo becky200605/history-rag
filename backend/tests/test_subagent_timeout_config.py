@@ -84,7 +84,7 @@ class TestSubagentOverrideConfig:
 class TestSubagentsAppConfigDefaults:
     def test_default_timeout(self):
         config = SubagentsAppConfig()
-        assert config.timeout_seconds == 900
+        assert config.timeout_seconds == 3600
         assert config.model_name is None
         assert config.thinking_enabled is None
 
@@ -258,7 +258,7 @@ class TestLoadSubagentsConfig:
     def test_load_empty_dict_uses_defaults(self):
         load_subagents_config_from_dict({})
         cfg = get_subagents_app_config()
-        assert cfg.timeout_seconds == 900
+        assert cfg.timeout_seconds == 3600
         assert cfg.model_name is None
         assert cfg.thinking_enabled is None
         assert cfg.agents == {}

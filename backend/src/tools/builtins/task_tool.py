@@ -135,7 +135,7 @@ def task_tool(
         last_status = None
         last_message_count = 0  # Track how many AI messages we've already sent
         # Polling timeout: execution timeout + 60s buffer, checked every 1s
-        max_poll_count = config.timeout_seconds + 60
+        max_poll_count = (config.timeout_seconds + 60) * 4  # 250ms polling interval
 
         logger.info(f"[trace={trace_id}] Started background task {task_id} (subagent={subagent_type}, timeout={config.timeout_seconds}s, polling_limit={max_poll_count} polls)")
 
@@ -227,15 +227,14 @@ def task_tool(
                 return f"Task cancelled. Error: {result.error}"
 
             # Still running, wait before next poll
-            time.sleep(1)  # Poll every 1 second for responsive frontend updates
+            time.sleep(0.25)  # Poll every 250ms — matches execution_future.result() slice
             poll_count += 1
 
             # Polling timeout as a safety net (in case thread pool timeout doesn't work)
-            # Set to execution timeout + 60s buffer, in 5s poll intervals
-            # This catches edge cases where the background task gets stuck
+            # Set to (execution timeout + 60s) × 4 because we now poll at 250ms intervals
             if poll_count > max_poll_count:
-                timeout_minutes = config.timeout_seconds // 60
-                logger.error(f"[trace={trace_id}] Task {task_id} polling timed out after {poll_count} polls (should have been caught by thread pool timeout)")
+                elapsed_s = poll_count * 0.25
+                logger.error(f"[trace={trace_id}] Task {task_id} polling timed out after {poll_count} polls ({elapsed_s:.0f}s) (should have been caught by thread pool timeout)")
                 append_error_doc(
                     location="task_tool",
                     summary="Task polling exceeded safety timeout",
@@ -249,7 +248,7 @@ def task_tool(
                     },
                 )
                 writer({"type": "task_timed_out", "task_id": task_id})
-                return f"Task timed out. Error: Task polling timed out after {timeout_minutes} minutes. This may indicate the background task is stuck. Status: {result.status.value}"
+                return f"Task timed out. Error: Task polling timed out after {elapsed_s:.0f}s. This may indicate the background task is stuck. Status: {result.status.value}"
     except Exception as exc:
         logger.exception(f"[trace={trace_id}] task_tool failed before subagent completion")
         append_error_doc(

@@ -29,9 +29,9 @@ class SubagentsAppConfig(BaseModel):
     """Configuration for the subagent system."""
 
     timeout_seconds: int = Field(
-        default=900,
+        default=3600,
         ge=1,
-        description="Default timeout in seconds for all subagents (default: 900 = 15 minutes)",
+        description="Default timeout in seconds for all subagents (default: 3600 = 1 hour)",
     )
     model_name: str | None = Field(
         default=None,

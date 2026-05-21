@@ -18,7 +18,7 @@ class SubagentConfig:
             Defaults to False — subagents are tool-call-heavy; reasoning overhead is better
             spent in the lead agent that orchestrates and synthesises results.
         max_turns: Maximum number of agent turns before stopping.
-        timeout_seconds: Maximum execution time in seconds (default: 900 = 15 minutes).
+        timeout_seconds: Maximum execution time in seconds (default: 3600 = 1 hour).
     """
 
     name: str

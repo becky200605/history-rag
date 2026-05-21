@@ -688,6 +688,10 @@ class SubagentExecutor:
                 logged_ai_message_debug_signatures: set[tuple[str, str]] = set()
                 _step_start = time.monotonic()
                 _step_label = "init"
+                _llm_total_s: float = 0.0
+                _tool_total_s: float = 0.0
+                _llm_count: int = 0
+                _tool_count: int = 0
                 for mode, payload in agent.stream(  # type: ignore[arg-type]
                     state,
                     config=run_config,
@@ -704,8 +708,12 @@ class SubagentExecutor:
                             last_step_msg = step_msgs[-1]
                             if isinstance(last_step_msg, AIMessage):
                                 _step_label = "llm_call"
+                                _llm_total_s += elapsed
+                                _llm_count += 1
                             elif isinstance(last_step_msg, ToolMessage):
                                 _step_label = "tool_exec"
+                                _tool_total_s += elapsed
+                                _tool_count += 1
                         logger.info(
                             "[trace=%s] subagent=%s step=%s elapsed=%.2fs msgs=%d",
                             self.trace_id,
@@ -816,6 +824,19 @@ class SubagentExecutor:
                             )
 
                 logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} completed execution")
+                log_subtask_event(
+                    "subtask_timing_summary",
+                    trace_id=self.trace_id,
+                    task_id=result.task_id,
+                    subagent_name=self.config.name,
+                    llm_calls=_llm_count,
+                    llm_total_s=round(_llm_total_s, 2),
+                    llm_avg_s=round(_llm_total_s / _llm_count, 2) if _llm_count else 0,
+                    tool_calls=_tool_count,
+                    tool_total_s=round(_tool_total_s, 2),
+                    tool_avg_s=round(_tool_total_s / _tool_count, 2) if _tool_count else 0,
+                    total_s=round(_llm_total_s + _tool_total_s, 2),
+                )
                 self._raise_if_cancelled(result, cancel_event)
 
                 if final_state is None:

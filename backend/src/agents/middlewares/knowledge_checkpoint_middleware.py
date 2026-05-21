@@ -163,17 +163,29 @@ class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
         if self._response_calls_checkpoint(response):
             return response
 
+        grounding_count = self._grounding_count_since_checkpoint(request.messages)
+        logger.info(
+            "KnowledgeCheckpointMiddleware: enforcement triggered (grounding_count=%d >= threshold=%d), forcing checkpoint via retry.",
+            grounding_count,
+            CHECKPOINT_ENFORCEMENT_THRESHOLD,
+        )
         retry_request = request
         retry_response = response
-        for appendix in CHECKPOINT_RETRY_APPENDICES:
+        for attempt, appendix in enumerate(CHECKPOINT_RETRY_APPENDICES, 1):
             retry_request = self._build_retry_request(retry_request, appendix)
             retry_response = handler(retry_request)
             if self._response_calls_checkpoint(retry_response):
+                logger.info(
+                    "KnowledgeCheckpointMiddleware: model called checkpoint on retry %d/%d.",
+                    attempt,
+                    len(CHECKPOINT_RETRY_APPENDICES),
+                )
                 return retry_response
 
         logger.warning(
-            "KnowledgeCheckpointMiddleware could not force a checkpoint after %s substantive grounding results.",
-            self._grounding_count_since_checkpoint(request.messages),
+            "KnowledgeCheckpointMiddleware: model ignored %d retry prompt(s), giving up (grounding_count=%d).",
+            len(CHECKPOINT_RETRY_APPENDICES),
+            grounding_count,
         )
         return retry_response
 
@@ -188,16 +200,28 @@ class KnowledgeCheckpointMiddleware(AgentMiddleware[AgentState]):
         if self._response_calls_checkpoint(response):
             return response
 
+        grounding_count = self._grounding_count_since_checkpoint(request.messages)
+        logger.info(
+            "KnowledgeCheckpointMiddleware: enforcement triggered (grounding_count=%d >= threshold=%d), forcing checkpoint via retry.",
+            grounding_count,
+            CHECKPOINT_ENFORCEMENT_THRESHOLD,
+        )
         retry_request = request
         retry_response = response
-        for appendix in CHECKPOINT_RETRY_APPENDICES:
+        for attempt, appendix in enumerate(CHECKPOINT_RETRY_APPENDICES, 1):
             retry_request = self._build_retry_request(retry_request, appendix)
             retry_response = await handler(retry_request)
             if self._response_calls_checkpoint(retry_response):
+                logger.info(
+                    "KnowledgeCheckpointMiddleware: model called checkpoint on retry %d/%d.",
+                    attempt,
+                    len(CHECKPOINT_RETRY_APPENDICES),
+                )
                 return retry_response
 
         logger.warning(
-            "KnowledgeCheckpointMiddleware could not force a checkpoint after %s substantive grounding results.",
+            "KnowledgeCheckpointMiddleware: model ignored %d retry prompt(s), giving up (grounding_count=%d).",
+            len(CHECKPOINT_RETRY_APPENDICES),
             self._grounding_count_since_checkpoint(request.messages),
         )
         return retry_response

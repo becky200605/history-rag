@@ -149,6 +149,15 @@ def _read_preview(path: Path, max_chars: int = 800) -> str:
         return ""
 
 
+def _read_preview_and_excerpt(path: Path, *, preview_chars: int = 800, excerpt_chars: int = 3600) -> tuple[str, str]:
+    """Read a preview file exactly once and return (preview, search_excerpt) to avoid double file opens."""
+    try:
+        text = path.read_text(encoding="utf-8")[:excerpt_chars]
+    except Exception:
+        return "", ""
+    return text[:preview_chars], text
+
+
 def _sample_search_excerpt(text: str, slice_size: int = 1200) -> str:
     text = text.strip()
     if not text:
@@ -592,8 +601,7 @@ def _build_global_entries(
             preview = ""
             search_excerpt = ""
             if include_search_content:
-                preview = _read_preview(preview_path)
-                search_excerpt = _read_preview(preview_path, max_chars=3600)
+                preview, search_excerpt = _read_preview_and_excerpt(preview_path)
                 if not preview and payload.get("structured_path"):
                     preview = _read_structured_preview(Path(str(payload["structured_path"])))
                 if not search_excerpt and payload.get("structured_path"):
@@ -632,8 +640,7 @@ def _build_global_entries(
         preview = ""
         search_excerpt = ""
         if include_search_content:
-            preview = _read_preview(path)
-            search_excerpt = _read_preview(path, max_chars=3600)
+            preview, search_excerpt = _read_preview_and_excerpt(path)
             if not preview and path.suffix.lower() == ".structured" and path.name.endswith(".structured.json"):
                 preview = _read_structured_preview(path)
             if not search_excerpt and path.suffix.lower() == ".structured" and path.name.endswith(".structured.json"):
@@ -682,8 +689,8 @@ def _build_thread_entries(
         preview = ""
         search_excerpt = ""
         if include_search_content:
-            preview = _read_preview(preview_path) if preview_path.exists() else ""
-            search_excerpt = _read_preview(preview_path, max_chars=3600) if preview_path.exists() else ""
+            if preview_path.exists():
+                preview, search_excerpt = _read_preview_and_excerpt(preview_path)
             if not preview and structured_path:
                 preview = _read_structured_preview(structured_path)
             if not search_excerpt and structured_path:
@@ -744,8 +751,8 @@ def _build_user_entries(
         preview = ""
         search_excerpt = ""
         if include_search_content:
-            preview = _read_preview(preview_path) if preview_path.exists() else ""
-            search_excerpt = _read_preview(preview_path, max_chars=3600) if preview_path.exists() else ""
+            if preview_path.exists():
+                preview, search_excerpt = _read_preview_and_excerpt(preview_path)
             if not preview and structured_path:
                 preview = _read_structured_preview(structured_path)
             if not search_excerpt and structured_path:
@@ -773,7 +780,7 @@ def _build_user_entries(
     return entries
 
 
-_CATALOG_CACHE_TTL: float = 30.0  # seconds — short enough to pick up newly ingested books
+_CATALOG_CACHE_TTL: float = 300.0  # seconds — mtime check handles new ingestions; TTL is just a safety net
 _catalog_cache: dict[tuple, tuple[list, float, float]] = {}  # key -> (entries, monotonic_build_time, mtime_sig)
 _catalog_cache_lock = threading.Lock()
 
@@ -817,8 +824,17 @@ def _get_cached_catalog(cache_key: tuple, docs_root: Path, user_id: str | None, 
     return cached_entries  # type: ignore[return-value]
 
 
-def _store_catalog_cache(cache_key: tuple, docs_root: Path, user_id: str | None, thread_id: str | None, entries: "list[BookCatalogEntry]") -> None:
-    mtime_sig = _catalog_mtime_signature(docs_root, user_id, thread_id)
+def _store_catalog_cache(
+    cache_key: tuple,
+    docs_root: Path,
+    user_id: str | None,
+    thread_id: str | None,
+    entries: "list[BookCatalogEntry]",
+    *,
+    mtime_sig: float | None = None,
+) -> None:
+    if mtime_sig is None:
+        mtime_sig = _catalog_mtime_signature(docs_root, user_id, thread_id)
     with _catalog_cache_lock:
         _catalog_cache[cache_key] = (entries, time.monotonic(), mtime_sig)
 
@@ -832,21 +848,51 @@ def list_book_catalog(
 ) -> list[BookCatalogEntry]:
     """List user/global knowledge books plus optional current-thread uploads.
 
-    Results are cached for up to ``_CATALOG_CACHE_TTL`` seconds and
-    invalidated whenever the mtime of any relevant root directory changes.
-    This allows parallel sub-task ``book_search`` calls within the same batch
-    to share a single catalog build rather than each rebuilding from disk.
+    Cache hierarchy (fastest to slowest):
+      1. In-memory cache (300-second TTL + mtime invalidation) — zero I/O.
+      2. SQLite persistent cache — one SELECT query, survives process restarts.
+      3. File-based build — reads preview/structured files; result written to both
+         in-memory cache and SQLite for subsequent calls.
+
+    SQLite caching is only applied when ``include_search_content=True`` because
+    that is the expensive path (requires reading 1 774+ preview files).
+    ``include_search_content=False`` builds are already fast (no file I/O).
     """
     started_at = time.perf_counter()
     kb_config = get_knowledge_base_config()
     docs_root = resolve_project_path(kb_config.docs_path)
 
     cache_key = (thread_id or "", user_id or "", include_search_content)
+
+    # 1. In-memory cache check.
     cached = _get_cached_catalog(cache_key, docs_root, user_id, thread_id)
     if cached is not None:
-        logger.debug("Book catalog cache hit: thread_id=%s user_id=%s include_search_content=%s caller=%s", thread_id, user_id, include_search_content, caller or "")
+        logger.debug(
+            "Book catalog in-memory hit: thread_id=%s user_id=%s include_search_content=%s caller=%s",
+            thread_id, user_id, include_search_content, caller or "",
+        )
         return cached
 
+    # Compute mtime signature once and reuse for both the SQLite check and cache storage.
+    mtime_sig = _catalog_mtime_signature(docs_root, user_id, thread_id)
+
+    # 2. SQLite persistent cache check (only for full-content builds).
+    if include_search_content:
+        from src.community.knowledge_base.book_catalog_index import load_catalog_from_db  # noqa: PLC0415
+
+        db_entries = load_catalog_from_db(thread_id, user_id, mtime_sig)
+        if db_entries is not None:
+            # Warm the in-memory cache so subsequent calls within TTL are free.
+            with _catalog_cache_lock:
+                _catalog_cache[cache_key] = (db_entries, time.monotonic(), mtime_sig)
+            logger.info(
+                "Book catalog SQLite hit: thread_id=%s user_id=%s entries=%s caller=%s elapsed_ms=%.1f",
+                thread_id, user_id, len(db_entries), caller or "",
+                (time.perf_counter() - started_at) * 1000,
+            )
+            return db_entries
+
+    # 3. Build from files (slow path).
     metadata_index = _load_book_metadata_index(docs_root)
     entries = _build_global_entries(
         docs_root,
@@ -874,20 +920,30 @@ def list_book_catalog(
         )
         thread_count = len(thread_entries)
         entries = thread_entries + entries
+
     elapsed_ms = (time.perf_counter() - started_at) * 1000
     logger.info(
-        "Book catalog built: global=%s user=%s thread=%s total=%s thread_id=%s has_user=%s include_search_content=%s caller=%s elapsed_ms=%.1f",
-        global_count,
-        user_count,
-        thread_count,
-        len(entries),
-        thread_id,
-        bool(user_id),
-        include_search_content,
-        caller or "",
-        elapsed_ms,
+        "Book catalog built from files: global=%s user=%s thread=%s total=%s "
+        "thread_id=%s has_user=%s include_search_content=%s caller=%s elapsed_ms=%.1f",
+        global_count, user_count, thread_count, len(entries),
+        thread_id, bool(user_id), include_search_content, caller or "", elapsed_ms,
     )
-    _store_catalog_cache(cache_key, docs_root, user_id, thread_id, entries)
+
+    # Persist to in-memory cache (pass the already-computed mtime_sig to avoid a redundant stat call).
+    _store_catalog_cache(cache_key, docs_root, user_id, thread_id, entries, mtime_sig=mtime_sig)
+
+    # Persist to SQLite (background write so the caller isn't blocked).
+    if include_search_content:
+        import threading as _threading  # noqa: PLC0415
+        from src.community.knowledge_base.book_catalog_index import save_catalog_to_db  # noqa: PLC0415
+
+        _threading.Thread(
+            target=save_catalog_to_db,
+            args=(thread_id, user_id, mtime_sig, entries),
+            daemon=True,
+            name="catalog-sqlite-write",
+        ).start()
+
     return entries
 
 

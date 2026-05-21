@@ -653,11 +653,6 @@ class SubagentExecutor:
                 started_at=datetime.now(UTC),
             )
 
-        # Compile the agent graph once outside the retry loop — graph compilation
-        # is non-trivial (middleware binding, tool schema extraction) and should not
-        # be repeated on each retry attempt.
-        agent = self._create_agent()
-
         # Build config once; it is stateless and safe to reuse across retries.
         run_config: RunnableConfig = {
             "recursion_limit": self.config.max_turns,
@@ -671,9 +666,16 @@ class SubagentExecutor:
             run_config["configurable"] = {"thread_id": self.thread_id}
             context["thread_id"] = self.thread_id
 
+        # Compile agent inside retry loop so transient failures during model
+        # initialisation (e.g. API connection blip) are retried rather than
+        # causing an immediate permanent failure.
+        agent = None
+
         for attempt in range(1, _MAX_EXECUTION_RETRIES + 1):
             try:
                 self._raise_if_cancelled(result, cancel_event)
+                if agent is None:
+                    agent = self._create_agent()
                 state = self._build_initial_state(task, task_title=task_title)
 
                 logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting execution (attempt {attempt}/{_MAX_EXECUTION_RETRIES}) with max_turns={self.config.max_turns}")
@@ -817,44 +819,59 @@ class SubagentExecutor:
                 self._raise_if_cancelled(result, cancel_event)
 
                 if final_state is None:
-                    logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no final state")
-                    result.result = "No response generated"
-                else:
-                    # Extract the final message - find the last AIMessage
-                    messages = final_state.get("messages", [])
-                    logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} final messages count: {len(messages)}")
+                    error_msg = (
+                        f"Subagent {self.config.name} produced no output: "
+                        "the LangGraph stream yielded no values events — "
+                        "the agent may have terminated immediately (recursion limit, graph error, or empty run)"
+                    )
+                    logger.error("[trace=%s] attempt=%d/%d %s", self.trace_id, attempt, _MAX_EXECUTION_RETRIES, error_msg)
+                    raise RuntimeError(error_msg)
 
-                    # Extract result from the last AIMessage (normal completion path).
-                    last_ai_message = None
-                    for msg in reversed(messages):
-                        if isinstance(msg, AIMessage):
-                            last_ai_message = msg
-                            break
+                # Extract the final message - find the last AIMessage
+                messages = final_state.get("messages", [])
+                logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} final messages count: {len(messages)}")
 
-                    if last_ai_message is not None:
-                        content = last_ai_message.content
-                        # Handle both str and list content types for the final result
-                        if isinstance(content, str):
-                            result.result = content
-                        elif isinstance(content, list):
-                            # Extract text from list of content blocks for final result only
-                            text_parts = []
-                            for block in content:
-                                if isinstance(block, str):
-                                    text_parts.append(block)
-                                elif isinstance(block, dict) and "text" in block:
-                                    text_parts.append(block["text"])
-                            result.result = "\n".join(text_parts) if text_parts else "No text content in response"
-                        else:
-                            result.result = str(content)
-                    elif messages:
-                        # Fallback: use the last message if no AIMessage found
-                        last_message = messages[-1]
-                        logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no AIMessage found, using last message: {type(last_message)}")
-                        result.result = str(last_message.content) if hasattr(last_message, "content") else str(last_message)
+                # Extract result from the last AIMessage (normal completion path).
+                last_ai_message = None
+                for msg in reversed(messages):
+                    if isinstance(msg, AIMessage):
+                        last_ai_message = msg
+                        break
+
+                if last_ai_message is not None:
+                    content = last_ai_message.content
+                    # Handle both str and list content types for the final result
+                    if isinstance(content, str):
+                        result.result = content
+                    elif isinstance(content, list):
+                        # Extract text from list of content blocks for final result only
+                        text_parts = []
+                        for block in content:
+                            if isinstance(block, str):
+                                text_parts.append(block)
+                            elif isinstance(block, dict) and "text" in block:
+                                text_parts.append(block["text"])
+                        result.result = "\n".join(text_parts) if text_parts else None
                     else:
-                        logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no messages in final state")
-                        result.result = "No response generated"
+                        result.result = str(content) or None
+                elif messages:
+                    # No AIMessage at all — last message is probably a ToolMessage (unusual)
+                    last_message = messages[-1]
+                    logger.warning(
+                        f"[trace={self.trace_id}] Subagent {self.config.name} no AIMessage found, "
+                        f"last message type: {type(last_message).__name__}"
+                    )
+                    result.result = str(last_message.content) if hasattr(last_message, "content") else None
+
+                if not result.result or not result.result.strip():
+                    last_msg_type = type(messages[-1]).__name__ if messages else "none"
+                    error_msg = (
+                        f"Subagent {self.config.name} finished but produced an empty result "
+                        f"(last_msg_type={last_msg_type}, total_msgs={len(messages)}). "
+                        "The agent may have stopped without writing a final answer."
+                    )
+                    logger.error("[trace=%s] attempt=%d/%d %s", self.trace_id, attempt, _MAX_EXECUTION_RETRIES, error_msg)
+                    raise RuntimeError(error_msg)
 
                 result.structured_result = _parse_structured_subtask_result(result.result)
                 if final_state is not None:
@@ -997,17 +1014,17 @@ class SubagentExecutor:
                 _background_tasks[task_id].started_at = datetime.now(UTC)
                 result_holder = _background_tasks[task_id]
                 started_at = result_holder.started_at
-            log_subtask_event(
-                "subtask_async_started",
-                trace_id=self.trace_id,
-                task_id=task_id,
-                subagent_name=self.config.name,
-            )
             cancel_event = threading.Event()
             cancel_logged = False
             cancel_grace_deadline_monotonic: float | None = None
 
             try:
+                log_subtask_event(
+                    "subtask_async_started",
+                    trace_id=self.trace_id,
+                    task_id=task_id,
+                    subagent_name=self.config.name,
+                )
                 # Submit execution to execution pool with timeout
                 # Pass result_holder so execute() can update it in real-time
                 execution_future: Future = _execution_pool.submit(

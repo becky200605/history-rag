@@ -39,20 +39,6 @@ models:
       extra_body:
         reasoning_effort: "none"
 
-  - name: deepseek-v4-flash
-    display_name: DeepSeek V4 Flash
-    use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
-    model: deepseek/deepseek-v4-flash
-    base_url: https://openrouter.ai/api/v1
-    api_key: $OPENAI_API_KEY
-    max_tokens: 8192
-    request_timeout: 18000
-    supports_thinking: true
-    when_thinking_enabled:
-      extra_body:
-        include_reasoning: true
-    supports_vision: false
-
   - name: qwen/qwen3.6-27b
     display_name: OpenRouter Qwen3.6-27b
     use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
@@ -95,18 +81,23 @@ models:
         include_reasoning: true
     supports_vision: true
 
-  - name: deepseek-v4-pro
-    display_name: DeepSeek V4 Pro
+  - name: deepseek-v4-flash
+    display_name: deepseek-v4-flash
     use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
-    model: deepseek/deepseek-v4-pro
-    base_url: https://openrouter.ai/api/v1
-    api_key: $OPENAI_API_KEY
+    model: deepseek-v4-flash
+    base_url: https://api.deepseek.com
+    api_key: sk-e5fb0c729e034256b7980fd387abf759
     max_tokens: 8192
     request_timeout: 18000
     supports_thinking: true
     when_thinking_enabled:
       extra_body:
-        include_reasoning: true
+        thinking: 
+          type: enabled
+    when_thinking_disabled:
+      extra_body:
+        thinking: 
+          type: disabled
     supports_vision: false
 
   # - name: gpt-5.4-mini

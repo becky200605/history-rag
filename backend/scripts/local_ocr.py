@@ -243,8 +243,8 @@ def _scan_for_new(input_dir: Path, output_dir: Path, inflight: set[str], force: 
 
 
 def _run(args: argparse.Namespace) -> int:
-    input_dir = Path(args.input).resolve()
-    output_dir = Path(args.output).resolve()
+    input_dir = Path(args.input).expanduser().resolve()
+    output_dir = Path(args.output).expanduser().resolve()
     done_dir = output_dir / "done"
 
     if not input_dir.is_dir():

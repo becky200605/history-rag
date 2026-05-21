@@ -846,6 +846,15 @@ class SubagentExecutor:
                         "the agent may have terminated immediately (recursion limit, graph error, or empty run)"
                     )
                     logger.error("[trace=%s] attempt=%d/%d %s", self.trace_id, attempt, _MAX_EXECUTION_RETRIES, error_msg)
+                    log_subtask_event(
+                        "subtask_empty_stream",
+                        trace_id=self.trace_id,
+                        task_id=result.task_id,
+                        subagent_name=self.config.name,
+                        attempt=attempt,
+                        max_retries=_MAX_EXECUTION_RETRIES,
+                        error=error_msg,
+                    )
                     raise RuntimeError(error_msg)
 
                 # Extract the final message - find the last AIMessage
@@ -892,6 +901,17 @@ class SubagentExecutor:
                         "The agent may have stopped without writing a final answer."
                     )
                     logger.error("[trace=%s] attempt=%d/%d %s", self.trace_id, attempt, _MAX_EXECUTION_RETRIES, error_msg)
+                    log_subtask_event(
+                        "subtask_empty_result",
+                        trace_id=self.trace_id,
+                        task_id=result.task_id,
+                        subagent_name=self.config.name,
+                        attempt=attempt,
+                        max_retries=_MAX_EXECUTION_RETRIES,
+                        last_msg_type=last_msg_type,
+                        total_msgs=len(messages),
+                        error=error_msg,
+                    )
                     raise RuntimeError(error_msg)
 
                 result.structured_result = _parse_structured_subtask_result(result.result)

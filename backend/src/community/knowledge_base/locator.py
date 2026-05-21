@@ -92,7 +92,8 @@ def _is_exact_identifier_match(
 def _locate_global_document(doc_id: str | None, filename: str | None) -> LocatedDocument | None:
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
     ingestion_dir = docs_root / ".ingestion"
-    best_match: tuple[float, LocatedDocument] | None = None
+    # Store (score, source_filename, record) — defer payload loading until we know the winner.
+    best_match: tuple[float, str, dict] | None = None
 
     if ingestion_dir.exists():
         for record_path in sorted(ingestion_dir.glob("*.json")):
@@ -107,111 +108,162 @@ def _locate_global_document(doc_id: str | None, filename: str | None) -> Located
             if not source_filename:
                 continue
             candidate_doc_id = derive_global_doc_id(docs_root, docs_root / source_filename)
-            structured_path = record.get("structured_path")
-            payload = load_structured_document(Path(str(structured_path))) if structured_path else None
-            if not payload:
-                continue
 
-            document = LocatedDocument(
-                doc_id=candidate_doc_id,
-                title=str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
-                filename=source_filename,
-                scope="global",
-                source_url=str(record.get("preview_artifact_url") or f"/api/knowledge/docs/{source_filename}"),
-                original_url=record.get("source_artifact_url"),
-                payload=payload,
-            )
-
+            # Check identity BEFORE loading the (potentially large) structured document.
             if _is_exact_identifier_match(
                 requested_doc_id=doc_id,
                 requested_filename=filename,
                 candidate_doc_id=candidate_doc_id,
                 candidate_filename=source_filename,
             ):
-                return document
+                structured_path = record.get("structured_path")
+                payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+                if not payload:
+                    continue
+                return LocatedDocument(
+                    doc_id=candidate_doc_id,
+                    title=str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
+                    filename=source_filename,
+                    scope="global",
+                    source_url=str(record.get("preview_artifact_url") or f"/api/knowledge/docs/{source_filename}"),
+                    original_url=record.get("source_artifact_url"),
+                    payload=payload,
+                )
 
             if filename:
                 score = _filename_match_score(filename, source_filename)
                 if score >= 70.0 and (best_match is None or score > best_match[0]):
-                    best_match = (score, document)
-    return best_match[1] if best_match else None
+                    best_match = (score, source_filename, record)
+
+    # Load the payload for the single best fuzzy match (at most one file read).
+    if best_match is None:
+        return None
+    _, best_filename, best_record = best_match
+    best_doc_id = derive_global_doc_id(docs_root, docs_root / best_filename)
+    structured_path = best_record.get("structured_path")
+    payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+    if not payload:
+        return None
+    return LocatedDocument(
+        doc_id=best_doc_id,
+        title=str(payload.get("title") or best_record.get("display_title") or Path(best_filename).stem),
+        filename=best_filename,
+        scope="global",
+        source_url=str(best_record.get("preview_artifact_url") or f"/api/knowledge/docs/{best_filename}"),
+        original_url=best_record.get("source_artifact_url"),
+        payload=payload,
+    )
 
 
 def _locate_thread_document(thread_id: str, doc_id: str | None, filename: str | None) -> LocatedDocument | None:
     uploads_dir = get_paths().sandbox_uploads_dir(thread_id)
-    best_match: tuple[float, LocatedDocument] | None = None
+    best_match: tuple[float, str, dict] | None = None
     for record in list_ingestion_records(thread_id):
         source_filename = str(record.get("source_filename") or record.get("index_target_filename") or "")
         if not source_filename:
             continue
         candidate_doc_id = derive_thread_doc_id(Path(source_filename))
-        structured_path = record.get("structured_path")
-        payload = load_structured_document(Path(str(structured_path))) if structured_path else None
-        if not payload:
-            continue
 
-        document = LocatedDocument(
-            doc_id=candidate_doc_id,
-            title=str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
-            filename=source_filename,
-            scope="thread",
-            source_url=str(record.get("preview_artifact_url") or record.get("source_artifact_url") or ""),
-            original_url=record.get("source_artifact_url"),
-            payload=payload,
-        )
-
+        # Check identity BEFORE loading the structured document.
         if _is_exact_identifier_match(
             requested_doc_id=doc_id,
             requested_filename=filename,
             candidate_doc_id=candidate_doc_id,
             candidate_filename=source_filename,
         ):
-            return document
+            structured_path = record.get("structured_path")
+            payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+            if not payload:
+                continue
+            return LocatedDocument(
+                doc_id=candidate_doc_id,
+                title=str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
+                filename=source_filename,
+                scope="thread",
+                source_url=str(record.get("preview_artifact_url") or record.get("source_artifact_url") or ""),
+                original_url=record.get("source_artifact_url"),
+                payload=payload,
+            )
 
         if filename:
             score = _filename_match_score(filename, source_filename)
             if score >= 70.0 and (best_match is None or score > best_match[0]):
-                best_match = (score, document)
-    return best_match[1] if best_match else None
+                best_match = (score, source_filename, record)
+
+    # Load the payload for the single best fuzzy match (at most one file read).
+    if best_match is None:
+        return None
+    _, best_filename, best_record = best_match
+    best_doc_id = derive_thread_doc_id(Path(best_filename))
+    structured_path = best_record.get("structured_path")
+    payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+    if not payload:
+        return None
+    return LocatedDocument(
+        doc_id=best_doc_id,
+        title=str(payload.get("title") or best_record.get("display_title") or Path(best_filename).stem),
+        filename=best_filename,
+        scope="thread",
+        source_url=str(best_record.get("preview_artifact_url") or best_record.get("source_artifact_url") or ""),
+        original_url=best_record.get("source_artifact_url"),
+        payload=payload,
+    )
 
 
 def _locate_user_document(user_id: str, doc_id: str | None, filename: str | None) -> LocatedDocument | None:
     docs_dir = get_paths().user_knowledge_docs_dir(user_id)
-    best_match: tuple[float, LocatedDocument] | None = None
+    best_match: tuple[float, str, str, dict] | None = None
     for record in list_user_records(user_id):
         source_filename = str(record.get("source_filename") or record.get("index_target_filename") or "")
         record_id = str(record.get("id") or "")
         if not source_filename or not record_id:
             continue
         candidate_doc_id = derive_user_doc_id(record_id)
-        structured_path = record.get("structured_path")
-        payload = load_structured_document(Path(str(structured_path))) if structured_path else None
-        if not payload:
-            continue
 
-        document = LocatedDocument(
-            doc_id=candidate_doc_id,
-            title=str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
-            filename=source_filename,
-            scope="user",
-            source_url=build_user_doc_public_url(source_filename),
-            original_url=build_user_doc_public_url(source_filename),
-            payload=payload,
-        )
-
+        # Check identity BEFORE loading the structured document.
         if _is_exact_identifier_match(
             requested_doc_id=doc_id,
             requested_filename=filename,
             candidate_doc_id=candidate_doc_id,
             candidate_filename=source_filename,
         ):
-            return document
+            structured_path = record.get("structured_path")
+            payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+            if not payload:
+                continue
+            return LocatedDocument(
+                doc_id=candidate_doc_id,
+                title=str(payload.get("title") or record.get("display_title") or Path(source_filename).stem),
+                filename=source_filename,
+                scope="user",
+                source_url=build_user_doc_public_url(source_filename),
+                original_url=build_user_doc_public_url(source_filename),
+                payload=payload,
+            )
 
         if filename:
             score = _filename_match_score(filename, source_filename)
             if score >= 70.0 and (best_match is None or score > best_match[0]):
-                best_match = (score, document)
-    return best_match[1] if best_match else None
+                best_match = (score, source_filename, record_id, record)
+
+    # Load the payload for the single best fuzzy match (at most one file read).
+    if best_match is None:
+        return None
+    _, best_filename, best_record_id, best_record = best_match
+    best_doc_id = derive_user_doc_id(best_record_id)
+    structured_path = best_record.get("structured_path")
+    payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+    if not payload:
+        return None
+    return LocatedDocument(
+        doc_id=best_doc_id,
+        title=str(payload.get("title") or best_record.get("display_title") or Path(best_filename).stem),
+        filename=best_filename,
+        scope="user",
+        source_url=build_user_doc_public_url(best_filename),
+        original_url=build_user_doc_public_url(best_filename),
+        payload=payload,
+    )
 
 
 def locate_document(

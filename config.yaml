@@ -244,8 +244,8 @@ sandbox:
 # Subagents are background workers delegated tasks by the lead agent
 
 subagents:
-  # Default timeout in seconds for all subagents (default: 900 = 15 minutes)
-  timeout_seconds: 900
+  # Default timeout in seconds for all subagents
+  timeout_seconds: 3600
   # Optional default model for all subagents.
   model_name: MiniMax-M2.7
   # Optional default thinking mode for all subagents.

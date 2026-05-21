@@ -12,6 +12,7 @@ from src.gateway.routers import (
     artifacts,
     chunked_upload,
     knowledge,
+    logs,
     mcp,
     memory,
     models,
@@ -120,6 +121,10 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
                 "description": "Knowledge base management and document retrieval",
             },
             {
+                "name": "logs",
+                "description": "Operational log viewer for diagnostics (subtasks, errors)",
+            },
+            {
                 "name": "health",
                 "description": "Health check and system status endpoints",
             },
@@ -177,6 +182,9 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
 
     # Chunked Upload API is mounted at /api/knowledge/uploads
     app.include_router(chunked_upload.router)
+
+    # Logs API is mounted at /api/logs
+    app.include_router(logs.router)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict:

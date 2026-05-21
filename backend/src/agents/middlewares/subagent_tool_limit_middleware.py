@@ -1,11 +1,10 @@
 """Stop a subagent that has burned through its tool-call budget.
 
 When a subtask exceeds TOOL_CALL_LIMIT tool invocations without returning a
-final answer, the middleware forces the model to call the ``complete_task``
-tool with a structured summary of current findings.  Because ``complete_task``
-routes the subagent graph to END and leaves a ``ToolMessage`` behind, the
-executor picks it up exactly like a normal task completion — including
-frontend display and vector-DB persistence.
+final answer, the middleware forces the model to stop calling tools and write
+a structured text response in the same format as a normal task completion
+(## 任务结果 / ## 关键发现 / ## 关键引文 / ## 未解决缺口), which the executor
+then parses exactly like any other successful run.
 """
 
 from __future__ import annotations
@@ -23,31 +22,30 @@ logger = logging.getLogger(__name__)
 
 TOOL_CALL_LIMIT = 20
 
-# The tool name the middleware forces the model to call when the budget is exhausted.
-_FORCE_COMPLETE_TOOL = "complete_task"
-
 _WRAP_UP_MESSAGE = (
-    "【系统强制终止】本子任务已累计调用工具 {count} 次，超过上限（{limit} 次），执行时间过长，必须立即停止。\n\n"
-    "请现在调用 `complete_task` 工具，按以下要求填写各参数：\n\n"
-    "**summary**（必填，请如实说明）\n"
-    "  - 当前已找到哪些内容，结论是什么\n"
-    "  - 为什么执行了这么久还没完成？请给出具体原因，例如：\n"
-    "      · 涉及书目太多、逐本检索耗时过长\n"
-    "      · 检索关键词匹配率低、反复尝试仍无结果\n"
-    "      · 问题范围太宽，单次子任务无法覆盖\n"
-    "      · 书中确实缺乏相关记载\n"
-    "      · 其他原因（请具体说明）\n\n"
-    "**findings**（已确认的关键事实，附 citation；没有则传 []）\n\n"
-    "**citations**（可复用的引文，没有则传 []）\n\n"
-    "**open_questions**（未解决的问题与建议，请明确告诉主任务下一步应该怎么做）\n"
-    "  - 还有哪些关键问题没有答案\n"
-    "  - 建议主任务如何跟进：①把范围拆细重新检索 ②换书目或检索方向 ③该问题在现有书库中可能无答案，建议放弃\n\n"
-    "只调用 `complete_task`，不要调用任何其他工具。"
+    "【系统强制终止】本子任务已累计调用工具 {count} 次，超过上限（{limit} 次），执行时间过长，必须立即停止检索。\n\n"
+    "请现在直接输出最终答案，不要再调用任何工具。按以下固定格式输出：\n\n"
+    "## 任务结果\n"
+    "- 直接说明当前已找到哪些内容，结论是什么\n"
+    "- 同时如实说明为什么执行了这么久还没完成，给出具体原因，例如：\n"
+    "    · 涉及书目太多、逐本检索耗时过长\n"
+    "    · 检索关键词匹配率低、反复尝试仍无结果\n"
+    "    · 问题范围太宽，单次子任务无法覆盖\n"
+    "    · 书中确实缺乏相关记载\n"
+    "    · 其他原因（请具体说明）\n\n"
+    "## 关键发现\n"
+    "- 已确认的关键事实，附 citation；没有则写「- 无充分证据支持结论」\n\n"
+    "## 关键引文\n"
+    "- 可复用的 citation 行；没有则写「- 无」\n\n"
+    "## 未解决缺口\n"
+    "- 还有哪些关键问题没有答案\n"
+    "- 建议主任务如何跟进：①把范围拆细重新检索 ②换书目或检索方向 ③该问题在现有书库中可能无答案，建议放弃\n\n"
+    "只输出上述四个 Markdown 节，不要调用任何工具。"
 )
 
 _HARD_STOP_MESSAGE = (
-    "【再次警告】你仍在尝试调用其他工具，这是不允许的。\n"
-    "必须立刻调用 `complete_task`，用现有信息填写 summary / findings / citations / open_questions，立即终止本次任务。"
+    "【再次警告】你仍在尝试调用工具，这是不允许的。\n"
+    "必须立刻输出文本答案（## 任务结果 / ## 关键发现 / ## 关键引文 / ## 未解决缺口），不得再调用任何工具。"
 )
 
 
@@ -58,18 +56,11 @@ class SubagentToolLimitMiddleware(AgentMiddleware[AgentState]):
         """Count ToolMessage instances in the conversation history."""
         return sum(1 for m in messages if isinstance(m, ToolMessage))
 
-    def _response_needs_enforcement(self, response: ModelResponse) -> bool:
-        """Return True if the response calls tools *other than* ``complete_task``.
-
-        A response that calls only ``complete_task`` is the desired outcome —
-        the model has accepted our wrap-up instruction — and must be passed
-        through unchanged so the agent can execute the tool and terminate.
-        """
+    def _response_has_tool_calls(self, response: ModelResponse) -> bool:
+        """Return True if the response contains any tool calls."""
         for message in response.result:
             if isinstance(message, AIMessage) and message.tool_calls:
-                for tc in message.tool_calls:
-                    if tc.get("name") != _FORCE_COMPLETE_TOOL:
-                        return True
+                return True
         return False
 
     def _build_wrap_up_request(self, request: ModelRequest, count: int) -> ModelRequest:
@@ -90,8 +81,8 @@ class SubagentToolLimitMiddleware(AgentMiddleware[AgentState]):
         *,
         tool_count: int,
     ) -> ModelResponse:
-        if not self._response_needs_enforcement(response):
-            # Model already stopped (text response) or called complete_task — pass through.
+        if not self._response_has_tool_calls(response):
+            # Model already produced a text response — pass through.
             return response
 
         # Inject wrap-up instruction and hard-stop reminder together, then retry once.
@@ -99,11 +90,11 @@ class SubagentToolLimitMiddleware(AgentMiddleware[AgentState]):
             self._build_wrap_up_request(request, tool_count)
         )
         retry_response = handler(retry_request)
-        if not self._response_needs_enforcement(retry_response):
+        if not self._response_has_tool_calls(retry_response):
             return retry_response
 
         logger.warning(
-            "SubagentToolLimitMiddleware: model still calling disallowed tools after hard stop "
+            "SubagentToolLimitMiddleware: model still calling tools after hard stop "
             "(tool_count=%d). Returning last response.",
             tool_count,
         )
@@ -117,18 +108,18 @@ class SubagentToolLimitMiddleware(AgentMiddleware[AgentState]):
         *,
         tool_count: int,
     ) -> ModelResponse:
-        if not self._response_needs_enforcement(response):
+        if not self._response_has_tool_calls(response):
             return response
 
         retry_request = self._build_hard_stop_request(
             self._build_wrap_up_request(request, tool_count)
         )
         retry_response = await handler(retry_request)
-        if not self._response_needs_enforcement(retry_response):
+        if not self._response_has_tool_calls(retry_response):
             return retry_response
 
         logger.warning(
-            "SubagentToolLimitMiddleware: model still calling disallowed tools after hard stop "
+            "SubagentToolLimitMiddleware: model still calling tools after hard stop "
             "(tool_count=%d). Returning last response.",
             tool_count,
         )

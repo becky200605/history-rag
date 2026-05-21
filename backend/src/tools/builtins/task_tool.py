@@ -105,15 +105,9 @@ def task_tool(
         # Get available tools (excluding task tool to prevent nesting)
         # Lazy import to avoid circular dependency
         from src.tools import get_available_tools
-        from src.tools.builtins.complete_task_tool import complete_task_tool
 
         # Subagents should not have subagent tools enabled (prevent recursive nesting)
         tools = get_available_tools(model_name=parent_model, subagent_enabled=False)
-
-        # complete_task is a subagent-only tool: the system forces subagents to call it
-        # when the tool-call budget is exhausted.  Add it if not already present.
-        if not any(t.name == "complete_task" for t in tools):
-            tools = [*tools, complete_task_tool]
 
         # Create executor
         executor = SubagentExecutor(
@@ -140,8 +134,8 @@ def task_tool(
         poll_count = 0
         last_status = None
         last_message_count = 0  # Track how many AI messages we've already sent
-        # Polling timeout: execution timeout + 60s buffer, checked every 5s
-        max_poll_count = (config.timeout_seconds + 60) // 5
+        # Polling timeout: execution timeout + 60s buffer, checked every 1s
+        max_poll_count = config.timeout_seconds + 60
 
         logger.info(f"[trace={trace_id}] Started background task {task_id} (subagent={subagent_type}, timeout={config.timeout_seconds}s, polling_limit={max_poll_count} polls)")
 
@@ -233,7 +227,7 @@ def task_tool(
                 return f"Task cancelled. Error: {result.error}"
 
             # Still running, wait before next poll
-            time.sleep(5)  # Poll every 5 seconds
+            time.sleep(1)  # Poll every 1 second for responsive frontend updates
             poll_count += 1
 
             # Polling timeout as a safety net (in case thread pool timeout doesn't work)

@@ -653,24 +653,28 @@ class SubagentExecutor:
                 started_at=datetime.now(UTC),
             )
 
+        # Compile the agent graph once outside the retry loop — graph compilation
+        # is non-trivial (middleware binding, tool schema extraction) and should not
+        # be repeated on each retry attempt.
+        agent = self._create_agent()
+
+        # Build config once; it is stateless and safe to reuse across retries.
+        run_config: RunnableConfig = {
+            "recursion_limit": self.config.max_turns,
+        }
+        context = {
+            "trace_id": self.trace_id,
+            "subtask_id": result.task_id,
+            "subagent_name": self.config.name,
+        }
+        if self.thread_id:
+            run_config["configurable"] = {"thread_id": self.thread_id}
+            context["thread_id"] = self.thread_id
+
         for attempt in range(1, _MAX_EXECUTION_RETRIES + 1):
             try:
                 self._raise_if_cancelled(result, cancel_event)
-                agent = self._create_agent()
                 state = self._build_initial_state(task, task_title=task_title)
-
-                # Build config with thread_id for sandbox access and recursion limit
-                run_config: RunnableConfig = {
-                    "recursion_limit": self.config.max_turns,
-                }
-                context = {
-                    "trace_id": self.trace_id,
-                    "subtask_id": result.task_id,
-                    "subagent_name": self.config.name,
-                }
-                if self.thread_id:
-                    run_config["configurable"] = {"thread_id": self.thread_id}
-                    context["thread_id"] = self.thread_id
 
                 logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting execution (attempt {attempt}/{_MAX_EXECUTION_RETRIES}) with max_turns={self.config.max_turns}")
 
@@ -680,6 +684,8 @@ class SubagentExecutor:
                 aggregated_chunks: dict[str, AIMessageChunk] = {}
                 logged_tool_call_signatures: set[tuple[str, str, str]] = set()
                 logged_ai_message_debug_signatures: set[tuple[str, str]] = set()
+                _step_start = time.monotonic()
+                _step_label = "init"
                 for mode, payload in agent.stream(  # type: ignore[arg-type]
                     state,
                     config=run_config,
@@ -688,7 +694,26 @@ class SubagentExecutor:
                 ):
                     self._raise_if_cancelled(result, cancel_event)
                     if mode == "values":
+                        elapsed = time.monotonic() - _step_start
                         final_state = payload
+                        # Label the completed step by looking at the last message type
+                        step_msgs = payload.get("messages", [])
+                        if step_msgs:
+                            last_step_msg = step_msgs[-1]
+                            if isinstance(last_step_msg, AIMessage):
+                                _step_label = "llm_call"
+                            elif isinstance(last_step_msg, ToolMessage):
+                                _step_label = "tool_exec"
+                        logger.info(
+                            "[trace=%s] subagent=%s step=%s elapsed=%.2fs msgs=%d",
+                            self.trace_id,
+                            self.config.name,
+                            _step_label,
+                            elapsed,
+                            len(step_msgs),
+                        )
+                        _step_start = time.monotonic()
+                        _step_label = "unknown"
                         continue
 
                     if mode != "messages":
@@ -799,54 +824,37 @@ class SubagentExecutor:
                     messages = final_state.get("messages", [])
                     logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} final messages count: {len(messages)}")
 
-                    # Priority 1: complete_task ToolMessage (forced completion via budget enforcement).
-                    # When the subagent calls complete_task the graph terminates via Command(goto=END)
-                    # immediately, so there is no subsequent AIMessage — the ToolMessage IS the result.
-                    forced_completion_text: str | None = None
+                    # Extract result from the last AIMessage (normal completion path).
+                    last_ai_message = None
                     for msg in reversed(messages):
-                        if isinstance(msg, ToolMessage) and getattr(msg, "name", None) == "complete_task":
-                            forced_completion_text = str(msg.content) if msg.content else None
+                        if isinstance(msg, AIMessage):
+                            last_ai_message = msg
                             break
 
-                    if forced_completion_text:
-                        result.result = forced_completion_text
-                        logger.info(
-                            "[trace=%s] Subagent %s result extracted from complete_task ToolMessage",
-                            self.trace_id,
-                            self.config.name,
-                        )
-                    else:
-                        # Priority 2: last AIMessage (normal completion path).
-                        last_ai_message = None
-                        for msg in reversed(messages):
-                            if isinstance(msg, AIMessage):
-                                last_ai_message = msg
-                                break
-
-                        if last_ai_message is not None:
-                            content = last_ai_message.content
-                            # Handle both str and list content types for the final result
-                            if isinstance(content, str):
-                                result.result = content
-                            elif isinstance(content, list):
-                                # Extract text from list of content blocks for final result only
-                                text_parts = []
-                                for block in content:
-                                    if isinstance(block, str):
-                                        text_parts.append(block)
-                                    elif isinstance(block, dict) and "text" in block:
-                                        text_parts.append(block["text"])
-                                result.result = "\n".join(text_parts) if text_parts else "No text content in response"
-                            else:
-                                result.result = str(content)
-                        elif messages:
-                            # Fallback: use the last message if no AIMessage found
-                            last_message = messages[-1]
-                            logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no AIMessage found, using last message: {type(last_message)}")
-                            result.result = str(last_message.content) if hasattr(last_message, "content") else str(last_message)
+                    if last_ai_message is not None:
+                        content = last_ai_message.content
+                        # Handle both str and list content types for the final result
+                        if isinstance(content, str):
+                            result.result = content
+                        elif isinstance(content, list):
+                            # Extract text from list of content blocks for final result only
+                            text_parts = []
+                            for block in content:
+                                if isinstance(block, str):
+                                    text_parts.append(block)
+                                elif isinstance(block, dict) and "text" in block:
+                                    text_parts.append(block["text"])
+                            result.result = "\n".join(text_parts) if text_parts else "No text content in response"
                         else:
-                            logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no messages in final state")
-                            result.result = "No response generated"
+                            result.result = str(content)
+                    elif messages:
+                        # Fallback: use the last message if no AIMessage found
+                        last_message = messages[-1]
+                        logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no AIMessage found, using last message: {type(last_message)}")
+                        result.result = str(last_message.content) if hasattr(last_message, "content") else str(last_message)
+                    else:
+                        logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no messages in final state")
+                        result.result = "No response generated"
 
                 result.structured_result = _parse_structured_subtask_result(result.result)
                 if final_state is not None:

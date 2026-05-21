@@ -1,8 +1,9 @@
 """Stop a subagent that has burned through its tool-call budget.
 
 When a subtask exceeds TOOL_CALL_LIMIT tool invocations without returning a
-final answer, the middleware forces the model to stop calling tools and write
-a structured text response in the same format as a normal task completion
+final answer, the middleware strips all tools from the next model call so the
+model physically cannot invoke any more tools and must write a structured text
+response in the same format as a normal task completion
 (## 任务结果 / ## 关键发现 / ## 关键引文 / ## 未解决缺口), which the executor
 then parses exactly like any other successful run.
 """
@@ -16,7 +17,7 @@ from typing import override
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 logger = logging.getLogger(__name__)
 
@@ -43,87 +44,30 @@ _WRAP_UP_MESSAGE = (
     "只输出上述四个 Markdown 节，不要调用任何工具。"
 )
 
-_HARD_STOP_MESSAGE = (
-    "【再次警告】你仍在尝试调用工具，这是不允许的。\n"
-    "必须立刻输出文本答案（## 任务结果 / ## 关键发现 / ## 关键引文 / ## 未解决缺口），不得再调用任何工具。"
-)
-
 
 class SubagentToolLimitMiddleware(AgentMiddleware[AgentState]):
-    """Enforce a hard tool-call budget on subagents."""
+    """Enforce a hard tool-call budget on subagents.
+
+    Once the conversation contains TOOL_CALL_LIMIT ToolMessages, the next
+    model call is rewritten so that:
+      1. A wrap-up instruction is appended to the message history.
+      2. The tool list is set to [] — the model has no tools available and
+         MUST produce a plain-text response.
+
+    This is a hard enforcement: no retry loop is needed because the model
+    physically cannot call any tools when ``tools=[]``.
+    """
 
     def _count_tool_calls(self, messages: list) -> int:
         """Count ToolMessage instances in the conversation history."""
         return sum(1 for m in messages if isinstance(m, ToolMessage))
 
-    def _response_has_tool_calls(self, response: ModelResponse) -> bool:
-        """Return True if the response contains any tool calls."""
-        for message in response.result:
-            if isinstance(message, AIMessage) and message.tool_calls:
-                return True
-        return False
-
-    def _build_wrap_up_request(self, request: ModelRequest, count: int) -> ModelRequest:
+    def _build_stripped_request(self, request: ModelRequest, tool_count: int) -> ModelRequest:
+        """Inject wrap-up instruction and strip all tools from the request."""
         reminder = HumanMessage(
-            content=_WRAP_UP_MESSAGE.format(count=count, limit=TOOL_CALL_LIMIT)
+            content=_WRAP_UP_MESSAGE.format(count=tool_count, limit=TOOL_CALL_LIMIT)
         )
-        return request.override(messages=[*request.messages, reminder])
-
-    def _build_hard_stop_request(self, request: ModelRequest) -> ModelRequest:
-        reminder = HumanMessage(content=_HARD_STOP_MESSAGE)
-        return request.override(messages=[*request.messages, reminder])
-
-    def _enforce(
-        self,
-        request: ModelRequest,
-        response: ModelResponse,
-        handler: Callable[[ModelRequest], ModelResponse],
-        *,
-        tool_count: int,
-    ) -> ModelResponse:
-        if not self._response_has_tool_calls(response):
-            # Model already produced a text response — pass through.
-            return response
-
-        # Inject wrap-up instruction and hard-stop reminder together, then retry once.
-        retry_request = self._build_hard_stop_request(
-            self._build_wrap_up_request(request, tool_count)
-        )
-        retry_response = handler(retry_request)
-        if not self._response_has_tool_calls(retry_response):
-            return retry_response
-
-        logger.warning(
-            "SubagentToolLimitMiddleware: model still calling tools after hard stop "
-            "(tool_count=%d). Returning last response.",
-            tool_count,
-        )
-        return retry_response
-
-    async def _aenforce(
-        self,
-        request: ModelRequest,
-        response: ModelResponse,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
-        *,
-        tool_count: int,
-    ) -> ModelResponse:
-        if not self._response_has_tool_calls(response):
-            return response
-
-        retry_request = self._build_hard_stop_request(
-            self._build_wrap_up_request(request, tool_count)
-        )
-        retry_response = await handler(retry_request)
-        if not self._response_has_tool_calls(retry_response):
-            return retry_response
-
-        logger.warning(
-            "SubagentToolLimitMiddleware: model still calling tools after hard stop "
-            "(tool_count=%d). Returning last response.",
-            tool_count,
-        )
-        return retry_response
+        return request.override(messages=[*request.messages, reminder], tools=[])
 
     @override
     def wrap_model_call(
@@ -131,16 +75,15 @@ class SubagentToolLimitMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelCallResult:
-        response = handler(request)
         tool_count = self._count_tool_calls(request.messages)
         if tool_count < TOOL_CALL_LIMIT:
-            return response
+            return handler(request)
         logger.info(
-            "SubagentToolLimitMiddleware: tool call limit reached (count=%d, limit=%d), forcing wrap-up.",
+            "SubagentToolLimitMiddleware: tool call limit reached (count=%d, limit=%d), stripping tools.",
             tool_count,
             TOOL_CALL_LIMIT,
         )
-        return self._enforce(request, response, handler, tool_count=tool_count)
+        return handler(self._build_stripped_request(request, tool_count))
 
     @override
     async def awrap_model_call(
@@ -148,13 +91,12 @@ class SubagentToolLimitMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelCallResult:
-        response = await handler(request)
         tool_count = self._count_tool_calls(request.messages)
         if tool_count < TOOL_CALL_LIMIT:
-            return response
+            return await handler(request)
         logger.info(
-            "SubagentToolLimitMiddleware: tool call limit reached (count=%d, limit=%d), forcing wrap-up.",
+            "SubagentToolLimitMiddleware: tool call limit reached (count=%d, limit=%d), stripping tools.",
             tool_count,
             TOOL_CALL_LIMIT,
         )
-        return await self._aenforce(request, response, handler, tool_count=tool_count)
+        return await handler(self._build_stripped_request(request, tool_count))

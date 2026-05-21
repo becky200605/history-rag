@@ -29,4 +29,4 @@ class SubagentConfig:
     model: str = "inherit"
     thinking_enabled: bool = False
     max_turns: int = 200
-    timeout_seconds: int = 900
+    timeout_seconds: int = 3600

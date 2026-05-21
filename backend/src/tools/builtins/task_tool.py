@@ -105,9 +105,15 @@ def task_tool(
         # Get available tools (excluding task tool to prevent nesting)
         # Lazy import to avoid circular dependency
         from src.tools import get_available_tools
+        from src.tools.builtins.complete_task_tool import complete_task_tool
 
         # Subagents should not have subagent tools enabled (prevent recursive nesting)
         tools = get_available_tools(model_name=parent_model, subagent_enabled=False)
+
+        # complete_task is a subagent-only tool: the system forces subagents to call it
+        # when the tool-call budget is exhausted.  Add it if not already present.
+        if not any(t.name == "complete_task" for t in tools):
+            tools = [*tools, complete_task_tool]
 
         # Create executor
         executor = SubagentExecutor(

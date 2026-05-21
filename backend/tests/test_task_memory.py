@@ -739,3 +739,120 @@ def test_search_task_memory_does_not_retry_non_transient_error(monkeypatch: Any)
     except ValueError:
         pass
     assert attempt_count == 1
+
+
+# ---------------------------------------------------------------------------
+# _count_distinct_books_in_citation_registry
+# ---------------------------------------------------------------------------
+
+def _make_citation_entry(source_title: str) -> dict:
+    """Build a minimal citation registry entry with citation_source_title in URL."""
+    from urllib.parse import urlencode
+    query = urlencode({"citation_source_title": source_title, "other": "param"})
+    return {"id": "1", "label": source_title, "url": f"http://example.com/doc?{query}"}
+
+
+def _make_citation_entry_label_only(label: str) -> dict:
+    """Registry entry with no parseable URL — falls back to label."""
+    return {"id": "2", "label": label, "url": ""}
+
+
+def test_count_distinct_books_empty_registry() -> None:
+    from src.community.knowledge_base.task_memory import _count_distinct_books_in_citation_registry
+    assert _count_distinct_books_in_citation_registry(None) == 0
+    assert _count_distinct_books_in_citation_registry([]) == 0
+
+
+def test_count_distinct_books_single_book() -> None:
+    from src.community.knowledge_base.task_memory import _count_distinct_books_in_citation_registry
+    registry = [_make_citation_entry("史书甲"), _make_citation_entry("史书甲")]
+    assert _count_distinct_books_in_citation_registry(registry) == 1
+
+
+def test_count_distinct_books_multiple_books() -> None:
+    from src.community.knowledge_base.task_memory import _count_distinct_books_in_citation_registry
+    registry = [
+        _make_citation_entry("史书甲"),
+        _make_citation_entry("史书乙"),
+        _make_citation_entry("史书丙"),
+        _make_citation_entry("史书甲"),  # duplicate
+    ]
+    assert _count_distinct_books_in_citation_registry(registry) == 3
+
+
+def test_count_distinct_books_falls_back_to_label() -> None:
+    from src.community.knowledge_base.task_memory import _count_distinct_books_in_citation_registry
+    registry = [
+        _make_citation_entry_label_only("史书甲"),
+        _make_citation_entry_label_only("史书乙"),
+        _make_citation_entry_label_only("史书甲"),
+    ]
+    assert _count_distinct_books_in_citation_registry(registry) == 2
+
+
+# ---------------------------------------------------------------------------
+# render_task_memory_matches — citation diversity warning
+# ---------------------------------------------------------------------------
+
+def _make_match_with_registry(registry: list[dict], citations: list[str] | None = None) -> dict:
+    return {
+        "metadata": {
+            "title": "测试子任务",
+            "task_level": "subtask",
+            "query": "测试 query",
+            "summary": "找到了一些结果",
+            "findings": ["发现 A"],
+            "citations": citations or ["[citation:1](http://example.com)"],
+            "open_questions": [],
+            "citation_registry": registry,
+        },
+        "score": 0.85,
+        "weighted_score": 0.85,
+    }
+
+
+def test_render_shows_narrow_citation_warning_for_one_book() -> None:
+    from src.community.knowledge_base.task_memory import render_task_memory_matches
+    registry = [_make_citation_entry("唯一的书")]
+    result = render_task_memory_matches([_make_match_with_registry(registry)])
+    assert "引用书目较少" in result
+    assert "1 本书" in result
+    assert "需要补充" in result
+
+
+def test_render_shows_narrow_citation_warning_for_two_books() -> None:
+    from src.community.knowledge_base.task_memory import render_task_memory_matches
+    registry = [_make_citation_entry("书甲"), _make_citation_entry("书乙")]
+    result = render_task_memory_matches([_make_match_with_registry(registry)])
+    assert "引用书目较少" in result
+    assert "2 本书" in result
+
+
+def test_render_no_warning_for_three_or_more_books() -> None:
+    from src.community.knowledge_base.task_memory import render_task_memory_matches
+    registry = [
+        _make_citation_entry("书甲"),
+        _make_citation_entry("书乙"),
+        _make_citation_entry("书丙"),
+    ]
+    result = render_task_memory_matches([_make_match_with_registry(registry)])
+    # The specific per-result warning text must NOT appear
+    # (⚠️ can appear in trailing instructions, so we check the specific warning phrase)
+    assert "引用书目较少" not in result
+    assert "注册信息不完整" not in result
+
+
+def test_render_unverifiable_breadth_warning_when_citations_but_no_registry() -> None:
+    from src.community.knowledge_base.task_memory import render_task_memory_matches
+    # _is_complete_citation only accepts bare [citation:N] numbered format
+    match = _make_match_with_registry(registry=[], citations=["[citation:1]"])
+    result = render_task_memory_matches([match])
+    assert "注册信息不完整" in result
+
+
+def test_render_no_warning_when_no_citations_and_no_registry() -> None:
+    from src.community.knowledge_base.task_memory import render_task_memory_matches
+    match = _make_match_with_registry(registry=[], citations=[])
+    result = render_task_memory_matches([match])
+    # no citations at all → no breadth warning (model can see empty citations list directly)
+    assert "注册信息不完整" not in result

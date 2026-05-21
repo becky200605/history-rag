@@ -799,37 +799,54 @@ class SubagentExecutor:
                     messages = final_state.get("messages", [])
                     logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} final messages count: {len(messages)}")
 
-                    # Find the last AIMessage in the conversation
-                    last_ai_message = None
+                    # Priority 1: complete_task ToolMessage (forced completion via budget enforcement).
+                    # When the subagent calls complete_task the graph terminates via Command(goto=END)
+                    # immediately, so there is no subsequent AIMessage — the ToolMessage IS the result.
+                    forced_completion_text: str | None = None
                     for msg in reversed(messages):
-                        if isinstance(msg, AIMessage):
-                            last_ai_message = msg
+                        if isinstance(msg, ToolMessage) and getattr(msg, "name", None) == "complete_task":
+                            forced_completion_text = str(msg.content) if msg.content else None
                             break
 
-                    if last_ai_message is not None:
-                        content = last_ai_message.content
-                        # Handle both str and list content types for the final result
-                        if isinstance(content, str):
-                            result.result = content
-                        elif isinstance(content, list):
-                            # Extract text from list of content blocks for final result only
-                            text_parts = []
-                            for block in content:
-                                if isinstance(block, str):
-                                    text_parts.append(block)
-                                elif isinstance(block, dict) and "text" in block:
-                                    text_parts.append(block["text"])
-                            result.result = "\n".join(text_parts) if text_parts else "No text content in response"
-                        else:
-                            result.result = str(content)
-                    elif messages:
-                        # Fallback: use the last message if no AIMessage found
-                        last_message = messages[-1]
-                        logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no AIMessage found, using last message: {type(last_message)}")
-                        result.result = str(last_message.content) if hasattr(last_message, "content") else str(last_message)
+                    if forced_completion_text:
+                        result.result = forced_completion_text
+                        logger.info(
+                            "[trace=%s] Subagent %s result extracted from complete_task ToolMessage",
+                            self.trace_id,
+                            self.config.name,
+                        )
                     else:
-                        logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no messages in final state")
-                        result.result = "No response generated"
+                        # Priority 2: last AIMessage (normal completion path).
+                        last_ai_message = None
+                        for msg in reversed(messages):
+                            if isinstance(msg, AIMessage):
+                                last_ai_message = msg
+                                break
+
+                        if last_ai_message is not None:
+                            content = last_ai_message.content
+                            # Handle both str and list content types for the final result
+                            if isinstance(content, str):
+                                result.result = content
+                            elif isinstance(content, list):
+                                # Extract text from list of content blocks for final result only
+                                text_parts = []
+                                for block in content:
+                                    if isinstance(block, str):
+                                        text_parts.append(block)
+                                    elif isinstance(block, dict) and "text" in block:
+                                        text_parts.append(block["text"])
+                                result.result = "\n".join(text_parts) if text_parts else "No text content in response"
+                            else:
+                                result.result = str(content)
+                        elif messages:
+                            # Fallback: use the last message if no AIMessage found
+                            last_message = messages[-1]
+                            logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no AIMessage found, using last message: {type(last_message)}")
+                            result.result = str(last_message.content) if hasattr(last_message, "content") else str(last_message)
+                        else:
+                            logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no messages in final state")
+                            result.result = "No response generated"
 
                 result.structured_result = _parse_structured_subtask_result(result.result)
                 if final_state is not None:

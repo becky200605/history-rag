@@ -5,6 +5,7 @@ import re
 from datetime import UTC, datetime
 from time import sleep
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 from uuid import NAMESPACE_URL, uuid5
 
 from langchain_core.documents import Document
@@ -29,6 +30,38 @@ TASK_MEMORY_COLLECTION_SUFFIX = "__task_memory"
 TASK_MEMORY_TOP_K = 5
 TASK_MEMORY_TITLE_MATCH_BOOST = 0.15
 TASK_MEMORY_TITLE_PARTIAL_BOOST = 0.05
+
+# If a historical result's citations come from ≤ this many distinct books, it is
+# considered "narrow" and must be supplemented with evidence from other sources.
+_NARROW_CITATION_BOOK_THRESHOLD = 2
+
+
+def _count_distinct_books_in_citation_registry(registry: list[dict] | None) -> int:
+    """Count the number of distinct source books referenced in a citation registry.
+
+    Extracts ``citation_source_title`` from each entry's URL query string (the
+    authoritative book-title field written by the citation builder).  Falls back
+    to the ``label`` field when the URL is absent or unparseable.
+
+    Returns 0 when *registry* is empty or None (caller should treat as unknown).
+    """
+    if not registry:
+        return 0
+    titles: set[str] = set()
+    for entry in registry:
+        title = ""
+        url = str(entry.get("url") or "").strip()
+        if url:
+            try:
+                params = dict(parse_qsl(urlsplit(url).query))
+                title = params.get("citation_source_title", "").strip()
+            except Exception:
+                pass
+        if not title:
+            title = str(entry.get("label") or "").strip()
+        if title:
+            titles.add(title)
+    return len(titles)
 def _retryable_embedding_exception(exc: Exception) -> bool:
     message = str(exc).lower()
     if "no embedding data received" in message:
@@ -556,12 +589,37 @@ def render_task_memory_matches(
         if open_questions:
             lines.append("未解决缺口:")
             lines.extend(f"- {item}" for item in open_questions)
+
+        # Citation diversity check — shown immediately after the citations block
+        # so the model sees the warning in context before reaching the global rules.
+        citation_registry_data = metadata.get("citation_registry") or []
+        distinct_book_count = _count_distinct_books_in_citation_registry(citation_registry_data)
+        if 0 < distinct_book_count <= _NARROW_CITATION_BOOK_THRESHOLD:
+            lines.append(
+                f"⚠️ 引用书目较少（本条历史结果仅涉及 {distinct_book_count} 本书）："
+                "即使结论与当前问题相关，也必须视为「需要补充」——"
+                "需另从其他细化书籍或专题书中寻找额外佐证和细节，不可将此作为充分证据直接使用。"
+            )
+        elif distinct_book_count == 0 and citations:
+            # Citations exist but no registry to count from — flag as unverifiable breadth.
+            lines.append(
+                "⚠️ 无法确认本条引用的书目数量（citation 注册信息不完整）："
+                "请把它视为「需要补充」，主动去其他书目中寻找佐证，不要默认已覆盖充分。"
+            )
+
         lines.append("")
 
     lines.append("---")
     lines.append("这些历史主任务/子任务结果是当前任务的强制证据包，不等于当前问题已经自动完成，但也不能被忽略。")
     lines.append("后续行动必须先完成三类判断：`可直接复用`、`需要补充`、`应该纠正/弃用`。")
-    lines.append("如果某条历史结果与当前问题高度重合，且已经包含可用结论和编号 citation，默认优先复用它；只把缺口部分交给新检索或子任务。")
+    lines.append(
+        "判断标准——同时满足以下两条才可标为「可直接复用」：\n"
+        "  ① 内容与当前问题高度重合，已包含可用结论和编号 citation；\n"
+        "  ② 引用书目涉及 3 本以上（结果块内若显示⚠️书目警告，则必须标「需要补充」）。\n"
+        "仅满足①但书目 ≤ 2 本时，必须标「需要补充」：\n"
+        "  - 结论部分可先复用，但需另派子任务或检索，从细化书籍或专题书中补充更多佐证和细节；\n"
+        "  - 不要把「仅 1-2 本书的引文」当作覆盖充分的证据。"
+    )
     lines.append("如果复用历史结果中的事实、数字、分期、判断或缺口，最终回答必须把对应 citation 一并带上。")
     lines.append("严禁把历史结果里的 citation 改写成空链接、普通书名或空括号；无法确认可用 citation 时，把它列为证据缺口，不要当作有效引文。")
     return "\n".join(lines).strip()
@@ -582,7 +640,12 @@ def build_task_memory_injection_message(
         f"当前 query：{query.strip()}\n\n"
         f"{rendered}\n\n"
         "执行要求：\n"
-        "1. 先逐条判断历史结果是 `可直接复用`、`需要补充`，还是 `应该纠正/弃用`；不要跳过这一步。\n"
+        "1. 先逐条判断历史结果的可用性，判断标准如下：\n"
+        "   - `可直接复用`：内容与当前问题高度重合 **且** 引用书目涉及 3 本以上（结果块无⚠️书目警告）。\n"
+        "   - `需要补充`：内容相关但引用书目仅 1-2 本（有⚠️书目警告），或存在明显内容缺口。\n"
+        "     → 可先复用已有结论，但必须额外从细化书籍或专题书中补充更多佐证和细节，不可视为充分证据。\n"
+        "   - `应该纠正/弃用`：内容与当前问题不符或结论明显有误。\n"
+        "   不要跳过这一步。\n"
         "2. 若历史结果已覆盖当前问题的大部分内容，不要重复派发同题子任务；只补查未解决缺口或疑似错误点。\n"
         "3. 综合回答时，必须显式吸收所有与当前问题高度相关的历史结论、关键发现、关键引文和未解决缺口。\n"
         "4. 复用历史结果时，只能复制可用 citation；空括号或格式损坏的 citation 不能输出为有效引文。\n"

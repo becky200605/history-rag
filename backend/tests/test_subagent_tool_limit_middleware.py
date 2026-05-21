@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from src.agents.middlewares.subagent_tool_limit_middleware import (
     TOOL_CALL_LIMIT,
+    _FORCE_COMPLETE_TOOL,
     SubagentToolLimitMiddleware,
 )
 
@@ -31,7 +32,7 @@ def _text_response() -> ModelResponse:
 
 
 def _tool_call_response() -> ModelResponse:
-    """Response that still calls a tool (simulate non-compliant model)."""
+    """Response that still calls a disallowed tool (simulate non-compliant model)."""
     return ModelResponse(
         result=[
             AIMessage(
@@ -41,6 +42,30 @@ def _tool_call_response() -> ModelResponse:
                         "id": "kl-1",
                         "name": "knowledge_locate",
                         "args": {"book_id": "abc", "page": 1},
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        ]
+    )
+
+
+def _complete_task_response() -> ModelResponse:
+    """Response that calls the complete_task tool — the desired forced-completion outcome."""
+    return ModelResponse(
+        result=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "ct-1",
+                        "name": _FORCE_COMPLETE_TOOL,
+                        "args": {
+                            "summary": "Found partial results but time ran out.",
+                            "findings": ["Fact A"],
+                            "citations": ["[citation:1]"],
+                            "open_questions": ["Retry with narrower scope"],
+                        },
                         "type": "tool_call",
                     }
                 ],
@@ -130,8 +155,8 @@ class TestWrapModelCallAtLimit:
         def handler(req: ModelRequest) -> ModelResponse:
             seen_requests.append(req)
             if len(seen_requests) == 1:
-                return _tool_call_response()  # first call: model still calls tools
-            return _text_response()           # retry: model complies
+                return _tool_call_response()      # first call: model still calls disallowed tools
+            return _complete_task_response()       # retry: model calls complete_task
 
         result = middleware.wrap_model_call(request, handler)
 
@@ -139,8 +164,10 @@ class TestWrapModelCallAtLimit:
         retry_human_messages = [m for m in seen_requests[1].messages if isinstance(m, HumanMessage)]
         injected_contents = [str(m.content) for m in retry_human_messages]
         assert any("上限" in c for c in injected_contents), "wrap-up message not injected"
-        assert any("再次提醒" in c for c in injected_contents), "hard-stop message not injected"
-        assert result.result[0].content == "Here is my final answer."
+        assert any("再次警告" in c for c in injected_contents), "hard-stop message not injected"
+        # complete_task tool call is passed through unchanged
+        assert result.result[0].tool_calls
+        assert result.result[0].tool_calls[0]["name"] == _FORCE_COMPLETE_TOOL
 
     def test_wrap_up_message_includes_count_and_limit(self):
         """The wrap-up message must quote the current count and the configured limit."""
@@ -154,7 +181,7 @@ class TestWrapModelCallAtLimit:
             seen_requests.append(req)
             if len(seen_requests) == 1:
                 return _tool_call_response()
-            return _text_response()
+            return _complete_task_response()
 
         middleware.wrap_model_call(request, handler)
 
@@ -163,6 +190,23 @@ class TestWrapModelCallAtLimit:
             str(m.content) for m in retry_human_messages if "上限" in str(m.content)
         )
         assert str(TOOL_CALL_LIMIT) in wrap_up_content
+
+    def test_passes_through_complete_task_call_without_retry(self):
+        """When the model immediately calls complete_task, no retry is needed."""
+        middleware = SubagentToolLimitMiddleware()
+        messages = _make_tool_messages(TOOL_CALL_LIMIT)
+        request = _build_request(messages)
+
+        call_count = []
+
+        def handler(req: ModelRequest) -> ModelResponse:
+            call_count.append(1)
+            return _complete_task_response()
+
+        result = middleware.wrap_model_call(request, handler)
+
+        assert len(call_count) == 1, "no retry should occur when model calls complete_task"
+        assert result.result[0].tool_calls[0]["name"] == _FORCE_COMPLETE_TOOL
 
     def test_returns_last_response_when_model_still_calls_tools_after_hard_stop(self):
         """If the model ignores both messages, return the last response (don't loop forever)."""
@@ -247,7 +291,7 @@ class TestAWrapModelCall:
                 seen.append(req)
                 if len(seen) == 1:
                     return _tool_call_response()
-                return _text_response()
+                return _complete_task_response()
 
             result = await middleware.awrap_model_call(request, handler)
 
@@ -255,7 +299,7 @@ class TestAWrapModelCall:
             retry_human = [m for m in seen[1].messages if isinstance(m, HumanMessage)]
             injected = [str(m.content) for m in retry_human]
             assert any("上限" in c for c in injected)
-            assert result.result[0].content == "Here is my final answer."
+            assert result.result[0].tool_calls[0]["name"] == _FORCE_COMPLETE_TOOL
 
         asyncio.run(_run())
 

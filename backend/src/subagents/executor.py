@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 from langchain.agents import create_agent
 from langchain.tools import BaseTool
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.messages.utils import message_chunk_to_message
 from langchain_core.runnables import RunnableConfig
 

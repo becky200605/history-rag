@@ -42,5 +42,5 @@ You have access to the sandbox environment:
     tools=["bash", "ls", "read_file"],  # Sandbox tools only
     disallowed_tools=["task", "ask_clarification"],
     model="inherit",
-    max_turns=30,
+    max_turns=100,  # 增加到 100 步，支持复杂的命令执行序列
 )

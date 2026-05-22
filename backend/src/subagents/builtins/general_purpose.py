@@ -73,5 +73,5 @@ When you complete the task, use exactly the following Markdown sections so the p
     tools=["knowledge_locate", "knowledge_checkpoint", "submit_task_result"],
     disallowed_tools=["task", "ask_clarification"],
     model="inherit",
-    max_turns=30,
+    max_turns=200,  # 增加到 200 步，与默认值一致，支持复杂知识检索任务
 )

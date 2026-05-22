@@ -697,18 +697,30 @@ class SubagentExecutor:
 
                 logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting execution (attempt {attempt}/{_MAX_EXECUTION_RETRIES}) with max_turns={self.config.max_turns}")
 
-                # Use stream instead of invoke to get real-time updates.
-                # `messages` yields incremental AI chunks; `values` gives us the final state.
-                final_state = None
-                aggregated_chunks: dict[str, AIMessageChunk] = {}
-                logged_tool_call_signatures: set[tuple[str, str, str]] = set()
-                logged_ai_message_debug_signatures: set[tuple[str, str]] = set()
-                _step_start = time.monotonic()
-                _step_label = "init"
-                _llm_total_s: float = 0.0
-                _tool_total_s: float = 0.0
-                _llm_count: int = 0
-                _tool_count: int = 0
+                # --- submit_task_result enforcement loop ---
+                # If the model stops without calling submit_task_result, inject a reminder
+                # and re-run the stream so the subtask properly signals completion.
+                _SUBMIT_REMINDER = (
+                    "[System enforcement] You stopped without calling `submit_task_result`. "
+                    "You MUST call `submit_task_result` now to submit your final result. "
+                    "Do not output any more text — just call the tool immediately."
+                )
+                _submit_retry_count = 0
+                _MAX_SUBMIT_RETRIES = 2
+
+                while True:
+                    # Use stream instead of invoke to get real-time updates.
+                    # `messages` yields incremental AI chunks; `values` gives us the final state.
+                    final_state = None
+                    aggregated_chunks: dict[str, AIMessageChunk] = {}
+                    logged_tool_call_signatures: set[tuple[str, str, str]] = set()
+                    logged_ai_message_debug_signatures: set[tuple[str, str]] = set()
+                    _step_start = time.monotonic()
+                    _step_label = "init"
+                    _llm_total_s: float = 0.0
+                    _tool_total_s: float = 0.0
+                    _llm_count: int = 0
+                    _tool_count: int = 0
                 for mode, payload in agent.stream(  # type: ignore[arg-type]
                     state,
                     config=run_config,
@@ -878,8 +890,36 @@ class SubagentExecutor:
                 messages = final_state.get("messages", [])
                 logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} final messages count: {len(messages)}")
 
-                # Preferred path: subagent called submit_task_result, result is in state.
+                # Check if submit_task_result was called
                 submitted: dict | None = final_state.get(SUBTASK_FINAL_RESULT_KEY)
+                if not submitted and _submit_retry_count < _MAX_SUBMIT_RETRIES:
+                    # Inject reminder and re-run the stream
+                    logger.warning(
+                        "[trace=%s] Subagent %s did not call submit_task_result, injecting reminder (retry %d/%d)",
+                        self.trace_id,
+                        self.config.name,
+                        _submit_retry_count + 1,
+                        _MAX_SUBMIT_RETRIES,
+                    )
+                    log_subtask_event(
+                        "subtask_missing_submit_task_result",
+                        trace_id=self.trace_id,
+                        task_id=result.task_id,
+                        subagent_name=self.config.name,
+                        retry_count=_submit_retry_count + 1,
+                        max_retries=_MAX_SUBMIT_RETRIES,
+                    )
+                    # Append reminder message to state and continue the while loop
+                    state["messages"].append(HumanMessage(content=_SUBMIT_REMINDER))
+                    _submit_retry_count += 1
+                    continue
+                # Break out of the while loop - either submit_task_result was called or we've exhausted retries
+                break
+
+                # --- End of submit_task_result enforcement while loop ---
+                # Result processing happens here, after the while loop exits.
+
+                # Preferred path: subagent called submit_task_result, result is in state.
                 if submitted and isinstance(submitted, dict) and submitted.get("summary", "").strip():
                     summary = submitted["summary"].strip()
                     findings = submitted.get("findings") or []

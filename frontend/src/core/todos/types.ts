@@ -1,6 +1,11 @@
 import type { AIMessage } from "@langchain/langgraph-sdk";
 import type { KnowledgeCitationRegistryItem } from "../threads";
 
+export interface AssignedBook {
+  doc_id: string;
+  title: string;
+}
+
 export interface Todo {
   id?: string;
   content?: string;
@@ -18,6 +23,7 @@ export interface Todo {
   structured_citations?: string[];
   structured_gaps?: string[];
   citation_registry?: KnowledgeCitationRegistryItem[];
+  assigned_books?: AssignedBook[];
   error?: string;
   execution_time_seconds?: number;
   executionTimeSeconds?: number;

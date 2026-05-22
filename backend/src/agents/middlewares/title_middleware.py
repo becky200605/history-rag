@@ -100,12 +100,17 @@ def _parse_title_response(content: str) -> str:
     return title[: config.max_chars]
 
 
-def _title_fallback(user_msg: str) -> str:
+def title_from_query(user_msg: str) -> str:
+    """Return a title derived directly from the user query (no LLM call)."""
     config = get_title_config()
     fallback_chars = min(config.max_chars, 50)
     if len(user_msg) > fallback_chars:
         return user_msg[:fallback_chars].rstrip() + "..."
     return user_msg if user_msg else "New Conversation"
+
+
+# Keep the old private name as an alias so existing callers don't break.
+_title_fallback = title_from_query
 
 
 def generate_title_candidate(user_msg: str) -> str:

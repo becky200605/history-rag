@@ -9,7 +9,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.runtime import Runtime
 
-from src.agents.middlewares.title_middleware import generate_title_candidate
+from src.agents.middlewares.title_middleware import title_from_query
 from src.community.knowledge_base.citations import citation_registry_update_fragment
 from src.community.knowledge_base.task_memory import (
     build_task_memory_injection_message,
@@ -230,7 +230,7 @@ class TaskMemoryMiddleware(AgentMiddleware[TaskMemoryMiddlewareState]):
         updates: dict[str, Any] = {}
         current_task_title = str(state.get("current_task_title") or "").strip()
         if state.get("current_task_human_index") != human_index or not current_task_title:
-            current_task_title = generate_title_candidate(query)
+            current_task_title = title_from_query(query)
             updates["current_task_title"] = current_task_title
             updates["current_task_human_index"] = human_index
             if not state.get("title"):

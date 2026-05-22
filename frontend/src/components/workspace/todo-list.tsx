@@ -1,4 +1,5 @@
 import {
+  BookOpenIcon,
   CheckCircle2Icon,
   ChevronUpIcon,
   CircleDotIcon,
@@ -207,6 +208,19 @@ function TodoListItem({
               >
                 {todo.content}
               </QueueItemContent>
+              {todo.assigned_books && todo.assigned_books.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {todo.assigned_books.map((book) => (
+                    <span
+                      key={book.doc_id}
+                      className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted-foreground/70"
+                    >
+                      <BookOpenIcon className="size-2.5 shrink-0" />
+                      {book.title}
+                    </span>
+                  ))}
+                </div>
+              )}
               {(detailLabel ?? liveAction) && (
                 <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground/75">
                   {statusIcon}

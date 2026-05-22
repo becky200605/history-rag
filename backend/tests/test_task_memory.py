@@ -451,7 +451,7 @@ def test_task_memory_middleware_before_model_returns_merged_registry_in_updates(
         ]
 
     monkeypatch.setattr(task_memory_middleware, "search_and_prepare_task_memory", _fake_search_and_prepare)
-    monkeypatch.setattr(task_memory_middleware, "generate_title_candidate", lambda query: "当前任务标题")
+    monkeypatch.setattr(task_memory_middleware, "title_from_query", lambda query: "当前任务标题")
 
     middleware = task_memory_middleware.TaskMemoryMiddleware()
     state = {"messages": [HumanMessage(content="盛宣怀与招商局关系？")]}

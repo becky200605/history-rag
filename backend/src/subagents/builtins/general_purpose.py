@@ -19,16 +19,14 @@ Do NOT use for simple, single-step operations.""",
 - Complete only the delegated task; do not write the parent agent's final answer.
 - For historical / knowledge-base subtasks:
   1. Check injected historical task-memory matches first; reuse only matches that are on-topic and have numbered citations.
-  2. The dispatch prompt normally already names the book(s) to read and gives an exact `doc_id` assigned by the lead agent. When a `doc_id` is provided, copy it exactly and go directly to `knowledge_locate` — do NOT call `book_search` first.
-  3. Only call `book_search` yourself when the dispatch prompt gave no `doc_id`, or when the assigned book(s) clearly do not fit the task goal. When you do, inspect the returned candidate list across all layers (user → thread → core → specialized → reference); pay particular attention to the `specialized` layer — these specialized monographs often provide richer, more precise evidence than general histories (通史).
-  4. Prioritize specialized monographs as your primary source when the task touches a specific topic, institution, person, or event. Use core 通史 books as background context or to fill gaps, not as the default first choice.
-  5. Where the task evidence permits, aim to draw from **more than one book** — read all the `doc_id`s the lead agent assigned. If a specific sub-topic emerges during reading and the assigned books do not cover it, you may do one second focused `book_search` with a narrower anchor (e.g., a more specific event name, institution, or person). This second search is a fallback to widen, not a loop.
-  6. Always pass a non-empty `doc_id` to `knowledge_locate` — copy it exactly from the dispatch prompt or from a `next: knowledge_locate(doc_id="...")` template; do not shorten, translate, paraphrase, or use the book title instead. If you get a missing-doc-id error, retry once with the exact `doc_id`; if you cannot, stop and return `【证据不足】`.
-  7. Use the `时代`, `类别`, and `目录` metadata (from the dispatch prompt or `book_search` results) to pre-filter before calling `knowledge_locate`. If a book's `时代` or `类别` clearly does not match the task, skip it without a locate call. Only call navigation-mode `knowledge_locate` (with no page args) when you do not yet know which chapter to read.
-  8. Within a given book, you may use multiple locate passes to follow a thread — some sources like large compiled histories span thousands of pages and require several location steps to find relevant sections. Do not abandon a clearly relevant book after a single weak locate result.
-  9. **Page-window rule**: When calling `knowledge_locate` for content reading (not navigation), always request at least 3–5 consecutive pages in a single call by setting `page_no_end = page_no + 3` (or `pdf_page_no_end = pdf_page_no + 3`). Fetching one page at a time multiplies round-trips unnecessarily; a window of 3–5 pages almost always captures the full context of a topic within a section.
-  10. Do not loop on the same query against the same book. Each additional retrieval step should either switch to a different book, narrow to a more specific anchor term, or expand to adjacent pages within a promising location.
-  11. **Parallel tool calls**: The framework executes all tool calls you emit in a single response simultaneously. Always batch independent `knowledge_locate` calls together — emit all navigation locates for your candidate books in one response, wait for all results, then emit all content locates in one response. Never issue locate calls one at a time when you could issue several at once. Example: after `book_search` returns 3 candidates, your next response should contain 3 `knowledge_locate` calls, not 1.
+  2. The dispatch prompt names the book(s) to read and gives exact `doc_id`(s) assigned by the lead agent. Copy each `doc_id` exactly and go directly to `knowledge_locate` — the lead agent has already done routing, do NOT call `book_search`.
+  3. Always pass a non-empty `doc_id` to `knowledge_locate` — copy it exactly from the dispatch prompt; do not shorten, translate, paraphrase, or use the book title instead. If you get a missing-doc-id error, retry once with the exact `doc_id`; if you still cannot, stop and return `【证据不足】`.
+  4. Where the task evidence permits, aim to draw from **more than one book** — read all the `doc_id`s the lead agent assigned.
+  5. Use the `时代`, `类别`, and `目录` metadata in the dispatch prompt to pre-filter before calling `knowledge_locate`. If a book's `时代` or `类别` clearly does not match the task, skip it without a locate call. Only call navigation-mode `knowledge_locate` (with no page args) when you do not yet know which chapter to read.
+  6. Within a given book, you may use multiple locate passes to follow a thread — some sources like large compiled histories span thousands of pages and require several location steps to find relevant sections. Do not abandon a clearly relevant book after a single weak locate result.
+  7. **Page-window rule**: When calling `knowledge_locate` for content reading (not navigation), always request at least 3–5 consecutive pages in a single call by setting `page_no_end = page_no + 3` (or `pdf_page_no_end = pdf_page_no + 3`). Fetching one page at a time multiplies round-trips unnecessarily; a window of 3–5 pages almost always captures the full context of a topic within a section.
+  8. Do not loop on the same query against the same book. Each additional retrieval step should either switch to a different book, narrow to a more specific anchor term, or expand to adjacent pages within a promising location.
+  9. **Parallel tool calls**: The framework executes all tool calls you emit in a single response simultaneously. Always batch independent `knowledge_locate` calls together — emit all navigation locates for your candidate books in one response, wait for all results, then emit all content locates in one response. Never issue locate calls one at a time when you could issue several at once.
 - Do not guess, fill gaps from intuition, or fabricate citations.
 - Citation completeness is mandatory: copy the numbered citation markers returned by tools, such as `[citation:1]`; do not output source URLs manually.
 - Write the actual retrieved information in detail, and distinguish source text from inference and unresolved gaps.
@@ -70,7 +68,7 @@ When you complete the task, use exactly the following Markdown sections so the p
 - 如果没有明显缺口，就写 `- 无`
 </output_format>
 """,
-    tools=["book_search", "knowledge_search", "knowledge_locate", "knowledge_checkpoint"],
+    tools=["knowledge_search", "knowledge_locate", "knowledge_checkpoint"],
     disallowed_tools=["task", "ask_clarification"],
     model="inherit",
     max_turns=30,

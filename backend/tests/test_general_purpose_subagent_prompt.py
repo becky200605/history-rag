@@ -2,18 +2,17 @@
 from src.subagents.builtins.general_purpose import GENERAL_PURPOSE_CONFIG
 
 
-def test_subagent_prompt_encourages_specialized_sources() -> None:
+def test_subagent_prompt_uses_lead_assigned_books() -> None:
     prompt = GENERAL_PURPOSE_CONFIG.system_prompt
-    # Should prioritize specialized monographs over 通史
-    assert "specialized" in prompt
-    assert "specialized monographs" in prompt.lower() or "specialized" in prompt
+    # Subtask uses books assigned by lead agent, not its own routing
+    assert "lead agent" in prompt.lower()
+    assert "doc_id" in prompt
 
 
-def test_subagent_prompt_allows_second_book_search() -> None:
+def test_subagent_prompt_does_not_call_book_search() -> None:
     prompt = GENERAL_PURPOSE_CONFIG.system_prompt
-    # A second focused book_search is explicitly allowed
-    assert "second" in prompt.lower()
-    assert "second focused" in prompt.lower() or "second `book_search`" in prompt or "second focused `book_search`" in prompt
+    # Subtask must not call book_search; lead agent handles all routing
+    assert "do NOT call `book_search`" in prompt
 
 
 def test_subagent_prompt_encourages_multi_book() -> None:
@@ -58,11 +57,12 @@ def test_subagent_skips_book_search_when_doc_id_assigned() -> None:
     prompt = GENERAL_PURPOSE_CONFIG.system_prompt
     # When lead agent assigns a doc_id, subtask must go straight to knowledge_locate
     assert "doc_id" in prompt
-    assert "do NOT call `book_search` first" in prompt
+    assert "do NOT call `book_search`" in prompt
     assert "knowledge_locate" in prompt
 
 
-def test_subagent_falls_back_to_book_search_only_without_doc_id() -> None:
+def test_subagent_uses_lead_assigned_doc_ids() -> None:
     prompt = GENERAL_PURPOSE_CONFIG.system_prompt
-    # Subtask may call book_search only if no doc_id was provided or assigned books don't fit
-    assert "Only call `book_search` yourself when the dispatch prompt gave no `doc_id`" in prompt
+    # Subtask should use the lead agent's assigned doc_ids directly
+    assert "lead agent" in prompt.lower()
+    assert "assigned" in prompt.lower()

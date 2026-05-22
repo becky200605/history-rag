@@ -39,6 +39,13 @@ from src.utils.subtask_logging import log_subtask_event
 logger = logging.getLogger(__name__)
 
 
+class AssignedBook(TypedDict):
+    """A book assigned by the lead agent for a specific todo."""
+
+    doc_id: str
+    title: str
+
+
 class Todo(TypedDict):
     """Todo item shown to the user and optionally bound to a subagent task."""
 
@@ -55,6 +62,7 @@ class Todo(TypedDict):
     structured_citations: NotRequired[list[str]]
     structured_gaps: NotRequired[list[str]]
     citation_registry: NotRequired[list[dict[str, Any]]]
+    assigned_books: NotRequired[list[AssignedBook]]
     error: NotRequired[str]
     execution_time_seconds: NotRequired[float]
 
@@ -209,20 +217,29 @@ def _prune_synthesis_todos(todos: list[Todo]) -> tuple[list[Todo], list[Todo]]:
 
 
 def _build_default_task_prompt(todo: Todo) -> str:
+    assigned: list[AssignedBook] = todo.get("assigned_books") or []
+    if assigned:
+        books_str = "、".join(f"《{b['title']}》(doc_id: {b['doc_id']})" for b in assigned)
+        doc_id_line = (
+            f"主代理已通过 `book_search` 路由完成，分配的书目：{books_str}。"
+            "直接用对应 doc_id 调用 `knowledge_locate`，不要再调 `book_search`。\n"
+        )
+    else:
+        doc_id_line = "主代理未分配书目；如需知识库证据，请先查看 `task_prompt` 里是否有书名或 doc_id，有则直接用；实在没有才可用 `knowledge_search` 做全文检索定位。\n"
     return (
         "你只负责执行下面这一项 todo，不要扩展到其他任务，不要替主代理写最终总答案。\n\n"
         f"Todo: {todo['content']}\n\n"
+        f"{doc_id_line}"
         "要求：\n"
         "1. 只围绕这一项任务检索、分析或执行；\n"
-        "2. 历史 / 知识库任务按固定顺序执行：先判断历史匹配是否可复用；不足时调用 `book_search` 选源；选定某书后，复制 `book_search` 返回的 `next: knowledge_locate(doc_id=\"...\")` 模板里的原样 `doc_id` 到 `knowledge_locate`；\n"
-        "3. `knowledge_locate` 禁止空调用。每次都必须带非空 `doc_id`；不要用书名代替。如果漏传并收到 missing-doc-id 错误，只允许用刚才 `book_search` 结果里的原样 `doc_id` 重试一次，仍拿不到就停止并写 `【证据不足】`；\n"
-        "4. 不要用 bash/find/ls 扫本地文件系统替代知识库检索；\n"
-        "5. 读到足够证据后停止检索，保留工具返回的编号 citation；\n"
-        "6. 最终输出必须使用固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
-        "7. `## 任务结果` 是最重要的主结果块，不要写成 1-2 句导语式摘要；"
+        "2. `knowledge_locate` 禁止空调用。每次都必须带非空 `doc_id`；不要用书名代替。收到 missing-doc-id 错误时，用分配的原样 `doc_id` 重试一次，仍失败则写 `【证据不足】`；\n"
+        "3. 不要用 bash/find/ls 扫本地文件系统替代知识库检索；\n"
+        "4. 读到足够证据后停止检索，保留工具返回的编号 citation；\n"
+        "5. 最终输出必须使用固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
+        "6. `## 任务结果` 是最重要的主结果块，不要写成 1-2 句导语式摘要；"
         "必须针对这个 Todo 的目标，详细写出你实际检索到的信息并附上 citation；"
         "如果这是围绕某一本书的任务，开头要明确点名这本书；\n"
-        "8. citation 优先使用工具返回的编号标记如 `[citation:1]`；缺 citation 的内容写入 `未解决缺口`，不要硬答。"
+        "7. citation 优先使用工具返回的编号标记如 `[citation:1]`；缺 citation 的内容写入 `未解决缺口`，不要硬答。"
     )
 
 
@@ -231,14 +248,24 @@ def _build_task_prompt(todo: Todo) -> str:
     if not custom_prompt:
         return _build_default_task_prompt(todo)
 
+    assigned: list[AssignedBook] = todo.get("assigned_books") or []
+    if assigned:
+        books_str = "、".join(f"《{b['title']}》(doc_id: {b['doc_id']})" for b in assigned)
+        doc_id_line = (
+            f"主代理已通过 `book_search` 路由完成，分配的书目：{books_str}。"
+            "直接用对应 doc_id 调用 `knowledge_locate`，不要再调 `book_search`。\n\n"
+        )
+    else:
+        doc_id_line = ""
     return (
         "你只负责执行下面这一项 todo，不要扩展到其他任务，不要替主代理写最终总答案。\n\n"
         f"Todo: {todo['content']}\n\n"
+        f"{doc_id_line}"
         "主代理给你的具体任务说明如下：\n"
         f"{custom_prompt}\n\n"
         "强制检索规则：\n"
-        "1. 先用 `book_search` 选源；决定读哪本书后，逐字复制 `next: knowledge_locate(doc_id=\"...\")` 模板里的原样 `doc_id` 到 `knowledge_locate`。\n"
-        "2. 禁止空调 `knowledge_locate`，也不要用书名代替 `doc_id`。如果收到 missing-doc-id 错误，只用刚才 `book_search` 的原样 `doc_id` 重试一次；仍拿不到就停止并写 `【证据不足】`。\n"
+        "1. 用分配的书目 doc_id 直接调 `knowledge_locate`，不要自己再调 `book_search`；\n"
+        "2. 禁止空调 `knowledge_locate`，也不要用书名代替 `doc_id`。如果收到 missing-doc-id 错误，用分配的原样 `doc_id` 重试一次；仍失败则写 `【证据不足】`；\n"
         "3. 输出固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；citation 必须复制工具返回的编号标记。"
     )
 

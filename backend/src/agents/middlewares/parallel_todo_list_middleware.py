@@ -419,6 +419,7 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
                 "task_id",
                 "task_prompt",
                 "subagent_type",
+                "assigned_books",
                 "result",
                 "result_summary",
                 "structured_summary",

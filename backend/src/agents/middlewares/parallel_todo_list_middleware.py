@@ -878,9 +878,74 @@ class TodoListMiddleware(AgentMiddleware[PlanningState]):
 
         return "\n".join(lines)
 
+    def _validate_assigned_doc_ids(
+        self,
+        *,
+        todos: list[Todo],
+        tool_call_id: str,
+        runtime: Any,
+    ) -> Command | None:
+        """Return an error Command if any assigned_books doc_id is not in the catalog."""
+        all_assigned: list[AssignedBook] = []
+        for todo in todos:
+            books = todo.get("assigned_books") or []
+            all_assigned.extend(books)
+
+        if not all_assigned:
+            return None
+
+        from src.community.knowledge_base.catalog import list_book_catalog  # noqa: PLC0415
+
+        runtime_context = getattr(runtime, "context", {}) if runtime is not None else {}
+        thread_id: str | None = runtime_context.get("thread_id")
+        user_id: str | None = runtime_context.get("user_id")
+
+        try:
+            catalog_entries = list_book_catalog(
+                thread_id=thread_id,
+                user_id=user_id,
+                include_search_content=False,
+                caller="write_todos.validate_doc_ids",
+            )
+        except Exception:
+            logger.exception("write_todos: catalog lookup failed during doc_id validation; skipping check")
+            return None
+
+        valid_doc_ids = {entry.doc_id for entry in catalog_entries}
+        invalid: list[str] = []
+        for book in all_assigned:
+            doc_id = book.get("doc_id", "")
+            if doc_id and doc_id not in valid_doc_ids:
+                invalid.append(doc_id)
+
+        if not invalid:
+            return None
+
+        invalid_list = "、".join(f"`{d}`" for d in invalid)
+        error_msg = (
+            f"Error: write_todos 包含不存在于知识库中的 doc_id：{invalid_list}。\n"
+            "这些 doc_id 可能是自行拼凑的，请先调用 `book_search` 获取正确的书目和 doc_id，"
+            "再用 `book_search` 返回的原样 doc_id 填写 `assigned_books`，然后重新调用 `write_todos`。"
+        )
+        log_subtask_event(
+            "write_todos_invalid_doc_ids",
+            tool_call_id=tool_call_id,
+            invalid_doc_ids=invalid,
+        )
+        return Command(
+            update={
+                "messages": [ToolMessage(error_msg, tool_call_id=tool_call_id, status="error")],
+            }
+        )
+
     def _handle_write_todos(self, *, runtime: Any, todos: list[Todo], tool_call_id: str) -> Command:
         existing_todos = cast(list[Todo] | None, runtime.state.get("todos") if runtime is not None else None)
         normalized = self._normalize_todos(todos, existing_todos)
+
+        validation_error = self._validate_assigned_doc_ids(todos=normalized, tool_call_id=tool_call_id, runtime=runtime)
+        if validation_error is not None:
+            return validation_error
+
         removed_synthesis_todos: list[Todo] = []
         if self.subagent_enabled:
             normalized, removed_synthesis_todos = _prune_synthesis_todos(normalized)

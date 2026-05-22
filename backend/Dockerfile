@@ -34,8 +34,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools wheel && \
     pip install -r /tmp/backend-requirements.txt
 
-# Copy backend source code
+# Copy backend source code and deployment scripts
 COPY backend ./backend
+COPY scripts ./scripts
 
 # Expose ports (gateway: 8001, langgraph: 2024)
 EXPOSE 8001 2024

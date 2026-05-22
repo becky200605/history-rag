@@ -638,3 +638,114 @@ def test_write_todos_marks_matching_reading_set_book_as_covered_on_completion(mo
     )
 
     assert runtime.state["knowledge_covered_doc_ids"] == ["doc-a"]
+
+
+def test_write_todos_rejects_nonexistent_doc_ids(monkeypatch):
+    from src.community.knowledge_base.catalog import BookCatalogEntry
+
+    valid_entry = BookCatalogEntry(
+        doc_id="real-doc-id",
+        title="真实的书",
+        filename="real.txt",
+        scope="global",
+        source_path="/path/real.txt",
+        source_url="/api/knowledge/docs/real.txt",
+        original_url=None,
+        preview="",
+        search_text="",
+        search_tokens=[],
+    )
+
+    monkeypatch.setattr(
+        todo_module,
+        "log_subtask_event",
+        lambda *a, **kw: None,
+    )
+
+    import src.community.knowledge_base.catalog as catalog_module
+
+    monkeypatch.setattr(catalog_module, "list_book_catalog", lambda **kwargs: [valid_entry])
+
+    middleware = todo_module.TodoListMiddleware(
+        system_prompt="test",
+        tool_description="test",
+        subagent_enabled=True,
+    )
+    runtime = SimpleNamespace(
+        state={"todos": [], "sandbox": None, "thread_data": None},
+        context={"thread_id": "thread-1"},
+        config={"metadata": {"model_name": "test-model", "trace_id": "trace-1"}},
+    )
+
+    command = middleware.tools[0].func(
+        runtime=runtime,
+        todos=[
+            {
+                "content": "查曾国藩",
+                "status": "in_progress",
+                "assigned_books": [{"doc_id": "曾国藩全集12册.pdf", "title": "曾国藩全集"}],
+            }
+        ],
+        tool_call_id="call-bad-doc",
+    )
+
+    msg = command.update["messages"][0]
+    assert msg.status == "error"
+    assert "曾国藩全集12册.pdf" in msg.content
+    assert "book_search" in msg.content
+    assert "todos" not in command.update
+
+
+def test_write_todos_passes_when_doc_ids_are_valid(monkeypatch):
+    from src.community.knowledge_base.catalog import BookCatalogEntry
+
+    valid_entry = BookCatalogEntry(
+        doc_id="real-doc-id",
+        title="真实的书",
+        filename="real.txt",
+        scope="global",
+        source_path="/path/real.txt",
+        source_url="/api/knowledge/docs/real.txt",
+        original_url=None,
+        preview="",
+        search_text="",
+        search_tokens=[],
+    )
+
+    import src.community.knowledge_base.catalog as catalog_module
+
+    monkeypatch.setattr(catalog_module, "list_book_catalog", lambda **kwargs: [valid_entry])
+    monkeypatch.setattr(todo_module, "get_stream_writer", lambda: lambda event: None)
+    monkeypatch.setattr(todo_module, "get_skills_prompt_section", lambda: "")
+    import src.tools as tools_module
+
+    monkeypatch.setattr(tools_module, "get_available_tools", lambda **kwargs: [])
+    monkeypatch.setattr(todo_module, "get_subagent_config", lambda name: None)
+
+    middleware = todo_module.TodoListMiddleware(
+        system_prompt="test",
+        tool_description="test",
+        subagent_enabled=False,
+    )
+    runtime = SimpleNamespace(
+        state={"todos": [], "sandbox": None, "thread_data": None},
+        context={"thread_id": "thread-1"},
+        config={"metadata": {"model_name": "test-model", "trace_id": "trace-1"}},
+    )
+
+    command = middleware.tools[0].func(
+        runtime=runtime,
+        todos=[
+            {
+                "content": "查真实书",
+                "status": "in_progress",
+                "assigned_books": [{"doc_id": "real-doc-id", "title": "真实的书"}],
+            }
+        ],
+        tool_call_id="call-good-doc",
+    )
+
+    # No error — normal board update
+    msg = command.update["messages"][0]
+    assert getattr(msg, "status", None) != "error"
+    assert "todos" in command.update

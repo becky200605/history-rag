@@ -9,6 +9,7 @@ from src.agents.middlewares.citation_enforcement_middleware import CitationEnfor
 from src.agents.middlewares.citation_registry_sync_middleware import CitationRegistrySyncMiddleware
 from src.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from src.agents.middlewares.dangling_tool_call_middleware import DanglingToolCallMiddleware
+from src.agents.middlewares.early_stop_detection_middleware import EarlyStopDetectionMiddleware
 from src.agents.middlewares.knowledge_checkpoint_middleware import KnowledgeCheckpointMiddleware
 from src.agents.middlewares.knowledge_directory_middleware import KnowledgeDirectoryMiddleware
 from src.agents.middlewares.memory_middleware import MemoryMiddleware
@@ -315,6 +316,10 @@ def _build_middlewares(config: RunnableConfig, model_name: str | None):
     if subagent_enabled and not is_plan_mode:
         max_concurrent_subagents = configurable.get("max_concurrent_subagents", 4)
         middlewares.append(SubagentLimitMiddleware(max_concurrent=max_concurrent_subagents))
+
+    # Add EarlyStopDetectionMiddleware when subagent is enabled to prevent premature completion
+    if subagent_enabled:
+        middlewares.append(EarlyStopDetectionMiddleware())
 
     # ClarificationMiddleware should always be last
     middlewares.append(ClarificationMiddleware())

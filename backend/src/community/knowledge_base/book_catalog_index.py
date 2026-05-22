@@ -343,8 +343,29 @@ def save_catalog_to_db(
             len(entries),
         )
     except Exception:
-        logger.warning(
-            "Failed to save book catalog to SQLite (in-memory cache still valid)", exc_info=True
-        )
+        logger.warning("Failed to save book catalog to SQLite", exc_info=True)
+
+
+def load_global_entries_from_db() -> "list[BookCatalogEntry] | None":
+    """直接从 SQLite 读取全局书目条目，不做任何有效性校验。
+
+    SQLite 是唯一来源（由 ingest_structured_docs_to_db.py 维护）。
+    返回 None 表示 DB 不存在或查询失败，调用方应降级到文件构建。
+    """
+    try:
+        conn = _connect()
+        try:
+            _ensure_schema(conn)
+            rows = conn.execute(
+                "SELECT * FROM book_catalog WHERE scope = 'global' AND cache_thread_id = '' AND cache_user_id = ''",
+            ).fetchall()
+            if not rows:
+                return None
+            return [_row_to_entry(row) for row in rows]
+        finally:
+            conn.close()
+    except Exception:
+        logger.warning("load_global_entries_from_db failed", exc_info=True)
+        return None
 
 

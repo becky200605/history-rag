@@ -3,7 +3,6 @@
 import json
 import logging
 import math
-import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -784,63 +783,6 @@ def _build_user_entries(
     return entries
 
 
-_CATALOG_CACHE_TTL: float = 300.0  # seconds — mtime check handles new ingestions; TTL is just a safety net
-_catalog_cache: dict[tuple, tuple[list, float, float]] = {}  # key -> (entries, monotonic_build_time, mtime_sig)
-_catalog_cache_lock = threading.Lock()
-
-
-def _catalog_mtime_signature(docs_root: Path, user_id: str | None, thread_id: str | None) -> float:
-    """Return the sum of directory mtimes for all relevant catalog roots.
-
-    Changes whenever a file is added/removed/replaced in those roots, which
-    is the trigger for cache invalidation.
-    """
-    paths: list[Path] = [docs_root]
-    if user_id:
-        try:
-            paths.append(get_paths().user_knowledge_docs_dir(user_id))
-        except Exception:
-            pass
-    if thread_id:
-        try:
-            paths.append(get_paths().sandbox_uploads_dir(thread_id))
-        except Exception:
-            pass
-    total = 0.0
-    for p in paths:
-        try:
-            total += p.stat().st_mtime
-        except Exception:
-            pass
-    return total
-
-
-def _get_cached_catalog(cache_key: tuple, docs_root: Path, user_id: str | None, thread_id: str | None) -> "list[BookCatalogEntry] | None":
-    with _catalog_cache_lock:
-        entry = _catalog_cache.get(cache_key)
-    if entry is None:
-        return None
-    cached_entries, build_time, mtime_sig = entry
-    if time.monotonic() - build_time > _CATALOG_CACHE_TTL:
-        return None
-    if _catalog_mtime_signature(docs_root, user_id, thread_id) != mtime_sig:
-        return None
-    return cached_entries  # type: ignore[return-value]
-
-
-def _store_catalog_cache(
-    cache_key: tuple,
-    docs_root: Path,
-    user_id: str | None,
-    thread_id: str | None,
-    entries: "list[BookCatalogEntry]",
-    *,
-    mtime_sig: float | None = None,
-) -> None:
-    if mtime_sig is None:
-        mtime_sig = _catalog_mtime_signature(docs_root, user_id, thread_id)
-    with _catalog_cache_lock:
-        _catalog_cache[cache_key] = (entries, time.monotonic(), mtime_sig)
 
 
 def list_book_catalog(
@@ -862,92 +804,45 @@ def list_book_catalog(
     that is the expensive path (requires reading 1 774+ preview files).
     ``include_search_content=False`` builds are already fast (no file I/O).
     """
+    from src.community.knowledge_base.book_catalog_index import load_global_entries_from_db  # noqa: PLC0415
+
     started_at = time.perf_counter()
     kb_config = get_knowledge_base_config()
     docs_root = resolve_project_path(kb_config.docs_path)
 
-    cache_key = (thread_id or "", user_id or "", include_search_content)
-
-    # 1. In-memory cache check.
-    cached = _get_cached_catalog(cache_key, docs_root, user_id, thread_id)
-    if cached is not None:
-        logger.debug(
-            "Book catalog in-memory hit: thread_id=%s user_id=%s include_search_content=%s caller=%s",
-            thread_id, user_id, include_search_content, caller or "",
+    # 全局书目直接从 SQLite 读取（由 ingest_structured_docs_to_db.py 维护，不做缓存）。
+    # SQLite 不存在或为空时降级到文件扫描（仅首次部署/未跑 ingest 时触发）。
+    global_entries = load_global_entries_from_db()
+    if global_entries is None:
+        metadata_index = _load_book_metadata_index(docs_root)
+        global_entries = _build_global_entries(docs_root, metadata_index, include_search_content=include_search_content)
+        logger.warning(
+            "Book catalog SQLite empty — fell back to file scan: global=%s caller=%s elapsed_ms=%.1f",
+            len(global_entries), caller or "", (time.perf_counter() - started_at) * 1000,
         )
-        return cached
 
-    # Compute mtime signature once and reuse for both the SQLite check and cache storage.
-    mtime_sig = _catalog_mtime_signature(docs_root, user_id, thread_id)
-
-    # 2. SQLite persistent cache check (only for full-content builds).
-    if include_search_content:
-        from src.community.knowledge_base.book_catalog_index import load_catalog_from_db  # noqa: PLC0415
-
-        db_entries = load_catalog_from_db(thread_id, user_id, mtime_sig)
-        if db_entries is not None:
-            # Warm the in-memory cache so subsequent calls within TTL are free.
-            with _catalog_cache_lock:
-                _catalog_cache[cache_key] = (db_entries, time.monotonic(), mtime_sig)
-            logger.info(
-                "Book catalog SQLite hit: thread_id=%s user_id=%s entries=%s caller=%s elapsed_ms=%.1f",
-                thread_id, user_id, len(db_entries), caller or "",
-                (time.perf_counter() - started_at) * 1000,
-            )
-            return db_entries
-
-    # 3. Build from files (slow path).
-    metadata_index = _load_book_metadata_index(docs_root)
-    entries = _build_global_entries(
-        docs_root,
-        metadata_index,
-        include_search_content=include_search_content,
-    )
-    global_count = len(entries)
+    entries: list[BookCatalogEntry] = list(global_entries)
     user_count = 0
     thread_count = 0
+
+    # Thread/user 上传文件是动态的，仍从文件读取（通常为空，很快）。
     if user_id:
         user_metadata_index = _load_book_metadata_index(get_paths().user_knowledge_docs_dir(user_id))
-        user_entries = _build_user_entries(
-            user_id,
-            user_metadata_index,
-            include_search_content=include_search_content,
-        )
+        user_entries = _build_user_entries(user_id, user_metadata_index, include_search_content=include_search_content)
         user_count = len(user_entries)
         entries = user_entries + entries
     if thread_id:
         thread_metadata_index = _load_book_metadata_index(get_paths().sandbox_uploads_dir(thread_id))
-        thread_entries = _build_thread_entries(
-            thread_id,
-            thread_metadata_index,
-            include_search_content=include_search_content,
-        )
+        thread_entries = _build_thread_entries(thread_id, thread_metadata_index, include_search_content=include_search_content)
         thread_count = len(thread_entries)
         entries = thread_entries + entries
 
-    elapsed_ms = (time.perf_counter() - started_at) * 1000
     logger.info(
-        "Book catalog built from files: global=%s user=%s thread=%s total=%s "
-        "thread_id=%s has_user=%s include_search_content=%s caller=%s elapsed_ms=%.1f",
-        global_count, user_count, thread_count, len(entries),
-        thread_id, bool(user_id), include_search_content, caller or "", elapsed_ms,
+        "Book catalog loaded: global=%s user=%s thread=%s total=%s "
+        "thread_id=%s has_user=%s caller=%s elapsed_ms=%.1f",
+        len(global_entries), user_count, thread_count, len(entries),
+        thread_id, bool(user_id), caller or "", (time.perf_counter() - started_at) * 1000,
     )
-
-    # Persist to in-memory cache (pass the already-computed mtime_sig to avoid a redundant stat call).
-    _store_catalog_cache(cache_key, docs_root, user_id, thread_id, entries, mtime_sig=mtime_sig)
-
-    # Persist to SQLite (background write so the caller isn't blocked).
-    if include_search_content:
-        import threading as _threading  # noqa: PLC0415
-        from src.community.knowledge_base.book_catalog_index import save_catalog_to_db  # noqa: PLC0415
-
-        _threading.Thread(
-            target=save_catalog_to_db,
-            args=(thread_id, user_id, mtime_sig, entries),
-            daemon=True,
-            name="catalog-sqlite-write",
-        ).start()
-
     return entries
 
 

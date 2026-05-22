@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -233,25 +234,17 @@ def lookup_global_book_meta_by_filename(filename: str) -> dict[str, Any] | None:
         return None
 
 
-def load_structured_payload_from_db(doc_id: str) -> dict[str, Any] | None:
-    """Return the structured-document payload for doc_id from paragraphs.db.
-
-    Returns None if the DB doesn't exist, the doc isn't in the DB, or any
-    error occurs — callers should fall back to file-based loading.
-    """
-    db_path = _paragraphs_db_path()
-    if not db_path.exists():
-        return None
-
+@lru_cache(maxsize=256)
+def _load_payload_cached(db_path_str: str, doc_id: str) -> dict[str, Any] | None:
+    """Inner cached loader — keyed by (db_path, doc_id) so the cache auto-scopes to one DB."""
     try:
-        conn = _connect(db_path)
+        conn = _connect(Path(db_path_str))
         try:
             book = conn.execute(
                 "SELECT title, filename FROM books WHERE doc_id = ?", (doc_id,)
             ).fetchone()
             if book is None:
                 return None
-
             rows = conn.execute(
                 """
                 SELECT pdf_page_no, page_no, book_page_no,
@@ -262,10 +255,8 @@ def load_structured_payload_from_db(doc_id: str) -> dict[str, Any] | None:
                 """,
                 (doc_id,),
             ).fetchall()
-
             if not rows:
                 return None
-
             return _reconstruct_payload(
                 doc_id,
                 rows,
@@ -277,3 +268,17 @@ def load_structured_payload_from_db(doc_id: str) -> dict[str, Any] | None:
     except Exception:
         logger.debug("paragraph_store: failed to load doc_id=%s from DB", doc_id, exc_info=True)
         return None
+
+
+def load_structured_payload_from_db(doc_id: str) -> dict[str, Any] | None:
+    """Return the structured-document payload for doc_id from paragraphs.db.
+
+    Returns None if the DB doesn't exist, the doc isn't in the DB, or any
+    error occurs — callers should fall back to file-based loading.
+    Result is LRU-cached by (db_path, doc_id) — identical to load_structured_document's
+    caching strategy, so repeated calls for the same doc within a process are free.
+    """
+    db_path = _paragraphs_db_path()
+    if not db_path.exists():
+        return None
+    return _load_payload_cached(str(db_path), doc_id)

@@ -8,6 +8,7 @@ READING_SET_TITLES_KEY = "knowledge_reading_set_titles"
 COVERED_DOC_IDS_KEY = "knowledge_covered_doc_ids"
 READING_SET_QUERY_KEY = "knowledge_reading_set_query"
 READING_SET_HUMAN_INDEX_KEY = "knowledge_reading_set_human_index"
+SUBTASK_FINAL_RESULT_KEY = "subtask_final_result"
 
 
 def latest_human_index(messages: list[Any] | None) -> int:

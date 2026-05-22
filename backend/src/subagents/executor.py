@@ -22,7 +22,7 @@ from langchain_core.runnables import RunnableConfig
 
 from src.agents.thread_state import SandboxState, ThreadDataState, ThreadState
 from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY
-from src.tools.builtins.submit_task_result_tool import SUBTASK_FINAL_RESULT_KEY
+from src.community.knowledge_base.reading_state import SUBTASK_FINAL_RESULT_KEY
 from src.community.knowledge_base.task_memory import (
     build_task_memory_injection_message,
     search_and_prepare_task_memory,

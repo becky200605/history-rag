@@ -9,8 +9,7 @@ from langgraph.types import Command
 from langgraph.typing import ContextT
 
 from src.agents.thread_state import ThreadState
-
-SUBTASK_FINAL_RESULT_KEY = "subtask_final_result"
+from src.community.knowledge_base.reading_state import SUBTASK_FINAL_RESULT_KEY
 
 
 @tool("submit_task_result", parse_docstring=True)

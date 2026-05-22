@@ -106,34 +106,34 @@ def _is_exact_identifier_match(
 
 def _locate_global_document(doc_id: str | None, filename: str | None) -> LocatedDocument | None:
     # Fast path: both payload and metadata are in paragraphs.db — skip all file I/O.
+    def _build_located(resolved_doc_id: str, meta: dict) -> LocatedDocument | None:
+        payload = load_structured_payload_from_db(resolved_doc_id)
+        if payload is None:
+            return None
+        fname = meta["filename"]
+        source_url = meta["source_url"] or f"/api/knowledge/docs/{fname}"
+        return LocatedDocument(
+            doc_id=resolved_doc_id,
+            title=meta["title"] or str(payload.get("title") or ""),
+            filename=fname,
+            scope="global",
+            source_url=source_url,
+            original_url=meta["original_url"],
+            payload=payload,
+        )
+
     if doc_id:
         meta = lookup_global_book_meta(doc_id)
         if meta is not None:
-            payload = load_structured_payload_from_db(doc_id)
-            if payload is not None:
-                return LocatedDocument(
-                    doc_id=doc_id,
-                    title=meta["title"] or str(payload.get("title") or ""),
-                    filename=meta["filename"],
-                    scope="global",
-                    source_url=meta["source_url"],
-                    original_url=meta["original_url"],
-                    payload=payload,
-                )
+            located = _build_located(doc_id, meta)
+            if located is not None:
+                return located
     elif filename:
         meta = lookup_global_book_meta_by_filename(filename)
         if meta is not None:
-            payload = load_structured_payload_from_db(meta["doc_id"])
-            if payload is not None:
-                return LocatedDocument(
-                    doc_id=meta["doc_id"],
-                    title=meta["title"] or str(payload.get("title") or ""),
-                    filename=meta["filename"],
-                    scope="global",
-                    source_url=meta["source_url"],
-                    original_url=meta["original_url"],
-                    payload=payload,
-                )
+            located = _build_located(meta["doc_id"], meta)
+            if located is not None:
+                return located
 
     # Slow path: scan ingestion records (DB miss — doc not yet ingested or filename fuzzy match).
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)

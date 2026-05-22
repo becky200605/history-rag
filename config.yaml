@@ -247,7 +247,7 @@ subagents:
   # Default timeout in seconds for all subagents
   timeout_seconds: 3600
   # Optional default model for all subagents.
-  model_name: deepseek-v4-flash
+  model_name: MiniMax-M2.7
   # Optional default thinking mode for all subagents.
   thinking_enabled: false
 #

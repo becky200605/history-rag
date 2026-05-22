@@ -21,7 +21,7 @@ from src.community.knowledge_base.book_metadata import (
     resolve_book_folder,
     save_book_metadata,
 )
-from src.community.knowledge_base.folder_registry import render_folder_tree
+from src.community.knowledge_base.folder_registry import list_folder_paths, render_folder_tree
 from src.config.knowledge_base_config import BookMetadataConfig
 
 logger = logging.getLogger(__name__)

@@ -480,6 +480,22 @@ class SubagentExecutor:
             config.disallowed_tools,
         )
 
+        # Auto-inject submit_task_result_tool for subagents.
+        # This tool is essential for subtasks to signal completion; without it,
+        # subtasks cannot return structured results to the lead agent.
+        from src.tools.builtins import submit_task_result_tool
+
+        tool_names = {t.name for t in self.tools}
+        if submit_task_result_tool.name not in tool_names:
+            # Only inject if the config's allowlist permits it (or no allowlist is set)
+            if config.tools is None or submit_task_result_tool.name in config.tools:
+                self.tools.append(submit_task_result_tool)
+                logger.info(
+                    "[trace=%s] Auto-injected submit_task_result_tool for subagent %s",
+                    self.trace_id,
+                    config.name,
+                )
+
         logger.info(f"[trace={self.trace_id}] SubagentExecutor initialized: {config.name} with {len(self.tools)} tools")
         log_subtask_event(
             "subagent_executor_initialized",

@@ -33,6 +33,7 @@ import logging
 import os
 import signal
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -45,6 +46,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MARKER_SUFFIX = ".synced"
+
+# Metadata generation is serialised so that:
+# 1. Each book reads the latest .folders.json (including folders just created by the previous book).
+# 2. The registry is updated atomically after every successful generation.
+# File transfers (rsync) are NOT covered by this lock and remain fully concurrent.
+_metadata_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -66,9 +73,18 @@ def _setup_app_config(config_path: str) -> None:
 
 def _generate_metadata(filename: str, res_dir: Path, model_name: str | None) -> str | None:
     """Generate AI metadata from the structured JSON and save to res/.book-metadata/.
-    Returns the suggested folder_path on success, None on failure."""
+
+    Metadata generation is serialised via _metadata_lock so that:
+    - Every book reads the most up-to-date .folders.json, including folders
+      created moments earlier by the previous book in the same batch.
+    - Any new folder path is immediately registered in the local .folders.json
+      before the lock is released, making it visible to the next book.
+
+    Returns the suggested folder_path on success, None on failure.
+    """
     from src.community.knowledge_base.book_metadata import get_book_metadata_dir
     from src.community.knowledge_base.book_metadata_runtime import generate_book_metadata_record
+    from src.community.knowledge_base.folder_registry import ensure_folder_path
     from src.config.knowledge_base_config import BookMetadataConfig
 
     structured_path = res_dir / f"{filename}.structured.json"
@@ -93,26 +109,38 @@ def _generate_metadata(filename: str, res_dir: Path, model_name: str | None) -> 
     metadata_dir.mkdir(exist_ok=True)
 
     config = BookMetadataConfig(enabled=True, model_name=model_name)
-    logger.info("META  %s  generating (summary / categories / eras ...)", filename)
-    try:
-        meta_record, saved_path = generate_book_metadata_record(
-            structured_payload=structured_payload,
-            source_filename=filename,
-            title=title,
-            output_dir=res_dir,
-            config=config,
-        )
-        suggestion = meta_record.suggestion
-        folder: str | None = None
-        if suggestion:
-            folder = getattr(getattr(suggestion, "folder", None), "value", None)
-            summary_field = getattr(suggestion, "summary", None)
-            summary = str(getattr(summary_field, "value", "") or "")[:80]
-            logger.info("META  %s  folder=%s  summary=%s...", filename, folder, summary)
-        return folder
-    except Exception as exc:
-        logger.warning("META  %s  failed (non-fatal): %s", filename, exc)
-        return None
+
+    with _metadata_lock:
+        logger.info("META  %s  generating (summary / categories / eras ...)", filename)
+        try:
+            meta_record, saved_path = generate_book_metadata_record(
+                structured_payload=structured_payload,
+                source_filename=filename,
+                title=title,
+                output_dir=res_dir,
+                config=config,
+            )
+            suggestion = meta_record.suggestion
+            folder: str | None = None
+            if suggestion:
+                folder = getattr(getattr(suggestion, "folder", None), "value", None)
+                summary_field = getattr(suggestion, "summary", None)
+                summary = str(getattr(summary_field, "value", "") or "")[:80]
+                logger.info("META  %s  folder=%s  summary=%s...", filename, folder, summary)
+
+            # Register the folder immediately so the next book in this batch sees it.
+            if folder:
+                registry_path = res_dir / ".folders.json"
+                try:
+                    ensure_folder_path(registry_path, folder)
+                    logger.debug("META  %s  folder %r registered in local registry", filename, folder)
+                except Exception as exc:
+                    logger.warning("META  %s  failed to register folder %r: %s", filename, folder, exc)
+
+            return folder
+        except Exception as exc:
+            logger.warning("META  %s  failed (non-fatal): %s", filename, exc)
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +174,17 @@ def _ensure_remote_dirs(host: str, remote_docs: str) -> None:
 
 def _rsync(local: Path, remote: str) -> None:
     subprocess.run(["rsync", "-az", str(local), remote], check=True)
+
+
+def _upload_folder_registry(local_registry: Path, host: str, remote_docs: str) -> None:
+    """Push the local .folders.json back to the server after a batch completes."""
+    if not local_registry.exists():
+        return
+    try:
+        _rsync(local_registry, f"{host}:{remote_docs}/.folders.json")
+        logger.info("Uploaded .folders.json to server (%d folders)", _count_folders(local_registry))
+    except subprocess.CalledProcessError as exc:
+        logger.warning("Could not upload .folders.json to server (rc=%d)", exc.returncode)
 
 
 def _scan(res_dir: Path, force: bool = False) -> list[str]:
@@ -273,6 +312,11 @@ def _run(args: argparse.Namespace) -> int:
                         logger.error("FAIL  %s: rsync error (rc=%d)", filename, exc.returncode)
                     except Exception as exc:
                         logger.exception("FAIL  %s: %s", filename, exc)
+
+                # Push the updated folder registry back to the server so the next
+                # run (and the live server) immediately sees any new folders.
+                if not args.skip_metadata:
+                    _upload_folder_registry(res_dir / ".folders.json", args.host, args.remote_docs)
 
             if not args.watch:
                 break

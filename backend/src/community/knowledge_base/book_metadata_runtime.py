@@ -21,7 +21,7 @@ from src.community.knowledge_base.book_metadata import (
     resolve_book_folder,
     save_book_metadata,
 )
-from src.community.knowledge_base.folder_registry import list_folder_paths, render_folder_tree
+from src.community.knowledge_base.folder_registry import render_folder_tree
 from src.config.knowledge_base_config import BookMetadataConfig
 
 logger = logging.getLogger(__name__)
@@ -154,7 +154,6 @@ def generate_book_metadata_record(
     from src.models import create_chat_model
 
     registry_path = output_dir / ".folders.json"
-    valid_folder_paths: set[str] = set(list_folder_paths(registry_path)) if registry_path.exists() else set()
 
     prompt_bundle = build_book_metadata_prompt_bundle(
         structured_payload,
@@ -197,30 +196,7 @@ def generate_book_metadata_record(
             sleep(BOOK_METADATA_RETRY_DELAY_SECONDS)
             continue
 
-        # ── Validate folder against registry ──────────────────────────────────
-        if valid_folder_paths and suggestion is not None:
-            folder_val = getattr(getattr(suggestion, "folder", None), "value", None)
-            if folder_val and folder_val not in valid_folder_paths:
-                if attempt < BOOK_METADATA_RETRY_ATTEMPTS:
-                    valid_list = "\n".join(f"  - {p}" for p in sorted(valid_folder_paths))
-                    correction = (
-                        f'The folder path "{folder_val}" does not exist in the knowledge base.\n'
-                        f"You MUST choose an existing folder from this exact list:\n{valid_list}\n"
-                        "Return the corrected JSON only, with no explanation."
-                    )
-                    logger.warning(
-                        "META  %s  folder %r not in registry (attempt %d/%d) — retrying",
-                        source_filename, folder_val, attempt, BOOK_METADATA_RETRY_ATTEMPTS,
-                    )
-                    messages.append(AIMessage(content=response_text))
-                    messages.append(HumanMessage(content=correction))
-                    sleep(BOOK_METADATA_RETRY_DELAY_SECONDS)
-                    continue
-                else:
-                    logger.warning(
-                        "META  %s  folder %r still not in registry after %d attempts — keeping as-is",
-                        source_filename, folder_val, BOOK_METADATA_RETRY_ATTEMPTS,
-                    )
+        # New folder paths are intentional — the caller registers them after sync.
         break
 
     if suggestion is None:

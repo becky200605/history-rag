@@ -346,3 +346,5 @@ def save_catalog_to_db(
         logger.warning(
             "Failed to save book catalog to SQLite (in-memory cache still valid)", exc_info=True
         )
+
+

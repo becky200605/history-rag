@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS books (
     publisher   TEXT    NOT NULL DEFAULT '',
     type        TEXT    NOT NULL DEFAULT 'unknown',
     page_count  INTEGER NOT NULL DEFAULT 0,
+    source_url  TEXT    NOT NULL DEFAULT '',
+    original_url TEXT,
     indexed_at  TEXT    NOT NULL
 );
 
@@ -120,6 +122,13 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA_SQL)
+    # Migrate older DBs that predate source_url / original_url columns.
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(books)").fetchall()}
+    if "source_url" not in existing:
+        conn.execute("ALTER TABLE books ADD COLUMN source_url TEXT NOT NULL DEFAULT ''")
+    if "original_url" not in existing:
+        conn.execute("ALTER TABLE books ADD COLUMN original_url TEXT")
+    conn.commit()
     return conn
 
 
@@ -128,17 +137,22 @@ def _doc_exists(conn: sqlite3.Connection, doc_id: str) -> bool:
     return row is not None
 
 
-def _insert_book(conn: sqlite3.Connection, doc_id: str, payload: dict) -> None:
+def _insert_book(conn: sqlite3.Connection, doc_id: str, payload: dict, record: dict | None = None) -> None:
+    filename = str(payload.get("source_filename") or "")
+    source_url = str((record or {}).get("preview_artifact_url") or f"/api/knowledge/docs/{filename}")
+    original_url = (record or {}).get("source_artifact_url")
     conn.execute(
         """
-        INSERT OR REPLACE INTO books (doc_id, title, filename, page_count, indexed_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO books (doc_id, title, filename, page_count, source_url, original_url, indexed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             doc_id,
             str(payload.get("title") or ""),
-            str(payload.get("source_filename") or ""),
+            filename,
             len(payload.get("pages") or []),
+            source_url,
+            original_url,
             datetime.now(timezone.utc).isoformat(),
         ),
     )
@@ -250,6 +264,23 @@ def derive_doc_id(docs_root: Path, structured_path: Path) -> str:
 # ──────────────────────────────────────────────
 
 
+def build_ingestion_record_index(docs_root: Path) -> dict[str, dict]:
+    """返回 structured_path → ingestion record 的映射，用于入库时附带 URL 信息。"""
+    ingestion_dir = docs_root / ".ingestion"
+    index: dict[str, dict] = {}
+    if not ingestion_dir.exists():
+        return index
+    for record_path in ingestion_dir.glob("*.json"):
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        sp = record.get("structured_path")
+        if sp:
+            index[str(Path(sp).resolve())] = record
+    return index
+
+
 def find_pending_files(docs_root: Path) -> list[Path]:
     """返回所有没有 .resolved 标记的 .structured.json 文件。"""
     pending = []
@@ -266,6 +297,7 @@ def ingest_file(
     structured_path: Path,
     *,
     dry_run: bool = False,
+    ingestion_record_index: dict[str, dict] | None = None,
 ) -> bool:
     """处理单个 .structured.json 文件，返回是否成功。"""
     try:
@@ -277,6 +309,7 @@ def ingest_file(
     doc_id = derive_doc_id(docs_root, structured_path)
     title = str(payload.get("title") or doc_id)
     page_count = len(payload.get("pages") or [])
+    record = (ingestion_record_index or {}).get(str(structured_path.resolve()))
 
     if dry_run:
         logger.info("[dry-run] 会入库: %s  (title=%r, pages=%d)", doc_id, title, page_count)
@@ -284,7 +317,7 @@ def ingest_file(
 
     try:
         with conn:
-            _insert_book(conn, doc_id, payload)
+            _insert_book(conn, doc_id, payload, record)
             para_count = _insert_paragraphs(conn, doc_id, payload)
 
         # 打标记：在同目录创建 <filename>.resolved
@@ -362,8 +395,7 @@ def _print_sample(conn: sqlite3.Connection, doc_id: str) -> None:
 
 
 def _prewarm_indexes() -> None:
-    """入库完成后同步重建 catalog SQLite 缓存和 FTS 全文索引，替代独立的 prewarm 脚本。"""
-    import json as _json
+    """入库完成后同步重建 catalog SQLite 缓存，替代独立的 prewarm 脚本。"""
     import sys as _sys
 
     backend_root = PROJECT_ROOT / "backend"
@@ -395,40 +427,8 @@ def _prewarm_indexes() -> None:
     except Exception as exc:
         logger.warning("[prewarm] catalog 缓存失败（不影响运行）: %s", exc)
 
-    # 2. Keyword FTS index
-    try:
-        import time
-        from src.community.knowledge_base.common import derive_global_doc_id, resolve_project_path
-        from src.community.knowledge_base.keyword_search_index import ensure_documents_indexed, resolve_documents_for_doc_ids
-        from src.config.knowledge_base_config import get_knowledge_base_config
-
-        docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
-        ingestion_dir = docs_root / ".ingestion"
-        if not ingestion_dir.exists():
-            return
-
-        doc_ids = []
-        for record_path in sorted(ingestion_dir.glob("*.json")):
-            try:
-                record = _json.loads(record_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if record.get("schema_version") == 1:
-                continue
-            source_filename = str(record.get("source_filename") or "")
-            if source_filename and record.get("indexable"):
-                doc_ids.append(derive_global_doc_id(docs_root, docs_root / source_filename))
-
-        if not doc_ids:
-            return
-
-        logger.info("[prewarm] 重建 FTS 索引: %d 本书...", len(doc_ids))
-        t0 = time.perf_counter()
-        documents = resolve_documents_for_doc_ids(thread_id=None, user_id=None, doc_ids=doc_ids)
-        ensure_documents_indexed(documents)
-        logger.info("[prewarm] FTS 索引完成: %d 本，耗时 %.1fs", len(documents), time.perf_counter() - t0)
-    except Exception as exc:
-        logger.warning("[prewarm] FTS 索引失败（不影响运行）: %s", exc)
+    # 全局书目的关键词搜索已走 paragraphs.db FTS，旧的 knowledge_search.db 不再需要预热。
+    # thread/user 上传文档在首次搜索时由 ensure_documents_indexed 按需懒建索引。
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -498,9 +498,10 @@ def main(argv: list[str] | None = None) -> int:
             ingest_file(None, docs_root, p, dry_run=True)  # type: ignore[arg-type]
         return 0
 
+    record_index = build_ingestion_record_index(docs_root)
     conn = _connect(db_path)
     try:
-        ok = sum(ingest_file(conn, docs_root, p) for p in pending)
+        ok = sum(ingest_file(conn, docs_root, p, ingestion_record_index=record_index) for p in pending)
         failed = len(pending) - ok
         logger.info("完成: 成功 %d，失败 %d", ok, failed)
     finally:

@@ -16,7 +16,11 @@ from src.community.knowledge_base.common import (
     resolve_project_path,
 )
 from src.community.knowledge_base.ingestion import list_ingestion_records
-from src.community.knowledge_base.paragraph_store import load_structured_payload_from_db
+from src.community.knowledge_base.paragraph_store import (
+    load_structured_payload_from_db,
+    lookup_global_book_meta,
+    lookup_global_book_meta_by_filename,
+)
 from src.community.knowledge_base.structured_document import load_structured_document
 from src.community.knowledge_base.user_store import build_user_doc_public_url, list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
@@ -101,6 +105,37 @@ def _is_exact_identifier_match(
 
 
 def _locate_global_document(doc_id: str | None, filename: str | None) -> LocatedDocument | None:
+    # Fast path: both payload and metadata are in paragraphs.db — skip all file I/O.
+    if doc_id:
+        meta = lookup_global_book_meta(doc_id)
+        if meta is not None:
+            payload = load_structured_payload_from_db(doc_id)
+            if payload is not None:
+                return LocatedDocument(
+                    doc_id=doc_id,
+                    title=meta["title"] or str(payload.get("title") or ""),
+                    filename=meta["filename"],
+                    scope="global",
+                    source_url=meta["source_url"],
+                    original_url=meta["original_url"],
+                    payload=payload,
+                )
+    elif filename:
+        meta = lookup_global_book_meta_by_filename(filename)
+        if meta is not None:
+            payload = load_structured_payload_from_db(meta["doc_id"])
+            if payload is not None:
+                return LocatedDocument(
+                    doc_id=meta["doc_id"],
+                    title=meta["title"] or str(payload.get("title") or ""),
+                    filename=meta["filename"],
+                    scope="global",
+                    source_url=meta["source_url"],
+                    original_url=meta["original_url"],
+                    payload=payload,
+                )
+
+    # Slow path: scan ingestion records (DB miss — doc not yet ingested or filename fuzzy match).
     docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
     ingestion_dir = docs_root / ".ingestion"
     # Store (score, source_filename, record) — defer payload loading until we know the winner.

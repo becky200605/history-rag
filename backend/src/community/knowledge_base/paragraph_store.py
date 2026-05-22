@@ -175,6 +175,64 @@ def search_fts(
     return results
 
 
+def lookup_global_book_meta(doc_id: str) -> dict[str, Any] | None:
+    """从 paragraphs.db 查单本书的元数据（title/filename/source_url/original_url）。
+
+    返回 None 表示 DB 不存在或该书未入库，调用方应降级到文件扫描。
+    """
+    db_path = _paragraphs_db_path()
+    if not db_path.exists():
+        return None
+    try:
+        conn = _connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT title, filename, source_url, original_url FROM books WHERE doc_id = ?",
+                (doc_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "title": str(row["title"] or ""),
+                "filename": str(row["filename"] or ""),
+                "source_url": str(row["source_url"] or ""),
+                "original_url": row["original_url"],
+            }
+        finally:
+            conn.close()
+    except Exception:
+        logger.debug("paragraph_store: lookup_global_book_meta failed for doc_id=%s", doc_id, exc_info=True)
+        return None
+
+
+def lookup_global_book_meta_by_filename(filename: str) -> dict[str, Any] | None:
+    """从 paragraphs.db 按 filename 查单本书的元数据。"""
+    db_path = _paragraphs_db_path()
+    if not db_path.exists():
+        return None
+    try:
+        conn = _connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT doc_id, title, filename, source_url, original_url FROM books WHERE filename = ? LIMIT 1",
+                (filename,),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "doc_id": str(row["doc_id"]),
+                "title": str(row["title"] or ""),
+                "filename": str(row["filename"] or ""),
+                "source_url": str(row["source_url"] or ""),
+                "original_url": row["original_url"],
+            }
+        finally:
+            conn.close()
+    except Exception:
+        logger.debug("paragraph_store: lookup_global_book_meta_by_filename failed for filename=%s", filename, exc_info=True)
+        return None
+
+
 def load_structured_payload_from_db(doc_id: str) -> dict[str, Any] | None:
     """Return the structured-document payload for doc_id from paragraphs.db.
 

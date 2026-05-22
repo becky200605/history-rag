@@ -284,6 +284,30 @@ def locate_document(
     return _locate_global_document(doc_id, filename)
 
 
+def locate_document_from_entry(entry: Any) -> LocatedDocument | None:
+    """Build a LocatedDocument from a BookCatalogEntry without rescanning record files.
+
+    Uses the entry's structured_path (stored in catalog) to load the payload directly
+    via the lru_cache'd loader, skipping the O(n) ingestion-record scan in locate_document.
+    Falls back gracefully to None if structured_path is absent or the file can't be read.
+    """
+    structured_path = getattr(entry, "structured_path", None)
+    if not structured_path:
+        return None
+    payload = load_structured_document(Path(structured_path))
+    if not payload:
+        return None
+    return LocatedDocument(
+        doc_id=entry.doc_id,
+        title=entry.title,
+        filename=entry.filename,
+        scope=entry.scope,
+        source_url=entry.source_url,
+        original_url=entry.original_url,
+        payload=payload,
+    )
+
+
 def extract_document_context(
     *,
     payload: dict[str, Any],

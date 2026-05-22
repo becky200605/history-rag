@@ -101,6 +101,7 @@ class BookCatalogEntry:
     folder_path: str | None = None
     language_hint: str | None = None
     page_count: int = 0
+    structured_path: str | None = None
 
 
 @dataclass
@@ -621,6 +622,7 @@ def _build_global_entries(
                 search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
                 folder_path=normalize_folder_path(payload.get("folder_path")),
                 language_hint=str((payload.get("hints") or {}).get("language_hint") or "").strip() or None,
+                structured_path=str(payload["structured_path"]) if payload.get("structured_path") else None,
             )
             entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
             seen_filenames.add(str(source_filename))
@@ -715,6 +717,7 @@ def _build_thread_entries(
             search_text=normalize_search_text(f"{title} {extracted_title} {search_excerpt}"),
             search_tokens=tokenize_search_text(f"{title} {extracted_title} {search_excerpt}"),
             language_hint=str((record.get("hints") or {}).get("language_hint") or "").strip() or None,
+            structured_path=str(structured_path) if structured_path else None,
         )
         entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
 
@@ -774,6 +777,7 @@ def _build_user_entries(
             type="user",
             folder_path=normalize_folder_path(record.get("folder_path")),
             language_hint=str((record.get("hints") or {}).get("language_hint") or "").strip() or None,
+            structured_path=str(structured_path) if structured_path else None,
         )
         entries.append(_apply_metadata_to_entry(entry, _lookup_metadata_for_entry(entry, metadata_index)))
 

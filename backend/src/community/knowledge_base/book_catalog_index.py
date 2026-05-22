@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Bump this when the schema or serialization format changes — forces a full rebuild.
-CATALOG_SCHEMA_VERSION = 1
+CATALOG_SCHEMA_VERSION = 2
 
 _WRITE_LOCK = threading.Lock()
 
@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS book_catalog (
     folder_path     TEXT,
     language_hint   TEXT,
     page_count      INTEGER NOT NULL DEFAULT 0,
+    structured_path TEXT,
     indexed_at      TEXT    NOT NULL,
     PRIMARY KEY (doc_id, scope, cache_thread_id, cache_user_id)
 );
@@ -174,14 +175,14 @@ INSERT OR REPLACE INTO book_catalog (
     preview, search_text,
     type, categories, eras, regions, keywords,
     summary, author, publisher, priority,
-    folder_path, language_hint, page_count, indexed_at
+    folder_path, language_hint, page_count, structured_path, indexed_at
 ) VALUES (
     ?, ?, ?, ?,
     ?, ?, ?, ?, ?,
     ?, ?,
     ?, ?, ?, ?, ?,
     ?, ?, ?, ?,
-    ?, ?, ?, ?
+    ?, ?, ?, ?, ?
 )
 """
 
@@ -216,6 +217,7 @@ def _entry_to_row(
         entry.folder_path,
         entry.language_hint,
         entry.page_count or 0,
+        entry.structured_path,
         now,
     )
 
@@ -248,6 +250,7 @@ def _row_to_entry(row: sqlite3.Row) -> BookCatalogEntry:
         folder_path=row["folder_path"],
         language_hint=row["language_hint"],
         page_count=int(row["page_count"] or 0),
+        structured_path=row["structured_path"],
     )
 
 

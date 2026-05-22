@@ -51,7 +51,7 @@ from src.community.knowledge_base.citations import (
     resolve_result_citation_context,
 )
 from src.community.knowledge_base.common import tokenize_search_text
-from src.community.knowledge_base.locator import LocatedDocument, extract_document_context, locate_document
+from src.community.knowledge_base.locator import LocatedDocument, extract_document_context, locate_document, locate_document_from_entry
 from src.community.knowledge_base.reading_state import (
     COVERED_DOC_IDS_KEY,
     READING_SET_DOC_IDS_KEY,
@@ -1286,11 +1286,12 @@ def knowledge_locate_tool(
         resolved_doc_id = resolved_doc_ids[0] if resolved_doc_ids else doc_id
 
     try:
-        document = locate_document(
-            thread_id,
-            user_id=user_id,
-            doc_id=resolved_doc_id,
-        )
+        # Fast path: if the catalog entry already carries structured_path, load the
+        # payload directly via the lru_cache'd loader — no record-file scanning needed.
+        matching_entry = next((e for e in visible_entries if e.doc_id == resolved_doc_id), None)
+        document = locate_document_from_entry(matching_entry) if matching_entry else None
+        if document is None:
+            document = locate_document(thread_id, user_id=user_id, doc_id=resolved_doc_id)
     except Exception as e:
         return f"Error locating document: {e}"
     if not document:

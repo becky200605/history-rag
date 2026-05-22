@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS paragraphs (
     paragraph_no_in_doc INTEGER NOT NULL,
     paragraph_id        TEXT    NOT NULL,
     text                TEXT    NOT NULL,
+    position            TEXT,
+    layout_type         TEXT,
     UNIQUE(doc_id, paragraph_id)
 );
 
@@ -123,11 +125,17 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA_SQL)
     # Migrate older DBs that predate source_url / original_url columns.
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(books)").fetchall()}
-    if "source_url" not in existing:
+    existing_books = {row[1] for row in conn.execute("PRAGMA table_info(books)").fetchall()}
+    if "source_url" not in existing_books:
         conn.execute("ALTER TABLE books ADD COLUMN source_url TEXT NOT NULL DEFAULT ''")
-    if "original_url" not in existing:
+    if "original_url" not in existing_books:
         conn.execute("ALTER TABLE books ADD COLUMN original_url TEXT")
+    # Migrate older DBs that predate position / layout_type columns.
+    existing_paras = {row[1] for row in conn.execute("PRAGMA table_info(paragraphs)").fetchall()}
+    if "position" not in existing_paras:
+        conn.execute("ALTER TABLE paragraphs ADD COLUMN position TEXT")
+    if "layout_type" not in existing_paras:
+        conn.execute("ALTER TABLE paragraphs ADD COLUMN layout_type TEXT")
     conn.commit()
     return conn
 
@@ -185,6 +193,9 @@ def _insert_paragraphs(conn: sqlite3.Connection, doc_id: str, payload: dict) -> 
             paragraph_no = int(para.get("paragraph_no") or 1)
             paragraph_no_in_doc = int(para.get("paragraph_no_in_doc") or 1)
             paragraph_id = str(para.get("paragraph_id") or f"page-{pdf_page_no}-p{paragraph_no}")
+            position = para.get("position")
+            position_json = json.dumps(position) if position is not None else None
+            layout_type = para.get("layout_type") or None
 
             para_rows.append((
                 doc_id,
@@ -195,6 +206,8 @@ def _insert_paragraphs(conn: sqlite3.Connection, doc_id: str, payload: dict) -> 
                 paragraph_no_in_doc,
                 paragraph_id,
                 text,
+                position_json,
+                layout_type,
             ))
             fts_rows.append((
                 _tokenize_for_fts(text),
@@ -213,8 +226,9 @@ def _insert_paragraphs(conn: sqlite3.Connection, doc_id: str, payload: dict) -> 
             """
             INSERT OR IGNORE INTO paragraphs
                 (doc_id, pdf_page_no, page_no, book_page_no,
-                 paragraph_no, paragraph_no_in_doc, paragraph_id, text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 paragraph_no, paragraph_no_in_doc, paragraph_id, text,
+                 position, layout_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             para_rows,
         )
@@ -241,11 +255,14 @@ def _insert_paragraphs(conn: sqlite3.Connection, doc_id: str, payload: dict) -> 
 def derive_doc_id(docs_root: Path, structured_path: Path) -> str:
     """从 .structured.json 路径还原出对应源文件的 doc_id。
 
-    doc_id = 源文件相对于 docs_root 的 POSIX 路径
-    例如：docs_root/子目录/历史书.pdf.structured.json
-         → "子目录/历史书.pdf"
+    doc_id = 源文件相对于 docs_root 的 POSIX 路径。
+    Structured JSON 文件通常在 .ingestion/ 子目录中，但源 PDF 在 docs_root 根目录；
+    因此 .ingestion/ 前缀需要剥离，保证 doc_id 与 catalog 保持一致。
+
+    例如：docs_root/.ingestion/历史书.pdf.structured.json → "历史书.pdf"
+          docs_root/子目录/历史书.pdf.structured.json   → "子目录/历史书.pdf"
     """
-    # 去掉 .structured.json 后缀，得到源文件路径
+    # 去掉 .structured.json 后缀，得到逻辑上的源文件路径
     name = structured_path.name
     if name.endswith(STRUCTURED_SUFFIX):
         source_name = name[: -len(STRUCTURED_SUFFIX)]
@@ -254,9 +271,15 @@ def derive_doc_id(docs_root: Path, structured_path: Path) -> str:
 
     source_path = structured_path.parent / source_name
     try:
-        return source_path.resolve().relative_to(docs_root.resolve()).as_posix()
+        rel = source_path.resolve().relative_to(docs_root.resolve()).as_posix()
     except ValueError:
         return source_name
+
+    # Strip .ingestion/ prefix: structured files live under .ingestion/ but source
+    # PDFs live at docs_root level, so doc_id should NOT carry the .ingestion/ prefix.
+    if rel.startswith(".ingestion/"):
+        return rel[len(".ingestion/"):]
+    return rel
 
 
 # ──────────────────────────────────────────────
@@ -394,6 +417,147 @@ def _print_sample(conn: sqlite3.Connection, doc_id: str) -> None:
         print(f"  {r['text'][:200]}{'…' if len(r['text']) > 200 else ''}")
 
 
+def update_positions(conn: sqlite3.Connection, docs_root: Path) -> tuple[int, int]:
+    """Backfill position / layout_type for existing paragraphs that have NULL position.
+
+    Reads each *.structured.json file (still present under .ingestion/) and updates
+    the corresponding rows in the paragraphs table by matching on (doc_id, paragraph_id).
+
+    Returns (books_updated, paragraphs_updated).
+    """
+    # Find books with at least one paragraph missing position data.
+    books_needing_update = conn.execute(
+        "SELECT DISTINCT doc_id FROM paragraphs WHERE position IS NULL"
+    ).fetchall()
+
+    if not books_needing_update:
+        return 0, 0
+
+    # Build a doc_id → structured_path mapping.
+    # After doc_id migration, doc_id is bare filename (e.g., "filename.pdf").
+    # The structured file lives at docs_root/.ingestion/filename.pdf.structured.json.
+    # We also support the legacy .ingestion/-prefixed form.
+    def _find_structured_path(doc_id: str) -> Path | None:
+        # Canonical: docs_root/<doc_id>.structured.json
+        candidate = Path(str(docs_root / doc_id) + STRUCTURED_SUFFIX)
+        if candidate.exists():
+            return candidate
+        # Legacy DB doc_id includes .ingestion/ prefix already → strip and retry
+        bare = doc_id.removeprefix(".ingestion/")
+        candidate2 = docs_root / ".ingestion" / (bare + STRUCTURED_SUFFIX)
+        if candidate2.exists():
+            return candidate2
+        return None
+
+    books_updated = 0
+    paragraphs_updated = 0
+
+    for book_row in books_needing_update:
+        doc_id: str = book_row["doc_id"]
+        structured_path = _find_structured_path(doc_id)
+        if structured_path is None:
+            logger.warning("update-positions: 找不到 structured 文件，跳过 doc_id=%s", doc_id)
+            continue
+
+        try:
+            payload = json.loads(structured_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("update-positions: 读取失败 %s: %s", structured_path, exc)
+            continue
+
+        update_rows = []
+        for page in payload.get("pages") or []:
+            for para in page.get("paragraphs") or []:
+                position = para.get("position")
+                layout_type = para.get("layout_type") or None
+                paragraph_id = str(para.get("paragraph_id") or "")
+                if not paragraph_id:
+                    continue
+                position_json = json.dumps(position) if position is not None else None
+                update_rows.append((position_json, layout_type, doc_id, paragraph_id))
+
+        if update_rows:
+            with conn:
+                conn.executemany(
+                    "UPDATE paragraphs SET position = ?, layout_type = ? WHERE doc_id = ? AND paragraph_id = ?",
+                    update_rows,
+                )
+            paragraphs_updated += len(update_rows)
+            books_updated += 1
+            logger.debug("update-positions: %s  (%d 段)", doc_id, len(update_rows))
+
+    return books_updated, paragraphs_updated
+
+
+def migrate_doc_id_prefix(conn: sqlite3.Connection) -> int:
+    """Remove the legacy '.ingestion/' prefix from doc_ids stored in paragraphs.db.
+
+    Earlier versions of derive_doc_id() produced ".ingestion/filename.pdf" as the
+    doc_id because the structured files live inside .ingestion/.  The catalog code
+    always used "filename.pdf".  This mismatch broke FTS routing and the DB fast-path
+    in the locator.
+
+    This migration:
+      1. For every book with a ".ingestion/" prefix, inserts a duplicate row with
+         the corrected doc_id (if it doesn't already exist).
+      2. Updates paragraphs.doc_id and paragraph_fts.doc_id to the corrected value.
+      3. Deletes the old book row (paragraphs already updated; foreign_keys=OFF so
+         the cascade doesn't wipe the newly-renamed rows).
+
+    Safe to run multiple times — a second run is a no-op.
+    Returns the number of books migrated.
+    """
+    old_books = conn.execute(
+        "SELECT doc_id, title, filename, page_count, source_url, original_url, indexed_at "
+        "FROM books WHERE doc_id LIKE '.ingestion/%'"
+    ).fetchall()
+
+    if not old_books:
+        return 0
+
+    conn.execute("PRAGMA foreign_keys=OFF")
+    migrated = 0
+    try:
+        with conn:
+            for book in old_books:
+                old_id: str = book["doc_id"]
+                new_id: str = old_id[len(".ingestion/"):]
+
+                # Skip if the corrected doc_id already exists
+                exists = conn.execute(
+                    "SELECT 1 FROM books WHERE doc_id = ?", (new_id,)
+                ).fetchone()
+                if not exists:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO books
+                            (doc_id, title, filename, page_count, source_url, original_url, indexed_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (new_id, book["title"], book["filename"],
+                         book["page_count"], book["source_url"],
+                         book["original_url"], book["indexed_at"]),
+                    )
+
+                # Move paragraphs to the new doc_id
+                conn.execute(
+                    "UPDATE OR REPLACE paragraphs SET doc_id = ? WHERE doc_id = ?",
+                    (new_id, old_id),
+                )
+                # paragraph_fts stores doc_id as an UNINDEXED column — safe to UPDATE directly
+                conn.execute(
+                    "UPDATE paragraph_fts SET doc_id = ? WHERE doc_id = ?",
+                    (new_id, old_id),
+                )
+                # Remove old book row (paragraphs already migrated; foreign_keys=OFF)
+                conn.execute("DELETE FROM books WHERE doc_id = ?", (old_id,))
+                migrated += 1
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+    return migrated
+
+
 def _prewarm_indexes() -> None:
     """入库完成后同步重建 catalog SQLite 缓存，替代独立的 prewarm 脚本。"""
     import sys as _sys
@@ -463,10 +627,55 @@ def main(argv: list[str] | None = None) -> int:
         metavar="DOC_ID",
         help="打印指定 doc_id 的前 3 段内容，用于验证入库正确性",
     )
+    parser.add_argument(
+        "--migrate-doc-ids",
+        action="store_true",
+        help="一次性迁移：去掉 DB 中 doc_id 的 .ingestion/ 前缀，使之与 catalog 保持一致",
+    )
+    parser.add_argument(
+        "--update-positions",
+        action="store_true",
+        help="补录已入库段落的 position / layout_type 字段（从 .structured.json 文件回填）",
+    )
     args = parser.parse_args(argv)
 
     docs_root: Path = args.docs_dir.resolve()
     db_path: Path = args.db.resolve()
+
+    if args.migrate_doc_ids:
+        if not db_path.exists():
+            print(f"DB 文件不存在: {db_path}")
+            return 1
+        conn = _connect(db_path)
+        try:
+            n = migrate_doc_id_prefix(conn)
+        finally:
+            conn.close()
+        if n:
+            logger.info("迁移完成: %d 条 doc_id 已更新（.ingestion/ 前缀已去除）", n)
+        else:
+            logger.info("无需迁移: 没有带 .ingestion/ 前缀的 doc_id")
+        return 0
+
+    if args.update_positions:
+        if not db_path.exists():
+            print(f"DB 文件不存在: {db_path}")
+            return 1
+        if not docs_root.exists():
+            logger.error("docs-dir 不存在: %s", docs_root)
+            return 1
+        import time
+        conn = _connect(db_path)
+        t0 = time.perf_counter()
+        try:
+            books_n, paras_n = update_positions(conn, docs_root)
+        finally:
+            conn.close()
+        logger.info(
+            "position 补录完成: %d 本书 / %d 段落，耗时 %.1fs",
+            books_n, paras_n, time.perf_counter() - t0,
+        )
+        return 0
 
     if args.status or args.sample:
         if not db_path.exists():

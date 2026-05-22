@@ -105,15 +105,47 @@ def _is_exact_identifier_match(
 
 
 def _locate_global_document(doc_id: str | None, filename: str | None) -> LocatedDocument | None:
-    # Fast path: both payload and metadata are in paragraphs.db — skip all file I/O.
+    docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
+
+    # Fast path: metadata comes from paragraphs.db; payload comes from the original
+    # .structured.json file (which contains bbox/position data the structured-page viewer
+    # needs to render text overlays).  paragraphs.db stores text-only — no position —
+    # so we must prefer the file here.  load_structured_document is lru_cache'd so
+    # repeated calls within the same process are free after the first read.
     def _build_located(resolved_doc_id: str, meta: dict) -> LocatedDocument | None:
+        # Primary: load from paragraphs.db (LRU-cached, includes position after migration).
         payload = load_structured_payload_from_db(resolved_doc_id)
+
+        # If the DB payload has no position data (rows ingested before --update-positions
+        # was run), fall back to the original .structured.json file which always has it.
+        # doc_id is a relative POSIX path from docs_root (e.g. ".ingestion/filename.pdf"),
+        # so the structured file lives at docs_root / resolved_doc_id + ".structured.json".
+        if payload is not None:
+            pages = payload.get("pages") or []
+            has_position = any(
+                para.get("position") is not None
+                for page in pages
+                for para in (page.get("paragraphs") or [])
+            )
+            if not has_position:
+                structured_file = Path(str(docs_root / resolved_doc_id) + ".structured.json")
+                file_payload = load_structured_document(structured_file)
+                if file_payload is not None:
+                    payload = file_payload
+        else:
+            # Doc not in DB yet — try file directly.
+            structured_file = Path(str(docs_root / resolved_doc_id) + ".structured.json")
+            payload = load_structured_document(structured_file)
+
         if payload is None:
             return None
         fname = meta["filename"]
         source_url = meta["source_url"] or f"/api/knowledge/docs/{fname}"
+        # Normalize doc_id to catalog format: strip legacy .ingestion/ prefix so
+        # the returned doc_id matches what catalog entries use.
+        canonical_doc_id = resolved_doc_id.removeprefix(".ingestion/")
         return LocatedDocument(
-            doc_id=resolved_doc_id,
+            doc_id=canonical_doc_id,
             title=meta["title"] or str(payload.get("title") or ""),
             filename=fname,
             scope="global",
@@ -125,9 +157,19 @@ def _locate_global_document(doc_id: str | None, filename: str | None) -> Located
     if doc_id:
         meta = lookup_global_book_meta(doc_id)
         if meta is not None:
-            located = _build_located(doc_id, meta)
+            located = _build_located(meta["doc_id"], meta)
             if located is not None:
                 return located
+        # Exact doc_id miss — likely the catalog uses "filename.pdf" while the DB
+        # stores ".ingestion/filename.pdf".  Try a filename-based lookup which
+        # matches on books.filename (always the bare filename with no prefix).
+        doc_basename = Path(doc_id).name
+        if doc_basename:
+            meta2 = lookup_global_book_meta_by_filename(doc_basename)
+            if meta2 is not None:
+                located = _build_located(meta2["doc_id"], meta2)
+                if located is not None:
+                    return located
     elif filename:
         meta = lookup_global_book_meta_by_filename(filename)
         if meta is not None:
@@ -136,7 +178,6 @@ def _locate_global_document(doc_id: str | None, filename: str | None) -> Located
                 return located
 
     # Slow path: scan ingestion records (DB miss — doc not yet ingested or filename fuzzy match).
-    docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
     ingestion_dir = docs_root / ".ingestion"
     # Store (score, source_filename, record) — defer payload loading until we know the winner.
     best_match: tuple[float, str, dict] | None = None

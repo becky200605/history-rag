@@ -7,6 +7,7 @@ the DB doesn't exist or the doc_id isn't found.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from functools import lru_cache
@@ -52,12 +53,21 @@ def _reconstruct_payload(doc_id: str, rows: list[sqlite3.Row], title: str, filen
                 "paragraphs": [],
             }
         page = pages_map[pdf_page_no]
-        page["paragraphs"].append({
+        # Deserialize position stored as a JSON array, e.g. [x, y, width, height]
+        raw_pos = row["position"] if "position" in row.keys() else None
+        position = json.loads(raw_pos) if raw_pos else None
+        para: dict[str, Any] = {
             "paragraph_id": str(row["paragraph_id"]),
             "paragraph_no": int(row["paragraph_no"]),
             "paragraph_no_in_doc": int(row["paragraph_no_in_doc"]),
             "text": str(row["text"]),
-        })
+        }
+        if position is not None:
+            para["position"] = position
+        layout_type = row["layout_type"] if "layout_type" in row.keys() else None
+        if layout_type:
+            para["layout_type"] = str(layout_type)
+        page["paragraphs"].append(para)
 
     for page in pages_map.values():
         page["text"] = "\n\n".join(p["text"] for p in page["paragraphs"])
@@ -71,8 +81,58 @@ def _reconstruct_payload(doc_id: str, rows: list[sqlite3.Row], title: str, filen
     }
 
 
+def _normalize_db_doc_id(doc_id: str) -> str:
+    """Strip the legacy .ingestion/ prefix from a DB doc_id.
+
+    The ingest script used to store doc_ids as ".ingestion/filename.pdf"
+    (relative to docs_root including the staging subdir).  Catalog code
+    always uses just "filename.pdf".  This helper normalizes both forms to
+    the catalog format so comparisons work correctly.
+    """
+    return doc_id[len(".ingestion/"):] if doc_id.startswith(".ingestion/") else doc_id
+
+
+def _build_catalog_to_db_id_map(conn: sqlite3.Connection, catalog_ids: list[str]) -> dict[str, str]:
+    """Return {catalog_id → DB_doc_id} for every catalog_id that exists in the DB.
+
+    Matches first by exact doc_id, then by the books.filename column (which is just
+    the bare filename, e.g. "中国财政通史 第8卷（下）.pdf").  The second path handles
+    the common case where the DB stores ".ingestion/filename.pdf" but the catalog
+    passes "filename.pdf".
+    """
+    if not catalog_ids:
+        return {}
+    from pathlib import Path as _Path
+
+    placeholders = ",".join("?" * len(catalog_ids))
+    basenames = [_Path(d).name for d in catalog_ids]
+    bn_placeholders = ",".join("?" * len(basenames))
+    rows = conn.execute(
+        f"SELECT doc_id, filename FROM books WHERE doc_id IN ({placeholders}) OR filename IN ({bn_placeholders})",
+        catalog_ids + basenames,
+    ).fetchall()
+
+    by_doc_id: dict[str, str] = {str(r["doc_id"]): str(r["doc_id"]) for r in rows}
+    by_filename: dict[str, str] = {str(r["filename"]): str(r["doc_id"]) for r in rows}
+
+    result: dict[str, str] = {}
+    for cid in catalog_ids:
+        if cid in by_doc_id:
+            result[cid] = cid  # exact match
+        else:
+            db_id = by_filename.get(_Path(cid).name)
+            if db_id is not None:
+                result[cid] = db_id  # filename-based match
+    return result
+
+
 def get_global_doc_ids_in_db(doc_ids: list[str]) -> set[str]:
-    """返回 doc_ids 中已存在于 paragraphs.db 的子集（用于分流）。"""
+    """Return the subset of doc_ids (catalog format) that exist in paragraphs.db.
+
+    Handles the legacy case where DB stores ".ingestion/filename.pdf" while
+    catalog code passes "filename.pdf" — matches on both doc_id and filename.
+    Returns the INPUT catalog-format doc_ids (not the raw DB doc_ids).
+    """
     if not doc_ids:
         return set()
     db_path = _paragraphs_db_path()
@@ -81,11 +141,7 @@ def get_global_doc_ids_in_db(doc_ids: list[str]) -> set[str]:
     try:
         conn = _connect(db_path)
         try:
-            placeholders = ",".join("?" * len(doc_ids))
-            rows = conn.execute(
-                f"SELECT doc_id FROM books WHERE doc_id IN ({placeholders})", doc_ids
-            ).fetchall()
-            return {str(r["doc_id"]) for r in rows}
+            return set(_build_catalog_to_db_id_map(conn, doc_ids).keys())
         finally:
             conn.close()
     except Exception:
@@ -99,7 +155,12 @@ def search_fts(
     doc_ids: list[str],
     top_k: int,
 ) -> list[dict[str, Any]]:
-    """FTS5 关键词检索，只查 paragraphs.db 里的全局书目。"""
+    """FTS5 关键词检索，只查 paragraphs.db 里的全局书目。
+
+    doc_ids are in catalog format (e.g., "filename.pdf").  Internally translates
+    them to the DB format (which may be ".ingestion/filename.pdf") before querying.
+    Returns results with doc_id normalized to catalog format (no .ingestion/ prefix).
+    """
     from src.community.knowledge_base.common import normalize_search_text, tokenize_search_text
 
     db_path = _paragraphs_db_path()
@@ -112,21 +173,26 @@ def search_fts(
         return []
     match_expr = " OR ".join(f'"{t.replace(chr(34), "")}"' for t in terms)
 
-    placeholders = ",".join("?" * len(doc_ids))
-    sql = f"""
-        SELECT doc_id, title, filename,
-               page_no, pdf_page_no,
-               paragraph_no, paragraph_no_in_doc, text
-        FROM paragraph_fts
-        WHERE paragraph_fts MATCH ?
-          AND doc_id IN ({placeholders})
-        LIMIT ?
-    """
-    params: list[Any] = [match_expr, *doc_ids, max(200, top_k * 40)]
-
     try:
         conn = _connect(db_path)
         try:
+            # Translate catalog doc_ids → DB doc_ids (handles .ingestion/ prefix mismatch)
+            id_map = _build_catalog_to_db_id_map(conn, doc_ids)
+            if not id_map:
+                return []
+            db_ids = list(id_map.values())
+
+            placeholders = ",".join("?" * len(db_ids))
+            sql = f"""
+                SELECT doc_id, title, filename,
+                       page_no, pdf_page_no,
+                       paragraph_no, paragraph_no_in_doc, text
+                FROM paragraph_fts
+                WHERE paragraph_fts MATCH ?
+                  AND doc_id IN ({placeholders})
+                LIMIT ?
+            """
+            params: list[Any] = [match_expr, *db_ids, max(200, top_k * 40)]
             rows = conn.execute(sql, params).fetchall()
         finally:
             conn.close()
@@ -152,11 +218,13 @@ def search_fts(
         text = str(row["text"] or "").strip()
         norm_txt = normalize_search_text(text).replace(" ", "")
         matched_keywords = [t for t in primary_terms if t in norm_txt]
+        # Normalize doc_id to catalog format (strip legacy .ingestion/ prefix)
+        result_doc_id = _normalize_db_doc_id(str(row["doc_id"] or ""))
         results.append({
             "content": text,
             "metadata": {
                 "title": row["title"],
-                "doc_id": row["doc_id"],
+                "doc_id": result_doc_id,
                 "page_no": row["page_no"],
                 "pdf_page_no": row["pdf_page_no"],
                 "paragraph_no": row["paragraph_no"],
@@ -179,7 +247,8 @@ def search_fts(
 def lookup_global_book_meta(doc_id: str) -> dict[str, Any] | None:
     """从 paragraphs.db 查单本书的元数据（title/filename/source_url/original_url）。
 
-    返回 None 表示 DB 不存在或该书未入库，调用方应降级到文件扫描。
+    Performs an exact doc_id match only.  Returns None if not found — callers
+    should fall back to lookup_global_book_meta_by_filename or file scanning.
     """
     db_path = _paragraphs_db_path()
     if not db_path.exists():
@@ -188,12 +257,13 @@ def lookup_global_book_meta(doc_id: str) -> dict[str, Any] | None:
         conn = _connect(db_path)
         try:
             row = conn.execute(
-                "SELECT title, filename, source_url, original_url FROM books WHERE doc_id = ?",
+                "SELECT doc_id, title, filename, source_url, original_url FROM books WHERE doc_id = ?",
                 (doc_id,),
             ).fetchone()
             if row is None:
                 return None
             return {
+                "doc_id": str(row["doc_id"]),
                 "title": str(row["title"] or ""),
                 "filename": str(row["filename"] or ""),
                 "source_url": str(row["source_url"] or ""),
@@ -248,7 +318,8 @@ def _load_payload_cached(db_path_str: str, doc_id: str) -> dict[str, Any] | None
             rows = conn.execute(
                 """
                 SELECT pdf_page_no, page_no, book_page_no,
-                       paragraph_no, paragraph_no_in_doc, paragraph_id, text
+                       paragraph_no, paragraph_no_in_doc, paragraph_id, text,
+                       position, layout_type
                 FROM paragraphs
                 WHERE doc_id = ?
                 ORDER BY paragraph_no_in_doc

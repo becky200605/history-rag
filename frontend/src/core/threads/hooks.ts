@@ -131,7 +131,24 @@ export function useThreadStream({
     },
     onFinish(state) {
       onFinish?.(state.values);
-      // void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
+      // Derive best title: prefer state value, fall back to first human message text.
+      const stateTitle = state.values.title;
+      const firstHumanText = (() => {
+        const msg = state.values.messages?.find((m) => m.type === "human");
+        if (!msg) return undefined;
+        const content = msg.content;
+        if (typeof content === "string") return content.slice(0, 60) || undefined;
+        if (Array.isArray(content)) {
+          const part = content.find(
+            (p): p is { type: "text"; text: string } =>
+              typeof p === "object" && p !== null && "type" in p && p.type === "text" && "text" in p,
+          );
+          return part?.text?.slice(0, 60) || undefined;
+        }
+        return undefined;
+      })();
+      const resolvedTitle = (stateTitle && typeof stateTitle === "string" ? stateTitle : firstHumanText) ?? undefined;
+
       queryClient.setQueriesData(
         {
           queryKey: ["threads", "search"],
@@ -147,7 +164,7 @@ export function useThreadStream({
                 ...t,
                 values: {
                   ...t.values,
-                  title: state.values.title,
+                  title: resolvedTitle ?? t.values?.title,
                 },
               };
             }
@@ -155,6 +172,9 @@ export function useThreadStream({
           });
         },
       );
+      // Invalidate so the sidebar picks up the server-persisted title even if
+      // the thread wasn't in the cache yet (e.g. brand-new thread).
+      void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
     },
   });
   return thread;

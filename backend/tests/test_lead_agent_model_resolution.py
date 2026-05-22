@@ -138,9 +138,9 @@ def test_make_lead_agent_hides_raw_task_tool_in_plan_mode(monkeypatch):
 
     assert captured_tool_kwargs["subagent_enabled"] is True
     assert captured_tool_kwargs["include_task_tool"] is False
-    assert captured_tool_kwargs["allowed_tool_names"] == set()
+    assert captured_tool_kwargs["allowed_tool_names"] == {"book_search"}
     assert "knowledge_locate" not in captured_tool_kwargs["allowed_tool_names"]
-    assert "book_search" not in captured_tool_kwargs["allowed_tool_names"]
+    assert "book_search" in captured_tool_kwargs["allowed_tool_names"]
 
 
 def test_make_lead_agent_hides_knowledge_locate_when_subagents_enabled_outside_plan_mode(monkeypatch):
@@ -173,9 +173,9 @@ def test_make_lead_agent_hides_knowledge_locate_when_subagents_enabled_outside_p
 
     assert captured_tool_kwargs["subagent_enabled"] is True
     assert captured_tool_kwargs["include_task_tool"] is True
-    assert captured_tool_kwargs["allowed_tool_names"] == {"task"}
+    assert captured_tool_kwargs["allowed_tool_names"] == {"book_search", "task"}
     assert "knowledge_locate" not in captured_tool_kwargs["allowed_tool_names"]
-    assert "book_search" not in captured_tool_kwargs["allowed_tool_names"]
+    assert "book_search" in captured_tool_kwargs["allowed_tool_names"]
 
 
 def test_build_middlewares_uses_resolved_model_name_for_vision(monkeypatch):
@@ -256,13 +256,13 @@ def test_create_todo_list_middleware_uses_parallel_batch_language_when_subagents
     assert "parallel batch" in captured["system_prompt"]
     assert "up to 3" in captured["system_prompt"]
     assert "will drain the queued todos" in captured["system_prompt"]
-    assert "The lead agent should not select books itself" in captured["system_prompt"]
-    assert "each subtask will run `book_search`" in captured["system_prompt"]
+    assert "the lead agent runs one `book_search` routing pass" in captured["system_prompt"]
+    assert "each carrying its assigned doc_ids" in captured["system_prompt"]
     assert "任务目标 / 探索方向" in captured["system_prompt"]
     assert "`write_todos` is the dispatch point" in captured["system_prompt"]
     assert "Do NOT mirror the same batch with manual `task` calls" in captured["system_prompt"]
     assert "Parallel batches" in captured["tool_description"]
     assert "Evidence-gap retrieval with subtasks" in captured["tool_description"]
-    assert "Do not put book names into todo items unless" in captured["tool_description"]
+    assert "Pair each historical retrieval todo with the specific `doc_id`(s)" in captured["tool_description"]
     assert "mark multiple items as `in_progress` together in one `write_todos` call" in captured["tool_description"]
     assert "run that parallel batch and return findings before you continue" in captured["tool_description"]

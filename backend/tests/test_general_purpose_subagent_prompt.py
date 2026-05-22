@@ -52,3 +52,17 @@ def test_subagent_prompt_book_contribution_summary() -> None:
     prompt = GENERAL_PURPOSE_CONFIG.system_prompt
     # Output section should require a brief note on each book's contribution
     assert "各书的贡献" in prompt or "贡献或弃用理由" in prompt
+
+
+def test_subagent_skips_book_search_when_doc_id_assigned() -> None:
+    prompt = GENERAL_PURPOSE_CONFIG.system_prompt
+    # When lead agent assigns a doc_id, subtask must go straight to knowledge_locate
+    assert "doc_id" in prompt
+    assert "do NOT call `book_search` first" in prompt
+    assert "knowledge_locate" in prompt
+
+
+def test_subagent_falls_back_to_book_search_only_without_doc_id() -> None:
+    prompt = GENERAL_PURPOSE_CONFIG.system_prompt
+    # Subtask may call book_search only if no doc_id was provided or assigned books don't fit
+    assert "Only call `book_search` yourself when the dispatch prompt gave no `doc_id`" in prompt

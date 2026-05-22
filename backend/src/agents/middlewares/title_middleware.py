@@ -176,16 +176,16 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
     def after_agent(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
         """Sync fallback — only called when the graph runs in a purely synchronous context."""
         if self._should_generate_title(state):
-            title = generate_title_candidate(self._get_user_msg(state))
+            title = _title_fallback(self._get_user_msg(state))
             print(f"Generated thread title: {title}")
             return {"title": title}
         return None
 
     @override
     async def aafter_agent(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
-        """Async path — used by LangGraph's async event loop; does not block."""
+        """Use the user's first message directly as the thread title (no LLM call needed)."""
         if self._should_generate_title(state):
-            title = await agenerate_title_candidate(self._get_user_msg(state))
+            title = _title_fallback(self._get_user_msg(state))
             print(f"Generated thread title: {title}")
             return {"title": title}
         return None

@@ -2,7 +2,7 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
@@ -1414,6 +1414,7 @@ def get_user_knowledge_document(
 
 @router.get("/docs/{filename}/structured-page", response_model=dict)
 def get_user_knowledge_structured_page(
+    response: Response,
     user_id: str,
     filename: str,
     page_no: int | None = Query(default=None),
@@ -1428,6 +1429,7 @@ def get_user_knowledge_structured_page(
 
     page_payload = _structured_page_payload(document, page_no=page_no, pdf_page_no=pdf_page_no)
     if page_payload is not None:
+        response.headers["Cache-Control"] = "public, max-age=600, stale-while-revalidate=3600"
         return page_payload
     raise HTTPException(status_code=404, detail="Structured page not found")
 
@@ -1515,10 +1517,11 @@ def get_user_knowledge_paragraph_location(
 
 @router.get("/docs/{filename}/page-image", summary="Render a personal knowledge PDF page image")
 def get_user_knowledge_document_page_image(
+    request: Request,
     user_id: str,
     filename: str,
     pdf_page_no: int = Query(..., ge=1),
-    dpi: int = Query(default=144, ge=72, le=300),
+    dpi: int = Query(default=120, ge=72, le=300),
 ):
     if "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
@@ -1534,6 +1537,15 @@ def get_user_knowledge_document_page_image(
         raise HTTPException(status_code=400, detail="Page images are only available for PDF documents")
 
     try:
+        mtime_ns = file_path.stat().st_mtime_ns
+    except OSError:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    etag = f'"{mtime_ns}:{pdf_page_no}:{dpi}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400"})
+
+    try:
         import fitz
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"PDF rendering dependency unavailable: {exc}") from exc
@@ -1545,10 +1557,17 @@ def get_user_knowledge_document_page_image(
                 raise HTTPException(status_code=404, detail="PDF page not found")
             page = document.load_page(page_index)
             pixmap = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
-            png_bytes = pixmap.tobytes("png")
+            img_bytes = pixmap.tobytes("jpeg", jpg_quality=85)
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to render PDF page: {exc}") from exc
 
-    return Response(content=png_bytes, media_type="image/png")
+    return Response(
+        content=img_bytes,
+        media_type="image/jpeg",
+        headers={
+            "ETag": etag,
+            "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+        },
+    )

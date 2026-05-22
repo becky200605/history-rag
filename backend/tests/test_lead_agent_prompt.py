@@ -17,9 +17,9 @@ def test_prompt_requires_joint_retrieval_and_historical_decomposition(monkeypatc
     prompt = prompt_module.apply_prompt_template()
 
     assert "Historical Reuse Before Dispatch Rule" in prompt
-    assert "Book Search Delegation Rule" in prompt
+    assert "Book Search Routing Rule" in prompt
     assert "Subtask Source-Routing Rule" in prompt
-    assert "the lead agent does not call `book_search`" in prompt
+    assert "runs exactly one `book_search` routing pass" in prompt
     assert "knowledge_folders" in prompt
     assert "Knowledge Folder Semantics Rule" in prompt
     assert "Scope Label Rule" in prompt
@@ -114,8 +114,8 @@ def test_prompt_supports_parallel_goal_subtasks_and_fiscal_historian_style(monke
 
     assert "History / Fiscal-History Orchestration Pattern" in prompt
     assert "任务目标 / 探索方向" in prompt
-    assert "The lead agent should not call `book_search`" in prompt
-    assert "Each subtask should receive a task goal, not a forced book" in prompt
+    assert "run ONE `book_search` pass for the question" in prompt
+    assert "Each subtask receives a task goal AND the specific book(s) to read" in prompt
     assert "若已启用子代理且明显需要补充证据，可把检索拆成按 `任务目标 / 探索方向` 的并行子任务" in prompt
     assert "Todo Dispatch Rule" in prompt
     assert "Todo Gate for Fresh Retrieval Rule" in prompt

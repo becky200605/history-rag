@@ -153,8 +153,8 @@ This tool is designed for complex objectives that require systematic tracking:
 - Add new tasks discovered during implementation
 - Don't be afraid to revise the todo list as you learn more
 - Before you create a retrieval todo board, first review any injected task-memory matches to see whether prior main-task/subtask results already cover the question
-- The lead agent should not select books itself. For historical / knowledge-base retrieval, write todo items around the user's information need, evidence gap, stage, actor, institution, or mechanism; each subtask will run `book_search` and decide which sources fit.
-- If injected evidence is insufficient, dispatch the unresolved exploration directions to subtasks instead of calling book-routing tools in the lead agent.
+- For historical / knowledge-base retrieval, the lead agent runs one `book_search` routing pass, then writes todo items that pair an information need (stage, actor, institution, mechanism, evidence gap) with the specific `doc_id`(s) assigned from that pass.
+- If injected evidence is insufficient, run the `book_search` routing pass and dispatch the unresolved exploration directions — each carrying its assigned doc_ids — to subtasks.
 - If subagent mode is available and several exploration directions can be searched independently, mark multiple `任务目标 / 探索方向` todo items `in_progress` in one `write_todos` call; that call is what dispatches and waits for the parallel subagent batch
 - Do NOT add `总结` / `汇总` / `整合` / `写最终答案` 这类收尾任务到 todo board；子任务结果回到主任务后，由主任务自行综合
 {parallel_hint}
@@ -225,7 +225,7 @@ If blocked, keep the task as `in_progress` and create a new task describing what
 - Before creating retrieval todos, review any injected task-memory matches for reusable prior task results; if they do not cover the task, dispatch subtasks for the missing exploration directions
 - For historical or knowledge-base retrieval tasks, prefer todo items like `查盛宣怀的晚清实业财政活动` or `核对北洋时期财政收入结构` instead of vague items like `继续检索`
 - Do not include terminal synthesis items such as `汇总结论` / `整合证据` / `撰写最终答案` in the todo board; the board should only contain delegated execution lanes
-- Do not put book names into todo items unless the user explicitly asked about a specific book or a prior subtask returned a specific source that needs follow-up verification
+- Pair each historical retrieval todo with the specific `doc_id`(s) assigned from the lead agent's `book_search` routing pass, so the subtask can go straight to `knowledge_locate`
 - If subagent mode is enabled and the evidence gaps are independent enough, move several pending exploration items to `in_progress` together in one `write_todos` call; the system will run that parallel batch and return findings before you continue
 - **IMPORTANT**: When you write the todo list, mark your first task(s) or first parallel batch as `in_progress` immediately
 - **IMPORTANT**: Unless all tasks are completed, always have at least one task `in_progress` to show progress

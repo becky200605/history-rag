@@ -22,7 +22,10 @@ BUILTIN_TOOLS = [
 # but must not be exposed to the model right now.
 TEMPORARILY_DISABLED_TOOL_NAMES = set()
 
-LEAD_ORCHESTRATOR_TOOL_NAMES: set[str] = set()
+# The lead agent runs one `book_search` pre-routing pass so it can assign
+# concrete doc_ids to subtasks; deep page reading (`knowledge_locate`) stays
+# inside subtasks.
+LEAD_ORCHESTRATOR_TOOL_NAMES: set[str] = {"book_search"}
 
 SUBAGENT_TOOLS = [
     task_tool,

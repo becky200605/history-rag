@@ -73,8 +73,9 @@ export function textOfMessage(message: BaseMessage) {
 }
 
 export function titleOfThread(thread: AgentThread) {
-  if (thread.values && "title" in thread.values) {
-    return thread.values.title;
+  const title = thread.values?.title;
+  if (title && typeof title === "string") {
+    return title;
   }
   return "Untitled";
 }

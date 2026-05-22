@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
@@ -2072,6 +2072,7 @@ def get_knowledge_document(
     summary="Get structured page data for a knowledge document",
 )
 def get_knowledge_structured_page(
+    response: Response,
     filename: str,
     page_no: int | None = Query(default=None),
     pdf_page_no: int | None = Query(default=None),
@@ -2087,6 +2088,7 @@ def get_knowledge_structured_page(
 
     payload = _build_structured_page_payload(document, page_no=page_no, pdf_page_no=pdf_page_no)
     if payload is not None:
+        response.headers["Cache-Control"] = "public, max-age=600, stale-while-revalidate=3600"
         return payload
 
     raise HTTPException(status_code=404, detail="Structured page not found")
@@ -2187,23 +2189,40 @@ def get_knowledge_paragraph_location(
 
 @router.get("/docs/{filename}/page-image", summary="Render a PDF page image for citation viewing")
 def get_knowledge_document_page_image(
+    request: Request,
     filename: str,
     pdf_page_no: int = Query(..., ge=1),
-    dpi: int = Query(default=144, ge=72, le=300),
+    dpi: int = Query(default=120, ge=72, le=300),
 ):
-    """Render a physical PDF page to PNG for bbox-based citation highlighting."""
+    """Render a physical PDF page to JPEG for bbox-based citation highlighting."""
     if "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    document_record = locate_document(thread_id=None, filename=filename)
-    if not document_record:
+    docs_root = get_global_docs_dir()
+    file_path = docs_root / filename
+    try:
+        file_path = file_path.resolve()
+        docs_root_resolved = docs_root.resolve()
+        if not str(file_path).startswith(str(docs_root_resolved)):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    file_path = get_global_docs_dir() / document_record.filename
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
     if file_path.suffix.lower() != ".pdf":
         raise HTTPException(status_code=400, detail="Page images are only available for PDF documents")
+
+    try:
+        mtime_ns = file_path.stat().st_mtime_ns
+    except OSError:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    etag = f'"{mtime_ns}:{pdf_page_no}:{dpi}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400"})
 
     try:
         import fitz
@@ -2217,10 +2236,17 @@ def get_knowledge_document_page_image(
                 raise HTTPException(status_code=404, detail="PDF page not found")
             page = document.load_page(page_index)
             pixmap = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
-            png_bytes = pixmap.tobytes("png")
+            img_bytes = pixmap.tobytes("jpeg", jpg_quality=85)
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to render PDF page: {exc}") from exc
 
-    return Response(content=png_bytes, media_type="image/png")
+    return Response(
+        content=img_bytes,
+        media_type="image/jpeg",
+        headers={
+            "ETag": etag,
+            "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+        },
+    )

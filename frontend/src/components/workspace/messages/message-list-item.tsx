@@ -1,5 +1,5 @@
 import type { Message } from "@langchain/langgraph-sdk";
-import { FileIcon } from "lucide-react";
+import { FileIcon, TriangleAlertIcon } from "lucide-react";
 import { useParams } from "next/navigation";
 import { memo, useMemo, type ImgHTMLAttributes } from "react";
 import rehypeKatex from "rehype-katex";
@@ -26,6 +26,8 @@ import { cn } from "@/lib/utils";
 import { CopyButton } from "../copy-button";
 
 import { MarkdownContent } from "./markdown-content";
+
+const UNGROUNDED_MARKER = "<!-- HISTORY_RAG_UNGROUNDED -->";
 
 export function MessageListItem({
   className,
@@ -125,21 +127,25 @@ function MessageContent_({
 
   const rawContent = extractContentFromMessage(message);
   const reasoningContent = extractReasoningContentFromMessage(message);
-  const { contentToParse, uploadedFiles } = useMemo(() => {
+  const { contentToParse, uploadedFiles, isUngrounded } = useMemo(() => {
     if (!isLoading && reasoningContent && !rawContent) {
       return {
         contentToParse: reasoningContent,
         uploadedFiles: [] as UploadedFile[],
+        isUngrounded: false,
       };
     }
     if (isHuman && rawContent) {
       const { files, cleanContent: contentWithoutFiles } =
         parseUploadedFiles(rawContent);
-      return { contentToParse: contentWithoutFiles, uploadedFiles: files };
+      return { contentToParse: contentWithoutFiles, uploadedFiles: files, isUngrounded: false };
     }
+    const raw = rawContent ?? "";
+    const hasMarker = raw.includes(UNGROUNDED_MARKER);
     return {
-      contentToParse: rawContent ?? "",
+      contentToParse: hasMarker ? raw.replace(UNGROUNDED_MARKER, "").trimEnd() : raw,
       uploadedFiles: [] as UploadedFile[],
+      isUngrounded: hasMarker,
     };
   }, [isLoading, rawContent, reasoningContent, isHuman]);
 
@@ -181,6 +187,7 @@ function MessageContent_({
         components={components}
         citationRegistry={citationRegistry}
       />
+      {isUngrounded && !isLoading && <UngroundedWarningBanner />}
     </AIElementMessageContent>
   );
 }
@@ -325,6 +332,15 @@ function UploadedFileCard({
     >
       {cardContent}
     </a>
+  );
+}
+
+function UngroundedWarningBanner() {
+  return (
+    <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300">
+      <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+      <span>当前回答未依据史料库检索，内容源自模型训练数据，请谨慎参考。</span>
+    </div>
   );
 }
 

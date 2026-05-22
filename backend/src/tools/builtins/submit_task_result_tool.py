@@ -5,6 +5,7 @@ from typing import Annotated
 from langchain.tools import InjectedToolCallId, ToolRuntime
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
+from langgraph.constants import END
 from langgraph.types import Command
 from langgraph.typing import ContextT
 
@@ -54,6 +55,7 @@ def submit_task_result_tool(
     }
 
     return Command(
+        goto=END,
         update={
             SUBTASK_FINAL_RESULT_KEY: result_payload,
             "messages": [
@@ -63,5 +65,5 @@ def submit_task_result_tool(
                     name="submit_task_result",
                 )
             ],
-        }
+        },
     )

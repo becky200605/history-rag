@@ -60,6 +60,8 @@ FINAL_FALLBACK_RESPONSE = (
     "【无法回答】无法根据当前资料生成带 citation 的回答，因此本轮不输出未经依据支持的内容。\n\n"
     "请缩小问题范围，或稍后重试。"
 )
+UNGROUNDED_WARNING_MARKER = "<!-- HISTORY_RAG_UNGROUNDED -->"
+UNGROUNDED_SUBSTANTIVE_THRESHOLD = 50
 RETRY_APPENDICES = (RETRY_APPENDIX, RETRY_APPENDIX_FINAL)
 SUGGESTION_SYSTEM_PROMPT = (
     "你负责回答链路中的第 3 阶段：生成建议问题。\n"
@@ -734,6 +736,12 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         if not answer_body:
             return content
 
+        is_ungrounded = (
+            not self._turn_used_grounding_tools(request.messages)
+            and not _is_refusal(answer_body)
+            and len(answer_body.strip()) > UNGROUNDED_SUBSTANTIVE_THRESHOLD
+        )
+
         reference_section = "" if _is_refusal(answer_body) else _build_reference_section(answer_body)
         suggestions = self._generate_suggested_questions_sync(
             request=request,
@@ -747,7 +755,10 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
             parts.append(reference_section)
         if suggestions:
             parts.append("建议问题\n" + "\n".join(f"{index}. {question}" for index, question in enumerate(suggestions, start=1)))
-        return "\n\n".join(parts)
+        composed = "\n\n".join(parts)
+        if is_ungrounded:
+            composed += f"\n\n{UNGROUNDED_WARNING_MARKER}"
+        return composed
 
     async def _compose_content_async(self, request: ModelRequest, content: str) -> str:
         answer_body = _normalize_answer_citations(
@@ -757,6 +768,12 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         )
         if not answer_body:
             return content
+
+        is_ungrounded = (
+            not self._turn_used_grounding_tools(request.messages)
+            and not _is_refusal(answer_body)
+            and len(answer_body.strip()) > UNGROUNDED_SUBSTANTIVE_THRESHOLD
+        )
 
         reference_section = "" if _is_refusal(answer_body) else _build_reference_section(answer_body)
         suggestions = await self._generate_suggested_questions_async(
@@ -771,7 +788,10 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
             parts.append(reference_section)
         if suggestions:
             parts.append("建议问题\n" + "\n".join(f"{index}. {question}" for index, question in enumerate(suggestions, start=1)))
-        return "\n\n".join(parts)
+        composed = "\n\n".join(parts)
+        if is_ungrounded:
+            composed += f"\n\n{UNGROUNDED_WARNING_MARKER}"
+        return composed
 
     def _compose_response_sync(self, request: ModelRequest, response: ModelResponse) -> ModelResponse:
         final_ai_index = None

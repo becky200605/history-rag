@@ -225,7 +225,7 @@ def _build_default_task_prompt(todo: Todo) -> str:
             "直接用对应 doc_id 调用 `knowledge_locate`，不要再调 `book_search`。\n"
         )
     else:
-        doc_id_line = "主代理未分配书目；如需知识库证据，请先查看 `task_prompt` 里是否有书名或 doc_id，有则直接用；实在没有才可用 `knowledge_search` 做全文检索定位。\n"
+        doc_id_line = "主代理未分配书目；请查看 `task_prompt` 里是否有书名或 doc_id，直接用对应 doc_id 调用 `knowledge_locate`；若无任何线索则写 `【证据不足】`。\n"
     return (
         "你只负责执行下面这一项 todo，不要扩展到其他任务，不要替主代理写最终总答案。\n\n"
         f"Todo: {todo['content']}\n\n"
@@ -235,11 +235,10 @@ def _build_default_task_prompt(todo: Todo) -> str:
         "2. `knowledge_locate` 禁止空调用。每次都必须带非空 `doc_id`；不要用书名代替。收到 missing-doc-id 错误时，用分配的原样 `doc_id` 重试一次，仍失败则写 `【证据不足】`；\n"
         "3. 不要用 bash/find/ls 扫本地文件系统替代知识库检索；\n"
         "4. 读到足够证据后停止检索，保留工具返回的编号 citation；\n"
-        "5. 最终输出必须使用固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；\n"
-        "6. `## 任务结果` 是最重要的主结果块，不要写成 1-2 句导语式摘要；"
-        "必须针对这个 Todo 的目标，详细写出你实际检索到的信息并附上 citation；"
-        "如果这是围绕某一本书的任务，开头要明确点名这本书；\n"
-        "7. citation 优先使用工具返回的编号标记如 `[citation:1]`；缺 citation 的内容写入 `未解决缺口`，不要硬答。"
+        "5. 所有检索完成后，**必须调用 `submit_task_result` 工具**来提交结果，不调用则任务不算完成；\n"
+        "6. `submit_task_result` 的 `summary` 参数是最重要的主结果块，不要写成 1-2 句导语式摘要；"
+        "必须针对这个 Todo 的目标，详细写出检索到的信息并附上 citation；\n"
+        "7. citation 优先使用工具返回的编号标记如 `[citation:1]`；缺 citation 的内容写入 gaps，不要硬答。"
     )
 
 
@@ -266,7 +265,7 @@ def _build_task_prompt(todo: Todo) -> str:
         "强制检索规则：\n"
         "1. 用分配的书目 doc_id 直接调 `knowledge_locate`，不要自己再调 `book_search`；\n"
         "2. 禁止空调 `knowledge_locate`，也不要用书名代替 `doc_id`。如果收到 missing-doc-id 错误，用分配的原样 `doc_id` 重试一次；仍失败则写 `【证据不足】`；\n"
-        "3. 输出固定小节：`## 任务结果`、`## 关键发现`、`## 关键引文`、`## 未解决缺口`；citation 必须复制工具返回的编号标记。"
+        "3. 所有检索完成后，**必须调用 `submit_task_result` 工具**来提交结果；citation 必须复制工具返回的编号标记。"
     )
 
 

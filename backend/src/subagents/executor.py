@@ -22,6 +22,7 @@ from langchain_core.runnables import RunnableConfig
 
 from src.agents.thread_state import SandboxState, ThreadDataState, ThreadState
 from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY
+from src.tools.builtins.submit_task_result_tool import SUBTASK_FINAL_RESULT_KEY
 from src.community.knowledge_base.task_memory import (
     build_task_memory_injection_message,
     search_and_prepare_task_memory,
@@ -861,37 +862,63 @@ class SubagentExecutor:
                 messages = final_state.get("messages", [])
                 logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} final messages count: {len(messages)}")
 
-                # Extract result from the last AIMessage (normal completion path).
-                last_ai_message = None
-                for msg in reversed(messages):
-                    if isinstance(msg, AIMessage):
-                        last_ai_message = msg
-                        break
+                # Preferred path: subagent called submit_task_result, result is in state.
+                submitted: dict | None = final_state.get(SUBTASK_FINAL_RESULT_KEY)
+                if submitted and isinstance(submitted, dict) and submitted.get("summary", "").strip():
+                    summary = submitted["summary"].strip()
+                    findings = submitted.get("findings") or []
+                    citations = submitted.get("citations") or []
+                    gaps = submitted.get("gaps") or []
+                    sections = [f"## 任务结果\n{summary}"]
+                    if findings:
+                        sections.append("## 关键发现\n" + "\n".join(f"- {f}" for f in findings))
+                    if citations:
+                        sections.append("## 关键引文\n" + "\n".join(f"- {c}" for c in citations))
+                    sections.append("## 未解决缺口\n" + ("\n".join(f"- {g}" for g in gaps) if gaps else "- 无"))
+                    result.result = "\n\n".join(sections)
+                    result.structured_result = {
+                        "summary": summary,
+                        "findings": findings,
+                        "citations": citations,
+                        "open_questions": gaps,
+                    }
+                    logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} result from submit_task_result tool")
+                else:
+                    # Fallback: extract result from the last AIMessage.
+                    if submitted is not None:
+                        logger.warning(
+                            f"[trace={self.trace_id}] Subagent {self.config.name} submit_task_result was called but summary is empty; falling back to last AIMessage"
+                        )
+                    last_ai_message = None
+                    for msg in reversed(messages):
+                        if isinstance(msg, AIMessage):
+                            last_ai_message = msg
+                            break
 
-                if last_ai_message is not None:
-                    content = last_ai_message.content
-                    # Handle both str and list content types for the final result
-                    if isinstance(content, str):
-                        result.result = content
-                    elif isinstance(content, list):
-                        # Extract text from list of content blocks for final result only
-                        text_parts = []
-                        for block in content:
-                            if isinstance(block, str):
-                                text_parts.append(block)
-                            elif isinstance(block, dict) and "text" in block:
-                                text_parts.append(block["text"])
-                        result.result = "\n".join(text_parts) if text_parts else None
-                    else:
-                        result.result = str(content) or None
-                elif messages:
-                    # No AIMessage at all — last message is probably a ToolMessage (unusual)
-                    last_message = messages[-1]
-                    logger.warning(
-                        f"[trace={self.trace_id}] Subagent {self.config.name} no AIMessage found, "
-                        f"last message type: {type(last_message).__name__}"
-                    )
-                    result.result = str(last_message.content) if hasattr(last_message, "content") else None
+                    if last_ai_message is not None:
+                        content = last_ai_message.content
+                        # Handle both str and list content types for the final result
+                        if isinstance(content, str):
+                            result.result = content
+                        elif isinstance(content, list):
+                            # Extract text from list of content blocks for final result only
+                            text_parts = []
+                            for block in content:
+                                if isinstance(block, str):
+                                    text_parts.append(block)
+                                elif isinstance(block, dict) and "text" in block:
+                                    text_parts.append(block["text"])
+                            result.result = "\n".join(text_parts) if text_parts else None
+                        else:
+                            result.result = str(content) or None
+                    elif messages:
+                        # No AIMessage at all — last message is probably a ToolMessage (unusual)
+                        last_message = messages[-1]
+                        logger.warning(
+                            f"[trace={self.trace_id}] Subagent {self.config.name} no AIMessage found, "
+                            f"last message type: {type(last_message).__name__}"
+                        )
+                        result.result = str(last_message.content) if hasattr(last_message, "content") else None
 
                 if not result.result or not result.result.strip():
                     last_msg_type = type(messages[-1]).__name__ if messages else "none"
@@ -914,7 +941,8 @@ class SubagentExecutor:
                     )
                     raise RuntimeError(error_msg)
 
-                result.structured_result = _parse_structured_subtask_result(result.result)
+                if result.structured_result is None:
+                    result.structured_result = _parse_structured_subtask_result(result.result)
                 if final_state is not None:
                     raw_registry = final_state.get(KNOWLEDGE_CITATION_REGISTRY_KEY)
                     if isinstance(raw_registry, list):

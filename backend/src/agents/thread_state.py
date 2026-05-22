@@ -75,3 +75,4 @@ class ThreadState(AgentState):
     knowledge_reading_set_query: NotRequired[str | None]
     knowledge_reading_set_human_index: NotRequired[int | None]
     knowledge_citation_registry: Annotated[list[dict], merge_citation_registries]
+    subtask_final_result: NotRequired[dict | None]

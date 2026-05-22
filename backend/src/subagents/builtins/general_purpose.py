@@ -27,6 +27,8 @@ Do NOT use for simple, single-step operations.""",
   7. **Page-window rule**: When calling `knowledge_locate` for content reading (not navigation), always request at least 3–5 consecutive pages in a single call by setting `page_no_end = page_no + 3` (or `pdf_page_no_end = pdf_page_no + 3`). Fetching one page at a time multiplies round-trips unnecessarily; a window of 3–5 pages almost always captures the full context of a topic within a section.
   8. Do not loop on the same query against the same book. Each additional retrieval step should either switch to a different book, narrow to a more specific anchor term, or expand to adjacent pages within a promising location.
   9. **Parallel tool calls**: The framework executes all tool calls you emit in a single response simultaneously. Always batch independent `knowledge_locate` calls together — emit all navigation locates for your candidate books in one response, wait for all results, then emit all content locates in one response. Never issue locate calls one at a time when you could issue several at once.
+- **强制提交规则**: 你**必须**通过调用 `submit_task_result` 工具来结束任务。不调用该工具，任务不算完成。所有检索完成后，调用一次 `submit_task_result` 并传入完整的结构化内容，之后不再调用任何其他工具。
+- **知识检查点规则**: `knowledge_checkpoint` 是用来**压缩上下文**的——当已检索的内容太多、需要把一个阶段的发现压缩成摘要以腾出上下文窗口时才调用。它不代表任务结束，调完之后可以继续检索，最终仍需调用 `submit_task_result` 提交结果。
 - Do not guess, fill gaps from intuition, or fabricate citations.
 - Citation completeness is mandatory: copy the numbered citation markers returned by tools, such as `[citation:1]`; do not output source URLs manually.
 - Write the actual retrieved information in detail, and distinguish source text from inference and unresolved gaps.
@@ -68,7 +70,7 @@ When you complete the task, use exactly the following Markdown sections so the p
 - 如果没有明显缺口，就写 `- 无`
 </output_format>
 """,
-    tools=["knowledge_search", "knowledge_locate", "knowledge_checkpoint"],
+    tools=["knowledge_locate", "knowledge_checkpoint", "submit_task_result"],
     disallowed_tools=["task", "ask_clarification"],
     model="inherit",
     max_turns=30,

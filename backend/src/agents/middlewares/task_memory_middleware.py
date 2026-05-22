@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import threading
 from typing import Any, NotRequired, override
+
+logger = logging.getLogger(__name__)
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
@@ -312,31 +316,48 @@ class TaskMemoryMiddleware(AgentMiddleware[TaskMemoryMiddlewareState]):
                 for item in state.get("current_task_memory_match_titles", [])
                 if str(item).strip()
             ]
-        decision = _decide_task_memory_action(
-            title=current_task_title,
-            query=query,
-            summary=summary,
-            matched_candidates=matched_candidates,
+        # Run the slow LLM decision + upsert in a background daemon thread so the
+        # stream can end immediately after the agent response, without the user
+        # seeing an extra loading delay caused by the memory-save LLM call.
+        thread_id = runtime.context.get("thread_id")
+        user_id = runtime.context.get("user_id")
+        citation_registry = (
+            state.get("knowledge_citation_registry")
+            if isinstance(state.get("knowledge_citation_registry"), list)
+            else None
         )
-        action = decision.get("action")
-        if action == "skip":
-            return {"task_memory_saved_human_index": current_task_human_index}
+        task_id = f"main:{thread_id}:{current_task_human_index}"
 
-        try:
-            upsert_task_memory_record(
-                title=decision.get("title") or current_task_title,
-                query=query,
-                summary=summary,
-                citations=_extract_citations(summary),
-                findings=[],
-                open_questions=[],
-                citation_registry=state.get("knowledge_citation_registry") if isinstance(state.get("knowledge_citation_registry"), list) else None,
-                task_level="main",
-                thread_id=runtime.context.get("thread_id"),
-                user_id=runtime.context.get("user_id"),
-                task_id=f"main:{runtime.context.get('thread_id')}:{current_task_human_index}",
-                raw_result=summary,
-            )
-        except Exception:
-            return None
+        def _save_in_background() -> None:
+            try:
+                decision = _decide_task_memory_action(
+                    title=current_task_title,
+                    query=query,
+                    summary=summary,
+                    matched_candidates=matched_candidates,
+                )
+                action = decision.get("action")
+                if action == "skip":
+                    return
+                upsert_task_memory_record(
+                    title=decision.get("title") or current_task_title,
+                    query=query,
+                    summary=summary,
+                    citations=_extract_citations(summary),
+                    findings=[],
+                    open_questions=[],
+                    citation_registry=citation_registry,
+                    task_level="main",
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    task_id=task_id,
+                    raw_result=summary,
+                )
+                logger.debug("Task memory saved in background: task_id=%s action=%s", task_id, action)
+            except Exception:
+                logger.warning("Background task memory save failed: task_id=%s", task_id, exc_info=True)
+
+        threading.Thread(target=_save_in_background, daemon=True, name="task-memory-save").start()
+
+        # Return immediately so the stream closes without waiting for the LLM decision.
         return {"task_memory_saved_human_index": current_task_human_index}

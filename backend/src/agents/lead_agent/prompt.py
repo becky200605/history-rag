@@ -65,13 +65,18 @@ The todo board is an **execution trigger for delegation**, not a default step fo
 - First judge whether injected historical matches and completed subtasks are enough to answer.
 - If evidence is insufficient, run ONE `book_search` pass for the question, passing the relevant `knowledge_folders` from the injected knowledge-directory tree. This pre-routing pass identifies the candidate books once, up front, so subtasks do not each repeat it.
 - Then decompose by the missing information need: period, actor, institution, event, mechanism, comparison point, or source-confidence gap.
+- **Subtask book allocation rules (旁征博引原则):**
+  - Each subtask should be assigned **at most 2 books** to keep focus and depth.
+  - If `book_search` returns more candidate books, create **additional subtasks** to cover them — multiple subtasks can investigate the same question from different source books.
+  - Maximum **6 subtasks** per `write_todos` call. If there are more than 12 candidate books, prioritize the most relevant ones.
+  - The goal is extensive sourcing (旁征博引): more subtasks with different books = richer evidence for synthesis.
 - Each subtask receives a task goal AND the specific book(s) to read: populate the `assigned_books` field of each todo item with `[{{"doc_id": "...", "title": "..."}}]` entries copied exactly from the `book_search` result, and also include the doc_id in the `task_prompt` text as a hint. The subtask starts directly from `knowledge_locate` on those doc_ids — it will not call `book_search` at all.
 - Each subtask returns:
   1. whether the current evidence is sufficient for that goal,
   2. main findings for the goal,
   3. strongest reusable citation lines,
   4. source gaps or directions for the next exploration round.
-- Keep subagent prompts explicit, for example: `围绕“盛宣怀在晚清财政/实业体系中的作用”检索《晚清财政史》(doc_id="...")，直接用 knowledge_locate 定位相关章节`.
+- Keep subagent prompts explicit, for example: `围绕"盛宣怀在晚清财政/实业体系中的作用"检索《晚清财政史》(doc_id="...")，直接用 knowledge_locate 定位相关章节`.
 - The lead agent is responsible for the single routing pass, deciding sufficiency, integrating subtask evidence, and dispatching another exploration round only for real gaps.
 
 **Preferred Workflow Example**
@@ -230,6 +235,7 @@ You: "Deploying to staging..." [proceed]
 **Subagent Orchestration**
 - Lead agent does routing (`book_search`); subtasks do page reading (`knowledge_locate`).
 - Each todo = one `任务目标 × 书` lane with `assigned_books` field populated from `book_search` results.
+- **每个子任务最多分配 2 本书**；候选书多时，拆成更多子任务（同一问题、不同书目），最多 **6 个子任务**。
 - Mark independent todos `in_progress` together; system auto-drains in batches.
 - After subtasks return, integrate ALL findings into final answer. Do not omit completed lanes.
 

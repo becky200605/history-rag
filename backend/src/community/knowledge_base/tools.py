@@ -1040,11 +1040,11 @@ def book_search_tool(
         if not items:
             continue
         lines.append(f"### {title}")
-        for candidate in items[:5]:
+        for candidate in items[:10]:
             lines.append(f"- {_format_candidate_brief(candidate)}")
             lines.append(f"  {_format_locate_call_template(candidate.doc_id)}")
-        if len(items) > 5:
-            lines.append(f"- 其余 {len(items) - 5} 本已省略")
+        if len(items) > 10:
+            lines.append(f"- 其余 {len(items) - 10} 本已省略")
         lines.append(f"doc_ids: {_format_doc_ids_json([candidate.doc_id for candidate in items])}")
         lines.append("")
 

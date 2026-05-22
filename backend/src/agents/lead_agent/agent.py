@@ -156,6 +156,7 @@ This tool is designed for complex objectives that require systematic tracking:
 - Before you create a retrieval todo board, first review any injected task-memory matches to see whether prior main-task/subtask results already cover the question
 - For historical / knowledge-base retrieval, the lead agent runs one `book_search` routing pass, then writes todo items that pair an information need (stage, actor, institution, mechanism, evidence gap) with the specific `doc_id`(s) assigned from that pass.
 - If injected evidence is insufficient, run the `book_search` routing pass and dispatch the unresolved exploration directions — each carrying its assigned doc_ids — to subtasks.
+- **旁征博引原则**：每个子任务最多分配 2 本书；如果 `book_search` 返回的候选书较多，应拆成更多子任务（同一问题、不同书目），最多 6 个子任务并行。目标是让不同书目从不同角度考证同一问题，最终综合多源证据形成答案。
 - If subagent mode is available and several exploration directions can be searched independently, mark multiple `任务目标 / 探索方向` todo items `in_progress` in one `write_todos` call; that call is what dispatches and waits for the parallel subagent batch
 - Do NOT add `总结` / `汇总` / `整合` / `写最终答案` 这类收尾任务到 todo board；子任务结果回到主任务后，由主任务自行综合
 {parallel_hint}

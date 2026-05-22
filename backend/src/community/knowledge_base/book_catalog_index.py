@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Bump this when the schema or serialization format changes — forces a full rebuild.
-CATALOG_SCHEMA_VERSION = 2
+CATALOG_SCHEMA_VERSION = 3
 
 _WRITE_LOCK = threading.Lock()
 
@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS book_catalog (
     doc_id          TEXT    NOT NULL,
     cache_thread_id TEXT    NOT NULL DEFAULT '',
     cache_user_id   TEXT    NOT NULL DEFAULT '',
+    full_content    INTEGER NOT NULL DEFAULT 1,
     scope           TEXT    NOT NULL DEFAULT 'global',
     title           TEXT    NOT NULL DEFAULT '',
     filename        TEXT    NOT NULL DEFAULT '',
@@ -87,17 +88,18 @@ CREATE TABLE IF NOT EXISTS book_catalog (
     page_count      INTEGER NOT NULL DEFAULT 0,
     structured_path TEXT,
     indexed_at      TEXT    NOT NULL,
-    PRIMARY KEY (doc_id, scope, cache_thread_id, cache_user_id)
+    PRIMARY KEY (doc_id, scope, cache_thread_id, cache_user_id, full_content)
 );
 
 CREATE TABLE IF NOT EXISTS book_catalog_build_state (
     cache_thread_id TEXT    NOT NULL DEFAULT '',
     cache_user_id   TEXT    NOT NULL DEFAULT '',
+    full_content    INTEGER NOT NULL DEFAULT 1,
     mtime_sig       REAL    NOT NULL,
     schema_ver      INTEGER NOT NULL,
     entry_count     INTEGER NOT NULL DEFAULT 0,
     built_at        TEXT    NOT NULL,
-    PRIMARY KEY (cache_thread_id, cache_user_id)
+    PRIMARY KEY (cache_thread_id, cache_user_id, full_content)
 );
 """
 

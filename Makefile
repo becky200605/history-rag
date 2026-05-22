@@ -105,11 +105,10 @@ index-knowledge:
 	@( set -a && [ -f backend/.env ] && . ./backend/.env; set +a ) && cd backend && PYTHONPATH=. uv run python -m src.community.knowledge_base.indexer
 	@echo "✓ Knowledge base index built"
 
-# Pre-warm SQLite indexes after redeployment so first knowledge_locate is fast
-prewarm-indexes:
-	@echo "Pre-warming SQLite knowledge indexes..."
-	@( set -a && [ -f backend/.env ] && . ./backend/.env; set +a ) && cd backend && uv run python ../scripts/prewarm_knowledge_indexes.py
-	@echo "✓ SQLite indexes pre-warmed"
+ingest-docs:
+	@echo "Ingesting new structured docs and rebuilding SQLite indexes..."
+	@( set -a && [ -f backend/.env ] && . ./backend/.env; set +a ) && cd backend && uv run python ../scripts/ingest_structured_docs_to_db.py
+	@echo "✓ Ingestion complete"
 
 # Install all dependencies
 install:

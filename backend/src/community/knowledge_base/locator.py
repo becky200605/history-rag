@@ -16,10 +16,21 @@ from src.community.knowledge_base.common import (
     resolve_project_path,
 )
 from src.community.knowledge_base.ingestion import list_ingestion_records
+from src.community.knowledge_base.paragraph_store import load_structured_payload_from_db
 from src.community.knowledge_base.structured_document import load_structured_document
 from src.community.knowledge_base.user_store import build_user_doc_public_url, list_user_records
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import get_paths
+
+
+def _load_payload(doc_id: str, structured_path: str | None) -> dict | None:
+    """Load structured payload: DB first, file fallback."""
+    payload = load_structured_payload_from_db(doc_id)
+    if payload is not None:
+        return payload
+    if structured_path:
+        return load_structured_document(Path(str(structured_path)))
+    return None
 
 
 @dataclass
@@ -117,7 +128,7 @@ def _locate_global_document(doc_id: str | None, filename: str | None) -> Located
                 candidate_filename=source_filename,
             ):
                 structured_path = record.get("structured_path")
-                payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+                payload = _load_payload(candidate_doc_id, structured_path)
                 if not payload:
                     continue
                 return LocatedDocument(
@@ -141,7 +152,7 @@ def _locate_global_document(doc_id: str | None, filename: str | None) -> Located
     _, best_filename, best_record = best_match
     best_doc_id = derive_global_doc_id(docs_root, docs_root / best_filename)
     structured_path = best_record.get("structured_path")
-    payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+    payload = _load_payload(best_doc_id, structured_path)
     if not payload:
         return None
     return LocatedDocument(
@@ -172,7 +183,7 @@ def _locate_thread_document(thread_id: str, doc_id: str | None, filename: str | 
             candidate_filename=source_filename,
         ):
             structured_path = record.get("structured_path")
-            payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+            payload = _load_payload(candidate_doc_id, structured_path)
             if not payload:
                 continue
             return LocatedDocument(
@@ -196,7 +207,7 @@ def _locate_thread_document(thread_id: str, doc_id: str | None, filename: str | 
     _, best_filename, best_record = best_match
     best_doc_id = derive_thread_doc_id(Path(best_filename))
     structured_path = best_record.get("structured_path")
-    payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+    payload = _load_payload(best_doc_id, structured_path)
     if not payload:
         return None
     return LocatedDocument(
@@ -228,7 +239,7 @@ def _locate_user_document(user_id: str, doc_id: str | None, filename: str | None
             candidate_filename=source_filename,
         ):
             structured_path = record.get("structured_path")
-            payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+            payload = _load_payload(candidate_doc_id, structured_path)
             if not payload:
                 continue
             return LocatedDocument(
@@ -252,7 +263,7 @@ def _locate_user_document(user_id: str, doc_id: str | None, filename: str | None
     _, best_filename, best_record_id, best_record = best_match
     best_doc_id = derive_user_doc_id(best_record_id)
     structured_path = best_record.get("structured_path")
-    payload = load_structured_document(Path(str(structured_path))) if structured_path else None
+    payload = _load_payload(best_doc_id, structured_path)
     if not payload:
         return None
     return LocatedDocument(
@@ -292,9 +303,7 @@ def locate_document_from_entry(entry: Any) -> LocatedDocument | None:
     Falls back gracefully to None if structured_path is absent or the file can't be read.
     """
     structured_path = getattr(entry, "structured_path", None)
-    if not structured_path:
-        return None
-    payload = load_structured_document(Path(structured_path))
+    payload = _load_payload(entry.doc_id, structured_path)
     if not payload:
         return None
     return LocatedDocument(

@@ -77,8 +77,8 @@ assert_env_present langgraph VOLCENGINE_API_KEY
 echo "Reloading nginx to pick up mounted config changes..."
 compose restart nginx
 
-echo "Pre-warming SQLite knowledge indexes..."
-compose exec -T gateway sh -c "cd backend && python /app/scripts/prewarm_knowledge_indexes.py"
+echo "Ingesting new structured docs and rebuilding SQLite indexes..."
+compose exec -T gateway sh -c "python /app/scripts/ingest_structured_docs_to_db.py"
 
 echo "Deployment completed."
 compose ps

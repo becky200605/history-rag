@@ -559,84 +559,97 @@ def search_keyword_documents(
     doc_ids: list[str],
     top_k: int,
 ) -> list[dict[str, Any]]:
-    documents = resolve_documents_for_doc_ids(
-        thread_id=thread_id,
-        user_id=user_id,
-        doc_ids=doc_ids,
+    from src.community.knowledge_base.paragraph_store import (
+        get_global_doc_ids_in_db,
+        search_fts as _search_paragraph_fts,
     )
-    if not documents:
+
+    clean_ids = [d for d in doc_ids if d and d.strip()]
+    if not clean_ids:
         return []
 
-    ensure_documents_indexed(documents)
+    # Global docs already in paragraphs.db go through the fast DB path.
+    # Everything else (thread/user docs, or global docs not yet ingested to DB)
+    # goes through the existing lazy-index flow.
+    db_global_ids = get_global_doc_ids_in_db(clean_ids)
+    remaining_ids = [d for d in clean_ids if d not in db_global_ids]
 
-    connection = _connect()
-    try:
-        _ensure_schema(connection)
-        rows = _search_rows(
-            connection,
-            documents=documents,
-            query=query,
-            top_k=top_k,
-        )
-    finally:
-        connection.close()
-
-    minimum_primary_matches = _minimum_primary_match_count(query)
-    primary_terms = _extract_primary_terms(query)
-    if minimum_primary_matches > 0:
-        filtered_rows = [
-            row
-            for row in rows
-            if _score_row(query, row)[1] >= minimum_primary_matches
-        ]
-        if filtered_rows:
-            rows = filtered_rows
-
-    scored_rows = sorted(rows, key=lambda row: _score_row(query, row), reverse=True)
     results: list[dict[str, Any]] = []
-    for row in scored_rows[:top_k]:
-        text = str(row["text"] or "").strip()
-        normalized_text = normalize_search_text(text).replace(" ", "")
-        matched_keywords = [keyword for keyword in primary_terms if keyword in normalized_text]
-        metadata = {
-            "title": row["title"],
-            "doc_id": row["doc_id"],
-            "page_no": row["page_no"],
-            "pdf_page_no": row["pdf_page_no"],
-            "paragraph_no": row["paragraph_no"],
-            "paragraph_no_in_doc": row["paragraph_no_in_doc"],
-            "line_start": row["line_start"],
-            "line_end": row["line_end"],
-            "scope": row["scope"],
-            "filename": row["filename"],
-            "source": row["source_path"],
-            "source_kind": row["source_kind"],
-        }
-        if row["origin_doc_id"]:
-            metadata["origin_doc_id"] = row["origin_doc_id"]
-        if row["scope"] == "thread" and thread_id:
-            metadata["thread_id"] = thread_id
-            metadata["source_virtual_path"] = f"/mnt/user-data/uploads/{row['filename']}"
-        if row["scope"] == "user" and user_id:
-            metadata["user_id"] = user_id
-        results.append(
-            {
-                "content": text,
-                "metadata": metadata,
-                "score": float(sum(_score_row(query, row)[:4])),
-                "matched_keywords": matched_keywords,
-                "match_type": "keyword_fts",
-                "source": row["source_path"],
-                "filename": row["filename"],
-                "collection_name": "keyword_fts",
-            }
+
+    if db_global_ids:
+        db_results = _search_paragraph_fts(query, doc_ids=list(db_global_ids), top_k=top_k)
+        results.extend(db_results)
+
+    if remaining_ids:
+        documents = resolve_documents_for_doc_ids(
+            thread_id=thread_id,
+            user_id=user_id,
+            doc_ids=remaining_ids,
         )
+        if documents:
+            ensure_documents_indexed(documents)
+            connection = _connect()
+            try:
+                _ensure_schema(connection)
+                rows = _search_rows(connection, documents=documents, query=query, top_k=top_k)
+            finally:
+                connection.close()
+
+            minimum_primary_matches = _minimum_primary_match_count(query)
+            primary_terms = _extract_primary_terms(query)
+            if minimum_primary_matches > 0:
+                filtered_rows = [
+                    row for row in rows if _score_row(query, row)[1] >= minimum_primary_matches
+                ]
+                if filtered_rows:
+                    rows = filtered_rows
+
+            scored_rows = sorted(rows, key=lambda row: _score_row(query, row), reverse=True)
+            for row in scored_rows[:top_k]:
+                text = str(row["text"] or "").strip()
+                normalized_text = normalize_search_text(text).replace(" ", "")
+                matched_keywords = [keyword for keyword in primary_terms if keyword in normalized_text]
+                metadata: dict[str, Any] = {
+                    "title": row["title"],
+                    "doc_id": row["doc_id"],
+                    "page_no": row["page_no"],
+                    "pdf_page_no": row["pdf_page_no"],
+                    "paragraph_no": row["paragraph_no"],
+                    "paragraph_no_in_doc": row["paragraph_no_in_doc"],
+                    "line_start": row["line_start"],
+                    "line_end": row["line_end"],
+                    "scope": row["scope"],
+                    "filename": row["filename"],
+                    "source": row["source_path"],
+                    "source_kind": row["source_kind"],
+                }
+                if row["origin_doc_id"]:
+                    metadata["origin_doc_id"] = row["origin_doc_id"]
+                if row["scope"] == "thread" and thread_id:
+                    metadata["thread_id"] = thread_id
+                    metadata["source_virtual_path"] = f"/mnt/user-data/uploads/{row['filename']}"
+                if row["scope"] == "user" and user_id:
+                    metadata["user_id"] = user_id
+                results.append({
+                    "content": text,
+                    "metadata": metadata,
+                    "score": float(sum(_score_row(query, row)[:4])),
+                    "matched_keywords": matched_keywords,
+                    "match_type": "keyword_fts",
+                    "source": row["source_path"],
+                    "filename": row["filename"],
+                    "collection_name": "keyword_fts",
+                })
+
+    results.sort(key=lambda r: r["score"], reverse=True)
+    results = results[:top_k]
+
     logger.info(
-        "Keyword FTS search complete: query=%r doc_ids=%s indexed_docs=%s hits=%s returned=%s",
+        "Keyword FTS search complete: query=%r doc_ids=%s db_global=%s remaining=%s returned=%s",
         query,
         len(doc_ids),
-        len(documents),
-        len(rows),
+        len(db_global_ids),
+        len(remaining_ids),
         len(results),
     )
     return results

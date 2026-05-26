@@ -19,16 +19,14 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Ensure rsync and sshpass are available
+      - name: Checkout (no action required)
         run: |
-          if [ "$(uname)" = "Linux" ]; then
-            sudo apt-get update && sudo apt-get install -y rsync sshpass
+          if [ -d "${{ github.workspace }}/.git" ]; then
+            cd "${{ github.workspace }}"
+            git fetch origin main
+            git reset --hard origin/main
           else
-            which rsync || { echo "rsync not found"; exit 1; }
-            which sshpass || { echo "sshpass not found — run: brew install hudochenkov/sshpass/sshpass"; exit 1; }
+            git clone https://github.com/histroy-llm/history-rag.git "${{ github.workspace }}"
           fi
 
       - name: Prepare SSH known_hosts
@@ -59,7 +57,7 @@ jobs:
             --exclude 'logs/' \
             --exclude 'docker-data/' \
             --exclude '__pycache__/' \
-            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+            "${{ github.workspace }}/" "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
 
       - name: Run deployment script on server
         env:

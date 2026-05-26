@@ -15,25 +15,25 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
+      - name: Checkout (no action required)
+        run: |
+          if [ -d "${{ github.workspace }}/.git" ]; then
+            cd "${{ github.workspace }}"
+            git fetch origin
+          else
+            git clone https://github.com/histroy-llm/history-rag.git "${{ github.workspace }}"
+          fi
+          cd "${{ github.workspace }}"
+          git checkout --detach "${{ github.sha }}"
 
       - name: Install backend dependencies
-        working-directory: backend
+        working-directory: ${{ github.workspace }}/backend
         run: uv sync --group dev
 
       - name: Lint backend
-        working-directory: backend
+        working-directory: ${{ github.workspace }}/backend
         run: make lint
 
       - name: Run unit tests of backend
-        working-directory: backend
+        working-directory: ${{ github.workspace }}/backend
         run: make test

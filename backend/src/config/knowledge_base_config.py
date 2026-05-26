@@ -181,6 +181,43 @@ class MineruConfig(BaseModel):
     )
 
 
+class MineruApiConfig(BaseModel):
+    """Configuration for MinerU remote HTTP API based document parsing."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Whether MinerU remote API parsing is enabled.",
+    )
+    api_token: str = Field(
+        default="",
+        description="API token for mineru.net (Bearer auth).",
+    )
+    base_url: str = Field(
+        default="https://mineru.net",
+        description="Base URL of the MinerU service.",
+    )
+    model_version: str = Field(
+        default="vlm",
+        description="Model version to use (e.g. 'vlm', 'pipeline').",
+    )
+    request_timeout: int = Field(
+        default=300,
+        description="HTTP request timeout in seconds.",
+    )
+    poll_interval_seconds: float = Field(
+        default=5.0,
+        ge=1.0,
+        description="Seconds to wait between polling attempts.",
+    )
+    max_poll_attempts: int = Field(
+        default=120,
+        ge=1,
+        description="Maximum number of polling attempts before giving up.",
+    )
+
+    model_config = ConfigDict(protected_namespaces=())
+
+
 class TranslationRpcConfig(BaseModel):
     """Configuration for translation gRPC service."""
 
@@ -269,6 +306,10 @@ class KnowledgeBaseConfig(BaseModel):
     mineru: MineruConfig | None = Field(
         default=None,
         description="Optional MinerU KIE configuration for PDF → Markdown conversion.",
+    )
+    mineru_api: MineruApiConfig | None = Field(
+        default=None,
+        description="Optional MinerU remote HTTP API configuration (mineru.net).",
     )
     translation_rpc: TranslationRpcConfig | None = Field(
         default=None,

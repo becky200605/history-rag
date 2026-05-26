@@ -409,6 +409,15 @@ knowledge_base:
     retry_attempts: 3       # 默认 3 次
     retry_delay_seconds: 5  # 默认 5 秒
 
+  mineru_api:
+    enabled: true
+    api_token: eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI4NjMwMzU0NiIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc3OTc4OTkxNSwiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiMTU5MjQxMTAyNDEiLCJvcGVuSWQiOm51bGwsInV1aWQiOiIyYTJkMmJlZS02NWRlLTRjZDctOWJhYy00Y2YzMmRjMDE2YTQiLCJlbWFpbCI6IiIsImV4cCI6MTc4NzU2NTkxNX0.Wqz5055iVLODvwTqwyImZACvjhp9o_Htrg1ZbCVwD-oA-eWSR2LasDi-Pr-8dj8H1zrgx3xxd464mE0Eeoz46w
+    base_url: ${MINERU_API_BASE_URL:-https://mineru.net}
+    model_version: ${MINERU_API_MODEL_VERSION:-vlm}
+    request_timeout: ${MINERU_API_REQUEST_TIMEOUT:-300}
+    poll_interval_seconds: ${MINERU_API_POLL_INTERVAL:-5}
+    max_poll_attempts: ${MINERU_API_MAX_POLL_ATTEMPTS:-120}
+
   book_metadata:
     enabled: true
     model_name: MiniMax-M2.7

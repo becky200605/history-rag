@@ -20,6 +20,7 @@ from src.community.knowledge_base.ingestion import (
     remove_ingestion_record,
     save_ingestion_record,
 )
+from src.community.knowledge_base.mineru_api import build_structured_document_from_mineru_api
 from src.community.knowledge_base.mineru_grpc import build_structured_document_from_mineru_grpc
 from src.config.knowledge_base_config import get_knowledge_base_config
 from src.config.paths import VIRTUAL_PATH_PREFIX, get_paths
@@ -151,19 +152,32 @@ async def upload_files(
             # Check if file should be parsed into structured text
             file_ext = file_path.suffix.lower()
             if file_ext in PDF_EXTENSIONS or file_ext in OFFICE_EXTENSIONS or file_ext in {".md", ".txt"}:
-                record["parse_method"] = "ocr_pdf_mineru_grpc"
+                kb_config = get_knowledge_base_config()
+                use_remote_api = (
+                    kb_config.mineru_api is not None
+                    and kb_config.mineru_api.enabled
+                )
+                record["parse_method"] = "ocr_pdf_mineru_api" if use_remote_api else "ocr_pdf_mineru_grpc"
                 file_info["parse_method"] = record["parse_method"]
                 try:
-                    structured_payload = build_structured_document_from_mineru_grpc(
-                        file_path,
-                        title=record["display_title"],
-                        parser_name=record["parse_method"],
-                        hints=hints,
-                        language_hint=hints.get("language_hint"),
-                    )
+                    if use_remote_api:
+                        structured_payload = build_structured_document_from_mineru_api(
+                            file_path,
+                            title=record["display_title"],
+                            parser_name=record["parse_method"],
+                            hints=hints,
+                        )
+                    else:
+                        structured_payload = build_structured_document_from_mineru_grpc(
+                            file_path,
+                            title=record["display_title"],
+                            parser_name=record["parse_method"],
+                            hints=hints,
+                            language_hint=hints.get("language_hint"),
+                        )
                 except Exception as exc:
                     structured_payload = None
-                    logger.error("MinerU gRPC failed for %s: %s", file_path.name, exc)
+                    logger.error("MinerU parsing failed for %s: %s", file_path.name, exc)
                 if structured_payload:
                     structured_filename = persist_thread_structured_document(
                         thread_id,
@@ -194,7 +208,7 @@ async def upload_files(
                     file_info["index_target_filename"] = structured_filename
                     file_info["parse_status"] = record["parse_status"]
                 else:
-                    record = mark_record_failed(record, "MinerU gRPC returned no structured text")
+                    record = mark_record_failed(record, "MinerU returned no structured text")
                     file_info["parse_status"] = record["parse_status"]
                     file_info["error"] = record["error"]
             else:

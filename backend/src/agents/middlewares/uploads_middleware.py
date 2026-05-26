@@ -123,6 +123,17 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
             with path.open("r", encoding="utf-8") as fh:
                 payload = json.load(fh)
 
+            # For markdown-based providers, inject full_text directly so that
+            # blank lines and markdown formatting are preserved verbatim.
+            if payload.get("provider") == "mineru_api":
+                full_text: str = (payload.get("full_text") or "").strip()
+                if not full_text:
+                    return None
+                if len(full_text) > _MAX_PARSED_CHARS:
+                    full_text = full_text[:_MAX_PARSED_CHARS]
+                    full_text += "\n\n[... 文档内容较长，已截断。如需完整内容请使用 knowledge_locate_tool ...]"
+                return full_text
+
             pages: list[dict] = payload.get("pages", [])
             lines: list[str] = []
             char_count = 0

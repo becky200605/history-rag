@@ -20,13 +20,17 @@ jobs:
 
     steps:
       - name: Checkout (no action required)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/histroy-llm/history-rag.git"
           if [ -d "${{ github.workspace }}/.git" ]; then
             cd "${{ github.workspace }}"
+            git remote set-url origin "$REPO_URL"
             git fetch origin main
             git reset --hard origin/main
           else
-            git clone https://github.com/histroy-llm/history-rag.git "${{ github.workspace }}"
+            git clone "$REPO_URL" "${{ github.workspace }}"
           fi
 
       - name: Prepare SSH known_hosts

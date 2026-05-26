@@ -11,7 +11,7 @@ concurrency:
 jobs:
   backend-unit-tests:
     if: github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 15
 
     steps:

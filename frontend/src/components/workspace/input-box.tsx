@@ -55,6 +55,7 @@ import type { Translations } from "@/core/i18n/locales/types";
 import { useModels } from "@/core/models/hooks";
 import type { AgentScenario, AgentTier } from "@/core/settings/local";
 import type { AgentThreadContext } from "@/core/threads";
+import { useEagerUpload } from "@/core/uploads";
 import { cn } from "@/lib/utils";
 
 import {
@@ -137,6 +138,7 @@ export function InputBox({
   context,
   extraHeader,
   isNewThread,
+  threadId,
   selectedMaterials = [],
   onContextChange,
   onSubmit,
@@ -149,6 +151,8 @@ export function InputBox({
   context: ContextShape;
   extraHeader?: React.ReactNode;
   isNewThread?: boolean;
+  /** Thread ID used to eagerly upload attachments as soon as they are added. */
+  threadId?: string | null;
   selectedMaterials?: SelectedMaterial[];
   onContextChange?: (context: ContextShape) => void;
   onSubmit?: (message: PromptInputMessage) => void;
@@ -229,6 +233,11 @@ export function InputBox({
       context.scenario === scenario && context.tier === tier,
     [context.scenario, context.tier],
   );
+  // Eagerly upload files the moment they are added (drop or file-dialog).
+  // This way files are already on the server by the time the user clicks send.
+  const attachments = usePromptInputAttachments();
+  const { isUploading } = useEagerUpload(threadId, attachments.files);
+
   const handleSubmit = useCallback(
     async (message: PromptInputMessage) => {
       if (status === "streaming") {
@@ -238,7 +247,9 @@ export function InputBox({
       const { normalizedText, selectedMaterials } =
         resolveSelectedMaterialsFromMentions(message.text, mentionables);
       const nextText = normalizedText.trim() || message.text.trim();
-      if (!nextText) {
+      // Allow submission when files are attached even without text —
+      // the backend will inject the file contents automatically.
+      if (!nextText && message.files.length === 0) {
         return;
       }
       onSubmit?.({
@@ -331,9 +342,9 @@ export function InputBox({
           </ModelSelector>
           <PromptInputSubmit
             className="rounded-sm bg-primary text-white hover:bg-primary/90 shadow-[2px_2px_0_rgba(126,51,46,0.2)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
-            disabled={disabled}
+            disabled={disabled || isUploading}
             variant="ghost" // Using ghost to ignore parent outline variants
-            status={status}
+            status={isUploading ? "submitted" : status}
           />
         </PromptInputTools>
       </PromptInputFooter>

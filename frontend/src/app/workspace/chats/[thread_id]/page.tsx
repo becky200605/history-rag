@@ -1320,6 +1320,7 @@ function ChatPageContent({
                     autoFocus={isNewThread}
                     status={thread.isLoading ? "streaming" : "ready"}
                     context={resolvedContext}
+                    threadId={threadId}
                     selectedMaterials={selectedMaterials}
                     extraHeader={
                       isNewThread && (

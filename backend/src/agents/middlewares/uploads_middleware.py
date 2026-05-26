@@ -1,5 +1,6 @@
 """Middleware to inject uploaded files information into agent context."""
 
+import json
 import re
 from pathlib import Path
 from typing import NotRequired, override
@@ -9,7 +10,14 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
 
+from src.community.knowledge_base.ingestion import list_ingestion_records
 from src.config.paths import Paths, get_paths
+
+# Maximum number of characters of parsed document content to inject per file.
+# ~50 k Chinese chars ≈ 75 k tokens — well within modern context windows.
+_MAX_PARSED_CHARS = 50_000
+# Never inject more than this many pages per file.
+_MAX_PARSED_PAGES = 300
 
 
 class UploadsMiddlewareState(AgentState):
@@ -55,54 +63,142 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
             last_message_files: Set of filenames that were already shown in previous messages.
 
         Returns:
-            List of new file information dictionaries.
+            List of new file information dictionaries (including ingestion metadata
+            so that parsed content can be injected downstream).
         """
         uploads_dir = self._get_uploads_dir(thread_id)
 
         if not uploads_dir.exists():
             return []
 
+        # Build a quick lookup from source_filename → ingestion record so we can
+        # surface parse_status and the structured JSON path in one pass.
+        ingestion_by_filename: dict[str, dict] = {
+            r["source_filename"]: r
+            for r in list_ingestion_records(thread_id)
+            if r.get("source_filename")
+        }
+
         files = []
         for file_path in sorted(uploads_dir.iterdir()):
-            if file_path.is_file() and file_path.name not in last_message_files:
-                stat = file_path.stat()
-                files.append(
-                    {
-                        "filename": file_path.name,
-                        "size": stat.st_size,
-                        "path": f"/mnt/user-data/uploads/{file_path.name}",
-                        "extension": file_path.suffix,
-                    }
-                )
+            if not file_path.is_file():
+                continue
+            if file_path.name in last_message_files:
+                continue
+            stat = file_path.stat()
+            record = ingestion_by_filename.get(file_path.name, {})
+            files.append(
+                {
+                    "filename": file_path.name,
+                    "size": stat.st_size,
+                    "path": f"/mnt/user-data/uploads/{file_path.name}",
+                    "extension": file_path.suffix,
+                    # Ingestion metadata (may be empty dict if record not found yet)
+                    "parse_status": record.get("parse_status"),
+                    "structured_path": record.get("structured_path"),
+                }
+            )
 
         return files
+
+    def _load_parsed_content(self, file_info: dict) -> str | None:
+        """Load the OCR-parsed text of a file from its structured JSON, if available.
+
+        Returns a plain-text representation suitable for direct injection into the
+        LLM context, or None if the file has not been parsed yet.
+        """
+        parse_status = file_info.get("parse_status")
+        if parse_status not in ("parsed", "indexed"):
+            return None
+
+        structured_path = file_info.get("structured_path")
+        if not structured_path:
+            return None
+
+        path = Path(str(structured_path))
+        if not path.exists():
+            return None
+
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+
+            pages: list[dict] = payload.get("pages", [])
+            lines: list[str] = []
+            char_count = 0
+
+            for page in pages[:_MAX_PARSED_PAGES]:
+                page_no = page.get("pdf_page_no") or page.get("page_no") or "?"
+                page_paras: list[str] = []
+                for para in page.get("paragraphs", []):
+                    text = (para.get("text") or "").strip()
+                    if text:
+                        page_paras.append(text)
+                        char_count += len(text)
+
+                if page_paras:
+                    lines.append(f"[第 {page_no} 页]")
+                    lines.extend(page_paras)
+                    lines.append("")
+
+                if char_count >= _MAX_PARSED_CHARS:
+                    lines.append(
+                        "[... 文档内容较长，已截断。如需完整内容请使用 knowledge_locate_tool ...]"
+                    )
+                    break
+
+            return "\n".join(lines).strip() or None
+
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to load parsed content for %s", file_info.get("filename", "?")
+            )
+            return None
 
     def _create_files_message(self, files: list[dict]) -> str:
         """Create a formatted message listing uploaded files.
 
+        If a file has been OCR-parsed, its full text is inlined so the LLM can
+        reference it directly without additional tool calls.
+
         Args:
-            files: List of file information dictionaries.
+            files: List of file information dictionaries (from _list_newly_uploaded_files).
 
         Returns:
-            Formatted string listing the files.
+            Formatted string suitable for prepending to the last human message.
         """
         if not files:
             return "<uploaded_files>\nNo files have been uploaded yet.\n</uploaded_files>"
 
         lines = ["<uploaded_files>", "The following files have been uploaded and are available for use:", ""]
+        any_unparsed = False
 
         for file in files:
             size_kb = file["size"] / 1024
-            if size_kb < 1024:
-                size_str = f"{size_kb:.1f} KB"
-            else:
-                size_str = f"{size_kb / 1024:.1f} MB"
+            size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
 
+            # Header line — keep the "- filename (size)" format so that
+            # _extract_files_from_message() can still de-duplicate correctly.
             lines.append(f"- {file['filename']} ({size_str})")
             lines.append(f"  Path: {file['path']}")
+
+            parsed_content = self._load_parsed_content(file)
+            if parsed_content:
+                lines.append("  <parsed_content>")
+                # Indent each line slightly so the block is visually nested
+                for content_line in parsed_content.splitlines():
+                    lines.append(f"  {content_line}" if content_line else "")
+                lines.append("  </parsed_content>")
+            else:
+                any_unparsed = True
+
             lines.append("")
 
-        lines.append("You can read these files using the `read_file` tool with the paths shown above.")
+        if any_unparsed:
+            lines.append(
+                "You can read unparsed files using the `read_file` tool with the paths shown above."
+            )
         lines.append("</uploaded_files>")
 
         return "\n".join(lines)

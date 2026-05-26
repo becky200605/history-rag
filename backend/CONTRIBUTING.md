@@ -1,6 +1,6 @@
 # Contributing to DeerFlow Backend
 
-Thank you for your     interest in contributing to DeerFlow! This document provides guidelines and instructions for contributing to the backend codebase.
+Thank you for your interest in contributing to DeerFlow! This document provides guidelines and instructions for contributing to the backend codebase.
 
 ## Table of Contents
 

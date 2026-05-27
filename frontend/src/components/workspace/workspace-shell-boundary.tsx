@@ -4,6 +4,14 @@ import { WorkspaceShell } from "./workspace-shell";
 
 export function WorkspaceShellBoundary({
   children,
-}: Readonly<{ children: React.ReactNode }>) {
-  return <WorkspaceShell>{children}</WorkspaceShell>;
+  user,
+}: Readonly<{
+  children: React.ReactNode;
+  user?: {
+    name?: string | null;
+    email: string;
+    image?: string | null;
+  } | null;
+}>) {
+  return <WorkspaceShell user={user}>{children}</WorkspaceShell>;
 }

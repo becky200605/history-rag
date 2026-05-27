@@ -36,12 +36,12 @@ import {
 import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useLocalSettings } from "@/core/settings";
+import { useUpdateSubtask } from "@/core/tasks/context";
 import { type AgentThread, type AgentThreadState } from "@/core/threads";
 import {
   useSubmitThread,
   useThreadStream,
 } from "@/core/threads/hooks";
-import { useUpdateSubtask } from "@/core/tasks/context";
 import {
   buildThreadDisplayMetadata,
   pathOfThread,
@@ -381,8 +381,11 @@ export default function ChatPage() {
   const searchParams = useSearchParams();
   const { thread_id: threadIdFromPath } = useParams<{ thread_id: string }>();
   const isNewThread = threadIdFromPath === "new";
-  const { data: session, isPending: isSessionPending } =
-    authClient.useSession();
+  const {
+    data: session,
+    isPending: isSessionPending,
+    error: sessionError,
+  } = authClient.useSession();
   const shouldKeepContentDuringAccessCheck = useMemo(() => {
     if (isNewThread) {
       return false;
@@ -442,6 +445,24 @@ export default function ChatPage() {
   });
 
   useEffect(() => {
+    if (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true") {
+      return;
+    }
+
+    if (!isSessionPending && (!session || sessionError)) {
+      const next = `/workspace/chats/${threadIdFromPath}`;
+      void router.replace(`/auth?next=${encodeURIComponent(next)}`);
+      router.refresh();
+    }
+  }, [
+    isSessionPending,
+    router,
+    session,
+    sessionError,
+    threadIdFromPath,
+  ]);
+
+  useEffect(() => {
     if (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" || isNewThread) {
       return;
     }
@@ -469,7 +490,8 @@ export default function ChatPage() {
   if (
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
     !isNewThread &&
-    (isSessionPending ||
+    ((isSessionPending && !sessionError) ||
+      !session ||
       (!shouldKeepContentDuringAccessCheck && accessQuery.isPending) ||
       accessQuery.data === false)
   ) {
@@ -1214,7 +1236,6 @@ function ChatPageContent({
       title: "Mock: 张之洞洋务运动检索",
     } as AgentThreadState);
 
-    // eslint-disable-next-line no-console
     console.info("[MockCitationFlow] Injected mock data", {
       registryCount: MOCK_CITATION_REGISTRY.length,
       todoId: mockTodoId,

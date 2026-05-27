@@ -1,6 +1,11 @@
 "use client";
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationCache,
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
 import { type CSSProperties } from "react";
 import { useCallback, useEffect, useState } from "react";
@@ -10,7 +15,54 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
 import { useLocalSettings } from "@/core/settings";
 
-const queryClient = new QueryClient();
+function getErrorStatus(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const candidate = error as {
+    status?: unknown;
+    response?: { status?: unknown };
+  };
+  const status = candidate.status ?? candidate.response?.status;
+  return typeof status === "number" ? status : undefined;
+}
+
+function redirectToAuth() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const next = `${window.location.pathname}${window.location.search}`;
+  const authUrl = new URL("/auth", window.location.origin);
+  authUrl.searchParams.set("next", next);
+  window.location.replace(authUrl.toString());
+}
+
+function handleAuthError(error: unknown) {
+  if (getErrorStatus(error) === 401) {
+    redirectToAuth();
+  }
+}
+
+const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: handleAuthError,
+  }),
+  mutationCache: new MutationCache({
+    onError: handleAuthError,
+  }),
+  defaultOptions: {
+    queries: {
+      retry(failureCount, error) {
+        if (getErrorStatus(error) === 401) {
+          return false;
+        }
+        return failureCount < 3;
+      },
+    },
+  },
+});
 
 const workspaceTheme = {
   "--background": "#fdfcf0",

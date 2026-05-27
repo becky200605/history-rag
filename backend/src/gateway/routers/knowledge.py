@@ -594,6 +594,10 @@ def _load_global_record(filename: str) -> dict[str, Any] | None:
 def _list_global_records() -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for path in sorted(get_global_ingestion_dir().glob("*.json")):
+        # Skip large structured-document files by filename — they can be tens of MB
+        # each and are always schema_version=1 (never ingestion records).
+        if ".structured." in path.name or path.name.endswith(".resolved"):
+            continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             if payload.get("schema_version") == 1:
@@ -1253,41 +1257,38 @@ def list_global_knowledge_files() -> dict:
 
     docs_dir = get_global_docs_dir()
     ocr_positions = _current_global_queue_positions()
-    source_records, target_records = _build_global_record_lookup()
 
     catalog_entries = load_global_entries_from_db()
 
     files: list[dict[str, Any]] = []
 
     if catalog_entries is not None:
-        # ── 主路径：从 catalog SQLite 构建列表 ──────────────────────────────────
+        # ── 主路径：纯 SQLite，零文件 I/O ────────────────────────────────────────
+        # catalog SQLite 已包含所有展示所需字段，无需读 .ingestion/ 下任何文件。
+        # 只有正在 OCR 队列中的文件才需要额外读一次 ingestion record 获取实时状态。
         for cat_entry in sorted(catalog_entries, key=lambda e: e.filename):
             filename = cat_entry.filename
             if not filename:
                 continue
-            record = source_records.get(filename)
-
-            # 尝试从文件系统取 size / modified（可选，不影响列表正确性）
-            file_path = docs_dir / filename
-            size = 0
-            modified: float | None = None
-            if file_path.exists() and file_path.is_file():
-                stat = file_path.stat()
-                size = stat.st_size
-                modified = stat.st_mtime
 
             tags = list(dict.fromkeys(v for v in [
                 *cat_entry.categories, *cat_entry.eras,
                 *cat_entry.regions, *cat_entry.keywords,
             ] if v))
 
-            entry: dict[str, Any] = {
+            queue_stage: str | None = None
+            queue_position: int | None = None
+            if filename in ocr_positions:
+                queue_stage = "ocr"
+                queue_position = ocr_positions[filename]
+
+            files.append({
                 "doc_id": cat_entry.doc_id,
                 "scope": "global",
                 "filename": filename,
-                "size": size,
+                "size": 0,
                 "extension": Path(filename).suffix,
-                "modified": modified,
+                "modified": None,
                 "artifact_url": cat_entry.source_url or _build_global_urls(filename)["source_url"],
                 "type": cat_entry.type if cat_entry.type and cat_entry.type != "unknown" else None,
                 "folder": cat_entry.folder_path,
@@ -1302,53 +1303,25 @@ def list_global_knowledge_files() -> dict:
                 "language_hint": cat_entry.language_hint,
                 "layout_hint": None,
                 "document_type_hint": None,
-            }
-
-            if record:
-                queue_position = None
-                queue_stage = None
-                if filename in ocr_positions:
-                    queue_stage = "ocr"
-                    queue_position = ocr_positions[filename]
-                hints = record.get("hints") or {}
-                entry.update({
-                    "parse_method": record.get("parse_method"),
-                    "parse_status": record.get("parse_status"),
-                    "indexable": record.get("indexable", False),
-                    "preview_filename": record.get("preview_filename"),
-                    "preview_artifact_url": record.get("preview_artifact_url"),
-                    "structured_filename": record.get("structured_filename"),
-                    "structured_artifact_url": record.get("structured_artifact_url"),
-                    "index_target_filename": record.get("index_target_filename"),
-                    "index_target_artifact_url": record.get("index_target_artifact_url"),
-                    "hints": hints,
-                    "error": record.get("error"),
-                    "queue_stage": queue_stage,
-                    "queue_position": queue_position,
-                    "layout_hint": hints.get("layout_hint"),
-                    "document_type_hint": hints.get("document_type_hint"),
-                })
-            else:
-                entry.update({
-                    "parse_method": "untracked",
-                    "parse_status": "indexed",
-                    "indexable": True,
-                    "preview_filename": None,
-                    "preview_artifact_url": None,
-                    "structured_filename": None,
-                    "structured_artifact_url": None,
-                    "index_target_filename": None,
-                    "index_target_artifact_url": None,
-                    "hints": {},
-                    "error": None,
-                    "queue_stage": None,
-                    "queue_position": None,
-                })
-
-            files.append(entry)
+                "parse_method": "untracked",
+                "parse_status": "indexed",
+                "indexable": True,
+                "preview_filename": None,
+                "preview_artifact_url": None,
+                "structured_filename": cat_entry.structured_path,
+                "structured_artifact_url": None,
+                "index_target_filename": None,
+                "index_target_artifact_url": None,
+                "hints": {},
+                "error": None,
+                "queue_stage": queue_stage,
+                "queue_position": queue_position,
+            })
 
     else:
         # ── 降级路径：文件系统扫描（原始行为，catalog 为空时触发）─────────────
+        # 仅在降级时才批量读 ingestion records（SQLite 路径用按需单读，无需此步骤）。
+        source_records, target_records = _build_global_record_lookup()
         preview_filenames = {
             str(record.get("preview_filename"))
             for record in source_records.values()

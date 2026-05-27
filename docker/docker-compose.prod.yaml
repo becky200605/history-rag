@@ -69,6 +69,7 @@ services:
     working_dir: /app
     environment:
       - CI=true
+      - DEER_FLOW_HOME=/app/backend/.deer-flow
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -90,6 +91,7 @@ services:
     working_dir: /app
     environment:
       - CI=true
+      - DEER_FLOW_HOME=/app/backend/.deer-flow
       - BG_JOB_ISOLATED_LOOPS=true
     extra_hosts:
       - "host.docker.internal:host-gateway"

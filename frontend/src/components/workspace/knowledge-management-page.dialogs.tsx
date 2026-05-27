@@ -4,7 +4,6 @@ import { ArrowRightIcon, CheckIcon, Loader2Icon, PlusIcon, SparklesIcon, UploadI
 import type { Dispatch, SetStateAction } from "react";
 
 import { Button } from "@/components/ui/button";
-import type { FolderReorganizeEvent, FolderReorganizeOp } from "@/core/knowledge/api";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import type { FolderReorganizeEvent, FolderReorganizeOp } from "@/core/knowledge/api";
 
 import {
   documentTypeOptions,
@@ -487,6 +487,104 @@ export function MetadataDialog({
           >
             {isSaving ? <Loader2Icon className="size-4 animate-spin" /> : null}
             保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Batch Generate Summary Dialog
+// ---------------------------------------------------------------------------
+
+export interface BatchSummaryResult {
+  filename: string;
+  title: string;
+  success: boolean;
+  error?: string;
+}
+
+export function BatchGenerateSummaryDialog({
+  open,
+  onOpenChange,
+  results,
+  total,
+  isRunning,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  results: BatchSummaryResult[];
+  total: number;
+  isRunning: boolean;
+}) {
+  const current = results.length;
+  const successCount = results.filter((r) => r.success).length;
+  const failCount = results.filter((r) => !r.success).length;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!isRunning) onOpenChange(o); }}>
+      <DialogContent className="max-w-xl border-accent/20 bg-white shadow-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-slate-900">
+            <SparklesIcon className="size-4 text-primary" />
+            批量生成摘要
+          </DialogTitle>
+          <DialogDescription className="text-slate-600">
+            {isRunning
+              ? `正在处理第 ${current} / ${total} 本，请稍候…`
+              : current === 0
+              ? "准备就绪"
+              : `完成：成功 ${successCount} 本${failCount > 0 ? `，失败 ${failCount} 本` : ""}`}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="max-h-80 overflow-y-auto rounded-lg border border-stone-100 bg-stone-50 p-3 text-sm font-mono">
+          {isRunning && current === 0 && (
+            <div className="flex items-center gap-2 text-stone-500">
+              <Loader2Icon className="size-3.5 animate-spin shrink-0" />
+              <span>正在初始化…</span>
+            </div>
+          )}
+
+          {results.map((result, i) => (
+            <div
+              key={result.filename}
+              className={`flex items-start gap-2 py-1 ${i > 0 ? "border-t border-stone-200/60" : ""}`}
+            >
+              <span className="mt-0.5 shrink-0">
+                {result.success ? (
+                  <CheckIcon className="size-3.5 text-green-600" />
+                ) : (
+                  <XIcon className="size-3.5 text-red-500" />
+                )}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-stone-700">{result.title || result.filename}</div>
+                {!result.success && result.error && (
+                  <div className="text-xs text-red-500">{result.error}</div>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {isRunning && current > 0 && (
+            <div className="flex items-center gap-2 border-t border-stone-200/60 py-1 text-stone-400">
+              <Loader2Icon className="size-3.5 animate-spin shrink-0" />
+              <span>处理中…</span>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            className="bg-primary text-white hover:bg-primary/90"
+            onClick={() => onOpenChange(false)}
+            disabled={isRunning}
+          >
+            {isRunning ? <Loader2Icon className="mr-2 size-4 animate-spin" /> : null}
+            {isRunning ? "生成中…" : "完成"}
           </Button>
         </DialogFooter>
       </DialogContent>

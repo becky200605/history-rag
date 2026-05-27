@@ -39,6 +39,8 @@ import {
 } from "@/core/knowledge/user-hooks";
 
 import {
+  BatchGenerateSummaryDialog,
+  type BatchSummaryResult,
   CreateFolderDialog,
   MetadataDialog,
   MoveFileDialog,
@@ -105,6 +107,10 @@ export default function KnowledgeManagementPage() {
   const [isReorganizeDialogOpen, setIsReorganizeDialogOpen] = useState(false);
   const [isReorganizing, setIsReorganizing] = useState(false);
   const [reorganizeEvents, setReorganizeEvents] = useState<FolderReorganizeEvent[]>([]);
+  const [isBatchSummaryDialogOpen, setIsBatchSummaryDialogOpen] = useState(false);
+  const [isBatchGeneratingSummary, setIsBatchGeneratingSummary] = useState(false);
+  const [batchSummaryResults, setBatchSummaryResults] = useState<BatchSummaryResult[]>([]);
+  const [batchSummaryTotal, setBatchSummaryTotal] = useState(0);
 
   const selectedGlobalFolderPath =
     selectedFolderPath.startsWith("system:")
@@ -756,6 +762,45 @@ export default function KnowledgeManagementPage() {
     }
   };
 
+  const noSummaryFiles = useMemo(
+    () =>
+      managedFiles.filter(
+        (file) => file.source === "global" && !file.summary?.trim(),
+      ),
+    [managedFiles],
+  );
+
+  const handleBatchGenerateSummary = async () => {
+    if (noSummaryFiles.length === 0) return;
+    setBatchSummaryResults([]);
+    setBatchSummaryTotal(noSummaryFiles.length);
+    setIsBatchSummaryDialogOpen(true);
+    setIsBatchGeneratingSummary(true);
+
+    for (const file of noSummaryFiles) {
+      try {
+        await regenerateMetadataMutation.mutateAsync(file.filename);
+        setBatchSummaryResults((prev) => [
+          ...prev,
+          { filename: file.filename, title: file.title, success: true },
+        ]);
+      } catch (err) {
+        setBatchSummaryResults((prev) => [
+          ...prev,
+          {
+            filename: file.filename,
+            title: file.title,
+            success: false,
+            error: err instanceof Error ? err.message : "生成失败",
+          },
+        ]);
+      }
+    }
+
+    setIsBatchGeneratingSummary(false);
+    void handleRefresh();
+  };
+
   return (
     <WorkspaceContainer>
       <WorkspaceHeader className="border-b border-primary/5" />
@@ -872,6 +917,8 @@ export default function KnowledgeManagementPage() {
                   onOpenUpload={() => setIsUploadDialogOpen(true)}
                   onOpenCreateFolder={() => setIsCreateFolderDialogOpen(true)}
                   onOpenReorganize={() => void handleReorganize()}
+                  onOpenBatchGenerateSummary={() => void handleBatchGenerateSummary()}
+                  noSummaryCount={noSummaryFiles.length}
                   onRefresh={() => void handleRefresh()}
                   isRefreshing={isRefreshing}
                   onStartChat={handleStartChat}
@@ -953,6 +1000,13 @@ export default function KnowledgeManagementPage() {
           onOpenChange={setIsReorganizeDialogOpen}
           events={reorganizeEvents}
           isRunning={isReorganizing}
+        />
+        <BatchGenerateSummaryDialog
+          open={isBatchSummaryDialogOpen}
+          onOpenChange={setIsBatchSummaryDialogOpen}
+          results={batchSummaryResults}
+          total={batchSummaryTotal}
+          isRunning={isBatchGeneratingSummary}
         />
       </WorkspaceBody>
       {renderFolderContextMenu()}

@@ -247,6 +247,8 @@ export function KnowledgeManagementToolbar({
   onOpenUpload,
   onOpenCreateFolder,
   onOpenReorganize,
+  onOpenBatchGenerateSummary,
+  noSummaryCount,
   onRefresh,
   isRefreshing,
   onStartChat,
@@ -261,6 +263,8 @@ export function KnowledgeManagementToolbar({
   onOpenUpload: () => void;
   onOpenCreateFolder: () => void;
   onOpenReorganize: () => void;
+  onOpenBatchGenerateSummary: () => void;
+  noSummaryCount: number;
   onRefresh: () => void;
   isRefreshing: boolean;
   onStartChat: () => void;
@@ -326,6 +330,18 @@ export function KnowledgeManagementToolbar({
           <SparklesIcon className="mr-2 size-4" />
           AI 整理目录
         </Button>
+        {noSummaryCount > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 rounded-sm border-primary/40 bg-white shadow-[2px_2px_0_rgba(126,51,46,0.1)] px-4 text-xs text-primary hover:bg-primary hover:text-white transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none font-serif font-bold tracking-widest"
+            onClick={onOpenBatchGenerateSummary}
+          >
+            <SparklesIcon className="mr-2 size-4" />
+            批量生成摘要 ({noSummaryCount})
+          </Button>
+        )}
         <Button
           type="button"
           variant="outline"

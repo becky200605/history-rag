@@ -147,7 +147,7 @@ def _write_build_state(
         INSERT INTO book_catalog_build_state
             (cache_thread_id, cache_user_id, mtime_sig, schema_ver, entry_count, built_at)
         VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(cache_thread_id, cache_user_id) DO UPDATE SET
+        ON CONFLICT(cache_thread_id, cache_user_id, full_content) DO UPDATE SET
             mtime_sig   = excluded.mtime_sig,
             schema_ver  = excluded.schema_ver,
             entry_count = excluded.entry_count,

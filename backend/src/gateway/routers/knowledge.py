@@ -1240,7 +1240,13 @@ async def upload_global_knowledge_files(
 
 @router.get("/uploads/list", response_model=dict, summary="List Global Knowledge Uploads")
 def list_global_knowledge_files() -> dict:
-    """List files currently stored in the global knowledge directory."""
+    """List files currently stored in the global knowledge directory.
+
+    优先从 catalog SQLite 读取书目（覆盖 .ingestion/ 等非顶层路径下的书籍）；
+    SQLite 为空时降级为文件系统扫描（原始行为）。
+    """
+    from src.community.knowledge_base.book_catalog_index import load_global_entries_from_db  # noqa: PLC0415
+
     config = get_knowledge_base_config()
     if not config.enabled:
         raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
@@ -1248,44 +1254,134 @@ def list_global_knowledge_files() -> dict:
     docs_dir = get_global_docs_dir()
     ocr_positions = _current_global_queue_positions()
     source_records, target_records = _build_global_record_lookup()
-    preview_filenames = {
-        str(record.get("preview_filename"))
-        for record in source_records.values()
-        if record.get("preview_filename") and record.get("preview_filename") != record.get("source_filename")
-    }
+
+    catalog_entries = load_global_entries_from_db()
 
     files: list[dict[str, Any]] = []
-    for file_path in sorted(docs_dir.iterdir()):
-        if not file_path.is_file():
-            continue
-        if file_path.name.startswith("."):
-            continue
 
-        record = source_records.get(file_path.name)
-        if target_records.get(file_path.name) and not record:
-            continue
-        if file_path.name in preview_filenames and not record:
-            continue
+    if catalog_entries is not None:
+        # ── 主路径：从 catalog SQLite 构建列表 ──────────────────────────────────
+        for cat_entry in sorted(catalog_entries, key=lambda e: e.filename):
+            filename = cat_entry.filename
+            if not filename:
+                continue
+            record = source_records.get(filename)
 
-        stat = file_path.stat()
-        entry: dict[str, Any] = {
-            "doc_id": derive_global_doc_id(docs_dir, file_path),
-            "scope": "global",
-            "filename": file_path.name,
-            "size": stat.st_size,
-            "extension": file_path.suffix,
-            "modified": stat.st_mtime,
-            "artifact_url": _build_global_urls(file_path.name)["source_url"],
+            # 尝试从文件系统取 size / modified（可选，不影响列表正确性）
+            file_path = docs_dir / filename
+            size = 0
+            modified: float | None = None
+            if file_path.exists() and file_path.is_file():
+                stat = file_path.stat()
+                size = stat.st_size
+                modified = stat.st_mtime
+
+            tags = list(dict.fromkeys(v for v in [
+                *cat_entry.categories, *cat_entry.eras,
+                *cat_entry.regions, *cat_entry.keywords,
+            ] if v))
+
+            entry: dict[str, Any] = {
+                "doc_id": cat_entry.doc_id,
+                "scope": "global",
+                "filename": filename,
+                "size": size,
+                "extension": Path(filename).suffix,
+                "modified": modified,
+                "artifact_url": cat_entry.source_url or _build_global_urls(filename)["source_url"],
+                "type": cat_entry.type if cat_entry.type and cat_entry.type != "unknown" else None,
+                "folder": cat_entry.folder_path,
+                "categories": cat_entry.categories,
+                "eras": cat_entry.eras,
+                "regions": cat_entry.regions,
+                "keywords": cat_entry.keywords,
+                "summary": cat_entry.summary or None,
+                "author": cat_entry.author or None,
+                "publisher": cat_entry.publisher or None,
+                "tags": tags,
+                "language_hint": cat_entry.language_hint,
+                "layout_hint": None,
+                "document_type_hint": None,
+            }
+
+            if record:
+                queue_position = None
+                queue_stage = None
+                if filename in ocr_positions:
+                    queue_stage = "ocr"
+                    queue_position = ocr_positions[filename]
+                hints = record.get("hints") or {}
+                entry.update({
+                    "parse_method": record.get("parse_method"),
+                    "parse_status": record.get("parse_status"),
+                    "indexable": record.get("indexable", False),
+                    "preview_filename": record.get("preview_filename"),
+                    "preview_artifact_url": record.get("preview_artifact_url"),
+                    "structured_filename": record.get("structured_filename"),
+                    "structured_artifact_url": record.get("structured_artifact_url"),
+                    "index_target_filename": record.get("index_target_filename"),
+                    "index_target_artifact_url": record.get("index_target_artifact_url"),
+                    "hints": hints,
+                    "error": record.get("error"),
+                    "queue_stage": queue_stage,
+                    "queue_position": queue_position,
+                    "layout_hint": hints.get("layout_hint"),
+                    "document_type_hint": hints.get("document_type_hint"),
+                })
+            else:
+                entry.update({
+                    "parse_method": "untracked",
+                    "parse_status": "indexed",
+                    "indexable": True,
+                    "preview_filename": None,
+                    "preview_artifact_url": None,
+                    "structured_filename": None,
+                    "structured_artifact_url": None,
+                    "index_target_filename": None,
+                    "index_target_artifact_url": None,
+                    "hints": {},
+                    "error": None,
+                    "queue_stage": None,
+                    "queue_position": None,
+                })
+
+            files.append(entry)
+
+    else:
+        # ── 降级路径：文件系统扫描（原始行为，catalog 为空时触发）─────────────
+        preview_filenames = {
+            str(record.get("preview_filename"))
+            for record in source_records.values()
+            if record.get("preview_filename") and record.get("preview_filename") != record.get("source_filename")
         }
-        entry.update(_load_global_book_metadata(file_path.name, ingestion_record=record))
-        if record:
-            queue_position = None
-            queue_stage = None
-            if file_path.name in ocr_positions:
-                queue_stage = "ocr"
-                queue_position = ocr_positions[file_path.name]
-            entry.update(
-                {
+        for file_path in sorted(docs_dir.iterdir()):
+            if not file_path.is_file():
+                continue
+            if file_path.name.startswith("."):
+                continue
+            record = source_records.get(file_path.name)
+            if target_records.get(file_path.name) and not record:
+                continue
+            if file_path.name in preview_filenames and not record:
+                continue
+            stat = file_path.stat()
+            entry = {
+                "doc_id": derive_global_doc_id(docs_dir, file_path),
+                "scope": "global",
+                "filename": file_path.name,
+                "size": stat.st_size,
+                "extension": file_path.suffix,
+                "modified": stat.st_mtime,
+                "artifact_url": _build_global_urls(file_path.name)["source_url"],
+            }
+            entry.update(_load_global_book_metadata(file_path.name, ingestion_record=record))
+            if record:
+                queue_position = None
+                queue_stage = None
+                if file_path.name in ocr_positions:
+                    queue_stage = "ocr"
+                    queue_position = ocr_positions[file_path.name]
+                entry.update({
                     "parse_method": record.get("parse_method"),
                     "parse_status": record.get("parse_status"),
                     "indexable": record.get("indexable", False),
@@ -1299,11 +1395,9 @@ def list_global_knowledge_files() -> dict:
                     "error": record.get("error"),
                     "queue_stage": queue_stage,
                     "queue_position": queue_position,
-                }
-            )
-        else:
-            entry.update(
-                {
+                })
+            else:
+                entry.update({
                     "parse_method": "untracked",
                     "parse_status": "uploaded",
                     "indexable": False,
@@ -1315,9 +1409,8 @@ def list_global_knowledge_files() -> dict:
                     "index_target_artifact_url": None,
                     "hints": {},
                     "error": None,
-                }
-            )
-        files.append(entry)
+                })
+            files.append(entry)
 
     return {"files": files, "folders": _list_global_folder_paths(files), "count": len(files)}
 

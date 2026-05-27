@@ -577,16 +577,14 @@ def _prewarm_indexes() -> None:
     try:
         import time
         from src.community.knowledge_base.book_catalog_index import save_catalog_to_db
-        from src.community.knowledge_base.catalog import _catalog_mtime_signature, list_book_catalog
-        from src.community.knowledge_base.common import resolve_project_path
-        from src.config.knowledge_base_config import get_knowledge_base_config
+        from src.community.knowledge_base.catalog import list_book_catalog
 
-        docs_root = resolve_project_path(get_knowledge_base_config().docs_path)
         logger.info("[prewarm] 重建 book catalog 缓存...")
         t0 = time.perf_counter()
         entries = list_book_catalog(thread_id=None, user_id=None, include_search_content=True, caller="ingest_prewarm")
-        mtime_sig = _catalog_mtime_signature(docs_root, None, None)
-        save_catalog_to_db(None, None, mtime_sig, entries)
+        # mtime_sig 仅用于 load_catalog_from_db 的有效性校验，
+        # load_global_entries_from_db 不做校验，传 0.0 即可。
+        save_catalog_to_db(None, None, 0.0, entries)
         logger.info("[prewarm] catalog 缓存完成: %d 条，耗时 %.1fs", len(entries), time.perf_counter() - t0)
     except Exception as exc:
         logger.warning("[prewarm] catalog 缓存失败（不影响运行）: %s", exc)

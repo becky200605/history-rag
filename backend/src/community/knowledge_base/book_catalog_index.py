@@ -369,3 +369,34 @@ def load_global_entries_from_db() -> "list[BookCatalogEntry] | None":
         return None
 
 
+def bulk_update_catalog_folder(updates: list[tuple[str, "str | None"]]) -> None:
+    """Bulk update ``folder_path`` for a list of ``(filename, new_folder)`` pairs.
+
+    Only touches global-scope entries (``cache_thread_id=''``, ``cache_user_id=''``).
+    Pass ``None`` as ``new_folder`` to clear the folder assignment.
+
+    On failure the error is logged and swallowed — SQLite is a cache, not the
+    source of truth, so callers always get a result even if persistence fails.
+    """
+    if not updates:
+        return
+    try:
+        conn = _connect()
+        try:
+            _ensure_schema(conn)
+            with _WRITE_LOCK:
+                with conn:
+                    for filename, folder_path in updates:
+                        conn.execute(
+                            "UPDATE book_catalog SET folder_path = ? "
+                            "WHERE filename = ? AND scope = 'global' "
+                            "AND cache_thread_id = '' AND cache_user_id = ''",
+                            (folder_path, filename),
+                        )
+        finally:
+            conn.close()
+        logger.info("bulk_update_catalog_folder: applied %d folder update(s)", len(updates))
+    except Exception:
+        logger.warning("bulk_update_catalog_folder failed", exc_info=True)
+
+

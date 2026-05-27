@@ -1,9 +1,10 @@
 "use client";
 
-import { ArrowRightIcon, Loader2Icon, PlusIcon, UploadIcon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon, Loader2Icon, PlusIcon, SparklesIcon, UploadIcon, XIcon } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 
 import { Button } from "@/components/ui/button";
+import type { FolderReorganizeEvent, FolderReorganizeOp } from "@/core/knowledge/api";
 import {
   Dialog,
   DialogContent,
@@ -486,6 +487,146 @@ export function MetadataDialog({
           >
             {isSaving ? <Loader2Icon className="size-4 animate-spin" /> : null}
             保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reorganize Folder Dialog
+// ---------------------------------------------------------------------------
+
+function opLabel(op: FolderReorganizeOp): string {
+  if (op.op === "move") {
+    const dest = op.target_parent ?? "根目录";
+    return `移动  "${op.path}"  →  "${dest}/${op.path.split("/").at(-1)}"`;
+  }
+  if (op.op === "merge") {
+    return `合并  "${op.source_path}"  →  "${op.target_path}"`;
+  }
+  return `重命名  "${op.path}"  →  "${op.new_path}"`;
+}
+
+export function ReorganizeFolderDialog({
+  open,
+  onOpenChange,
+  events,
+  isRunning,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  events: FolderReorganizeEvent[];
+  isRunning: boolean;
+}) {
+  // Derive state from the event stream
+  const planEvent = events.find(
+    (e): e is Extract<FolderReorganizeEvent, { type: "plan" }> => e.type === "plan",
+  );
+  const doneEvent = events.find(
+    (e): e is Extract<FolderReorganizeEvent, { type: "done" }> => e.type === "done",
+  );
+  const errorEvent = events.find(
+    (e): e is Extract<FolderReorganizeEvent, { type: "error" }> => e.type === "error",
+  );
+  const progressEvents = events.filter(
+    (e): e is Extract<FolderReorganizeEvent, { type: "progress" }> => e.type === "progress",
+  );
+
+  const operations = planEvent?.operations ?? [];
+  const isDone = Boolean(doneEvent);
+  const hasError = Boolean(errorEvent);
+  const isAnalyzing = isRunning && !planEvent;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!isRunning) onOpenChange(o); }}>
+      <DialogContent className="max-w-xl border-accent/20 bg-white shadow-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-slate-900">
+            <SparklesIcon className="size-4 text-primary" />
+            AI 目录整理
+          </DialogTitle>
+          <DialogDescription className="text-slate-600">
+            {isAnalyzing
+              ? "正在分析目录结构，请稍候…"
+              : isRunning
+              ? `共 ${operations.length} 个操作，正在逐步执行…`
+              : isDone
+              ? doneEvent?.message
+              : hasError
+              ? "整理失败"
+              : "准备就绪"}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="max-h-96 overflow-y-auto rounded-lg border border-stone-100 bg-stone-50 p-3 text-sm font-mono">
+          {/* Analyzing phase */}
+          {isAnalyzing && (
+            <div className="flex items-center gap-2 text-stone-500">
+              <Loader2Icon className="size-3.5 animate-spin shrink-0" />
+              <span>正在分析目录结构…</span>
+            </div>
+          )}
+
+          {/* Error */}
+          {hasError && (
+            <div className="flex items-start gap-2 text-red-600">
+              <XIcon className="mt-0.5 size-3.5 shrink-0" />
+              <span>{errorEvent?.message}</span>
+            </div>
+          )}
+
+          {/* Operation list */}
+          {operations.map((op, i) => {
+            const prog = progressEvents.find((e) => e.step === i + 1);
+            const isPending = isRunning && !prog && Boolean(planEvent);
+            const isCurrent = isRunning && !prog && progressEvents.length === i;
+            return (
+              <div key={i} className={`flex items-start gap-2 py-1 ${i > 0 ? "border-t border-stone-200/60" : ""}`}>
+                <span className="mt-0.5 shrink-0">
+                  {prog?.success === true ? (
+                    <CheckIcon className="size-3.5 text-green-600" />
+                  ) : prog?.success === false ? (
+                    <XIcon className="size-3.5 text-red-500" />
+                  ) : isCurrent ? (
+                    <Loader2Icon className="size-3.5 animate-spin text-primary" />
+                  ) : (
+                    <span className="inline-block size-3.5 rounded-full border border-stone-300 bg-white" />
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className={`truncate ${isPending ? "text-stone-400" : "text-stone-700"}`}>
+                    {opLabel(op)}
+                  </div>
+                  {op.reason && (
+                    <div className="truncate text-xs text-stone-400">{op.reason}</div>
+                  )}
+                  {prog?.success === false && prog.error && (
+                    <div className="text-xs text-red-500">{prog.error}</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Done summary */}
+          {isDone && (
+            <div className="mt-2 border-t border-stone-200 pt-2 text-xs text-stone-500">
+              完成：执行 {doneEvent?.executed} 个，跳过 {doneEvent?.skipped} 个
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            className="bg-primary text-white hover:bg-primary/90"
+            onClick={() => onOpenChange(false)}
+            disabled={isRunning}
+          >
+            {isRunning ? <Loader2Icon className="mr-2 size-4 animate-spin" /> : null}
+            {isRunning ? "整理中…" : "完成"}
           </Button>
         </DialogFooter>
       </DialogContent>

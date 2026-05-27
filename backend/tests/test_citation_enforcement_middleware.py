@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from src.agents.middlewares.citation_enforcement_middleware import (
     FINAL_FALLBACK_RESPONSE,
+    UNGROUNDED_WARNING_MARKER,
     CitationEnforcementMiddleware,
 )
 from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY
@@ -211,3 +212,56 @@ class TestCitationEnforcementMiddleware:
         assert content.startswith("【无法回答】当前书目中暂无相关资料")
         assert "参考文献" not in content
         assert "建议问题" in content
+
+    def test_historical_citation_without_current_tool_call_does_not_show_ungrounded_warning(self):
+        middleware = CitationEnforcementMiddleware()
+        request = ModelRequest(
+            model=_SuggestionModel("继续核对哪些来源？\n还需比较哪一时期？\n是否要追问制度细节？"),
+            messages=[HumanMessage(content="继续刚才的话题")],
+            state={KNOWLEDGE_CITATION_REGISTRY_KEY: _registry()},
+            system_message=SystemMessage(content="You are a helpful assistant."),
+        )
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                result=[
+                    AIMessage(
+                        content=(
+                            "延续前面的结论，这一变化应放在晚清财政制度调整和地方执行之间理解，"
+                            "尤其要注意文本中对具体执行环节的描述。[citation:1]"
+                        )
+                    )
+                ]
+            )
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert "[citation:1]" in content
+        assert UNGROUNDED_WARNING_MARKER not in content
+
+    def test_substantive_answer_without_citation_shows_ungrounded_warning_even_without_tool_call(self):
+        middleware = CitationEnforcementMiddleware()
+        request = ModelRequest(
+            model=_SuggestionModel("继续核对哪些来源？\n还需比较哪一时期？\n是否要追问制度细节？"),
+            messages=[HumanMessage(content="介绍一下这个背景")],
+            state={KNOWLEDGE_CITATION_REGISTRY_KEY: _registry()},
+            system_message=SystemMessage(content="You are a helpful assistant."),
+        )
+
+        def handler(_: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                result=[
+                    AIMessage(
+                        content=(
+                            "这个背景可以概括为晚清财政压力、地方治理需求与新式事业扩张之间的相互作用，"
+                            "相关变化通常需要同时观察制度设计、执行主体和资金来源三个层面。"
+                        )
+                    )
+                ]
+            )
+
+        final_response = middleware.wrap_model_call(request, handler)
+        content = str(final_response.result[-1].content)
+
+        assert UNGROUNDED_WARNING_MARKER in content

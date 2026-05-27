@@ -14,6 +14,7 @@ import {
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
+  SparklesIcon,
   SquareIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -245,6 +246,7 @@ export function KnowledgeManagementToolbar({
   onSelectFolder,
   onOpenUpload,
   onOpenCreateFolder,
+  onOpenReorganize,
   onRefresh,
   isRefreshing,
   onStartChat,
@@ -258,6 +260,7 @@ export function KnowledgeManagementToolbar({
   onSelectFolder: (path: string) => void;
   onOpenUpload: () => void;
   onOpenCreateFolder: () => void;
+  onOpenReorganize: () => void;
   onRefresh: () => void;
   isRefreshing: boolean;
   onStartChat: () => void;
@@ -303,22 +306,32 @@ export function KnowledgeManagementToolbar({
           <PlusIcon className="mr-2 size-4" />
           上传档案
         </Button>
-        <Button 
-          type="button" 
-          variant="outline" 
-          size="sm" 
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
           className="h-9 rounded-sm border-primary/40 bg-white shadow-[2px_2px_0_rgba(126,51,46,0.1)] px-4 text-xs text-primary hover:bg-primary hover:text-white transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none font-serif font-bold tracking-widest"
           onClick={onOpenCreateFolder}
         >
           <FolderIcon className="mr-2 size-4" />
           新刻文件夹
         </Button>
-        <Button 
-          type="button" 
-          variant="outline" 
-          size="icon" 
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 rounded-sm border-primary/40 bg-white shadow-[2px_2px_0_rgba(126,51,46,0.1)] px-4 text-xs text-primary hover:bg-primary hover:text-white transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none font-serif font-bold tracking-widest"
+          onClick={onOpenReorganize}
+        >
+          <SparklesIcon className="mr-2 size-4" />
+          AI 整理目录
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
           className="h-9 w-9 shrink-0 rounded-sm border-primary/40 bg-white shadow-[2px_2px_0_rgba(126,51,46,0.1)] text-primary hover:bg-primary hover:text-white transition-all"
-          onClick={onRefresh} 
+          onClick={onRefresh}
           disabled={isRefreshing}
         >
           <RefreshCwIcon className={cn("size-4", isRefreshing && "animate-spin")} />
@@ -607,7 +620,7 @@ export function KnowledgeFileCard({
                       <span className="font-bold text-primary/60 mr-1.5">摘要：</span>
                       {file.summary?.trim() ?? "无"}
                     </p>
-                    {(file.author?.trim() || file.publisher?.trim()) && (
+                    {(!!file.author?.trim() || !!file.publisher?.trim()) && (
                       <p className="mt-1 text-[11px] leading-relaxed text-stone-500/80 font-serif">
                         {file.author?.trim() && (
                           <>

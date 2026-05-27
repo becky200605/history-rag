@@ -2,6 +2,7 @@ import {
   buildKnowledgePageImageURLForDocumentUrl,
   buildKnowledgeDocumentUrl,
   type KnowledgeFileInfo,
+  type KnowledgeFolderSummary,
   type KnowledgeMetadataUpdateInput,
 } from "@/core/knowledge/api";
 import type { UserKnowledgeRecord } from "@/core/knowledge/user-api";
@@ -256,6 +257,48 @@ export function buildScopedFolderTree(params: {
   return toTree(mutableRoot);
 }
 
+export function buildScopedFolderTreeFromSummaries(params: {
+  folders: KnowledgeFolderSummary[];
+  prefix: "system:" | "personal:";
+  source: "global" | "personal";
+}): FolderTreeNode[] {
+  const nodeByPath = new Map<string, FolderTreeNode>();
+  for (const folder of params.folders) {
+    nodeByPath.set(folder.path, {
+      name: folder.name,
+      path: `${params.prefix}${folder.path}`,
+      fileCount: folder.file_count,
+      children: [],
+      source: params.source,
+      deletable: true,
+    });
+  }
+
+  const roots: FolderTreeNode[] = [];
+  for (const folder of params.folders) {
+    const node = nodeByPath.get(folder.path);
+    if (!node) {
+      continue;
+    }
+    const parentPath = folder.parent_path ?? null;
+    const parent = parentPath ? nodeByPath.get(parentPath) : null;
+    if (parent) {
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  const sortNodes = (nodes: FolderTreeNode[]) => {
+    nodes.sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+    for (const node of nodes) {
+      sortNodes(node.children);
+    }
+  };
+  sortNodes(roots);
+  return roots;
+}
+
 export function relabelSystemFolderTree(nodes: FolderTreeNode[]): FolderTreeNode[] {
   return nodes;
 }
@@ -297,10 +340,12 @@ export function isFileInFolderScope(file: ManagedKnowledgeFile, selectedFolderPa
 export function isFileDirectlyInFolder(file: ManagedKnowledgeFile, selectedFolderPath: string) {
   if (
     selectedFolderPath === "all" ||
-    selectedFolderPath === "personal-root" ||
-    selectedFolderPath === "system-root"
+    selectedFolderPath === "personal-root"
   ) {
     return false;
+  }
+  if (selectedFolderPath === "system-root") {
+    return file.source === "global";
   }
   return file.folderPath === selectedFolderPath;
 }

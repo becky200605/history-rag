@@ -9,13 +9,15 @@ import {
   WorkspaceContainer,
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
-import type { KnowledgeFileInfo } from "@/core/knowledge/api";
+import type { FolderReorganizeEvent, KnowledgeFileInfo } from "@/core/knowledge/api";
+import { reorganizeKnowledgeFolders } from "@/core/knowledge/api";
 import {
   useCreateKnowledgeFolder,
   useDeleteKnowledgeFolder,
   useDeleteKnowledgeFile,
   useDeleteKnowledgeFileArtifactsOnly,
   useKnowledgeFiles,
+  useKnowledgeFolders,
   useReparseKnowledgeFile,
   useRenameKnowledgeFolder,
   useRegenerateKnowledgeFileMetadata,
@@ -40,6 +42,7 @@ import {
   CreateFolderDialog,
   MetadataDialog,
   MoveFileDialog,
+  ReorganizeFolderDialog,
   UploadDialog,
 } from "./knowledge-management-page.dialogs";
 import {
@@ -52,7 +55,7 @@ import {
   KnowledgeManagementToolbar,
 } from "./knowledge-management-page.sections";
 import {
-  buildScopedFolderTree,
+  buildScopedFolderTreeFromSummaries,
   buildFolderBreadcrumbs,
   buildManagedFileReaderHref,
   buildManagedFiles,
@@ -99,8 +102,16 @@ export default function KnowledgeManagementPage() {
   const [editingFile, setEditingFile] = useState<KnowledgeFileInfo | null>(null);
   const [metadataForm, setMetadataForm] = useState(createEmptyMetadataFormState);
   const [selectedFolderPath, setSelectedFolderPath] = useState("all");
+  const [isReorganizeDialogOpen, setIsReorganizeDialogOpen] = useState(false);
+  const [isReorganizing, setIsReorganizing] = useState(false);
+  const [reorganizeEvents, setReorganizeEvents] = useState<FolderReorganizeEvent[]>([]);
 
-  const globalFilesQuery = useKnowledgeFiles();
+  const selectedGlobalFolderPath =
+    selectedFolderPath.startsWith("system:")
+      ? selectedFolderPath.slice("system:".length)
+      : null;
+  const globalFoldersQuery = useKnowledgeFolders();
+  const globalFilesQuery = useKnowledgeFiles(selectedGlobalFolderPath);
   const personalRecordsQuery = useUserKnowledgeRecords();
   const uploadMutation = useUploadKnowledgeFiles();
   const uploadUserMutation = useUploadUserKnowledgeFiles();
@@ -170,10 +181,6 @@ export default function KnowledgeManagementPage() {
     () => personalRecordsQuery.data?.folders ?? [],
     [personalRecordsQuery.data?.folders],
   );
-  const systemFolderPaths = useMemo(
-    () => globalFilesQuery.data?.folders ?? [],
-    [globalFilesQuery.data?.folders],
-  );
   const sortedGlobalFiles = useMemo(
     () => sortGlobalKnowledgeFiles(globalFiles),
     [globalFiles],
@@ -203,13 +210,12 @@ export default function KnowledgeManagementPage() {
 
   const systemFolderTree = useMemo(
     () =>
-      buildScopedFolderTree({
-        filePaths: sortedGlobalFiles.map((file) => file.folder ?? file.tags?.[0] ?? ""),
-        explicitPaths: systemFolderPaths,
+      buildScopedFolderTreeFromSummaries({
+        folders: globalFoldersQuery.data?.folders ?? [],
         prefix: "system:",
         source: "global",
       }),
-    [sortedGlobalFiles, systemFolderPaths],
+    [globalFoldersQuery.data?.folders],
   );
   const personalFolderTree = useMemo(
     () => buildPersonalFolderTree(managedFiles, personalFolderPaths),
@@ -227,12 +233,12 @@ export default function KnowledgeManagementPage() {
       {
         name: "系统",
         path: "system-root",
-        fileCount: managedFiles.filter((file) => file.source === "global").length,
+        fileCount: globalFoldersQuery.data?.total_file_count ?? 0,
         children: systemFolderTree,
         source: "global" as const,
       },
     ],
-    [managedFiles, personalFolderTree, systemFolderTree],
+    [globalFoldersQuery.data?.total_file_count, managedFiles, personalFolderTree, systemFolderTree],
   );
 
   useEffect(() => {
@@ -518,6 +524,9 @@ export default function KnowledgeManagementPage() {
       toast.success(result.message);
       setNewFolderName("");
       setIsCreateFolderDialogOpen(false);
+      // Refresh first so folderTree has the new path before we navigate into it,
+      // otherwise the "invalid path" useEffect would immediately reset back to "all".
+      await handleRefresh();
       setSelectedFolderPath(
         selectedFolderScope === "global" ? `system:${nextPath}` : `personal:${nextPath}`,
       );
@@ -567,6 +576,8 @@ export default function KnowledgeManagementPage() {
       toast.success(result.message);
       setIsRenameFolderDialogOpen(false);
       setRenamingFolderName("");
+      // Refresh before navigating so the renamed path already exists in folderTree.
+      await handleRefresh();
       setSelectedFolderPath(
         selectedFolderScope === "global" ? `system:${newPath}` : `personal:${newPath}`,
       );
@@ -601,6 +612,7 @@ export default function KnowledgeManagementPage() {
       setSelectedFolderPath(
         folderContextMenu.folder.path.startsWith("system:") ? "system-root" : "personal-root",
       );
+      await handleRefresh();
     } catch (deleteError) {
       toast.error(deleteError instanceof Error ? deleteError.message : "删除文件夹失败");
     }
@@ -711,16 +723,37 @@ export default function KnowledgeManagementPage() {
     router.push(`/workspace/chats/new?materials_key=${encodeURIComponent(key)}`);
   };
 
-  const isLoading = globalFilesQuery.isLoading || personalRecordsQuery.isLoading;
-  const error = globalFilesQuery.error ?? personalRecordsQuery.error;
+  const isLoading = globalFilesQuery.isLoading || globalFoldersQuery.isLoading || personalRecordsQuery.isLoading;
+  const error = globalFilesQuery.error ?? globalFoldersQuery.error ?? personalRecordsQuery.error;
   const isUploadPending = uploadMutation.isPending || uploadUserMutation.isPending;
-  const isRefreshing = globalFilesQuery.isFetching || personalRecordsQuery.isFetching;
+  const isRefreshing = globalFilesQuery.isFetching || globalFoldersQuery.isFetching || personalRecordsQuery.isFetching;
 
   const handleRefresh = async () => {
     await Promise.all([
+      globalFoldersQuery.refetch(),
       globalFilesQuery.refetch(),
       personalRecordsQuery.refetch(),
     ]);
+  };
+
+  const handleReorganize = async () => {
+    setReorganizeEvents([]);
+    setIsReorganizeDialogOpen(true);
+    setIsReorganizing(true);
+    try {
+      for await (const event of reorganizeKnowledgeFolders()) {
+        setReorganizeEvents((prev) => [...prev, event]);
+      }
+    } catch (err) {
+      setReorganizeEvents((prev) => [
+        ...prev,
+        { type: "error", message: String(err) },
+      ]);
+    } finally {
+      setIsReorganizing(false);
+      // Refresh the folder list so changes are visible immediately after close.
+      void handleRefresh();
+    }
   };
 
   return (
@@ -838,6 +871,7 @@ export default function KnowledgeManagementPage() {
                   onSelectFolder={setSelectedFolderPath}
                   onOpenUpload={() => setIsUploadDialogOpen(true)}
                   onOpenCreateFolder={() => setIsCreateFolderDialogOpen(true)}
+                  onOpenReorganize={() => void handleReorganize()}
                   onRefresh={() => void handleRefresh()}
                   isRefreshing={isRefreshing}
                   onStartChat={handleStartChat}
@@ -914,6 +948,12 @@ export default function KnowledgeManagementPage() {
             </div>
           </div>
         </div>
+        <ReorganizeFolderDialog
+          open={isReorganizeDialogOpen}
+          onOpenChange={setIsReorganizeDialogOpen}
+          events={reorganizeEvents}
+          isRunning={isReorganizing}
+        />
       </WorkspaceBody>
       {renderFolderContextMenu()}
     </WorkspaceContainer>

@@ -75,8 +75,23 @@ export interface KnowledgeUploadResponse {
 
 export interface KnowledgeListResponse {
   files: KnowledgeFileInfo[];
-  folders?: string[];
+  folder_path?: string | null;
   count: number;
+}
+
+export interface KnowledgeFolderSummary {
+  name: string;
+  path: string;
+  parent_path?: string | null;
+  file_count: number;
+  direct_file_count: number;
+}
+
+export interface KnowledgeFolderListResponse {
+  folders: KnowledgeFolderSummary[];
+  count: number;
+  root_file_count: number;
+  total_file_count: number;
 }
 
 export interface KnowledgeParagraphLocation {
@@ -319,8 +334,28 @@ export async function uploadKnowledgeFiles(
   return (await response.json()) as KnowledgeUploadResponse;
 }
 
-export async function listKnowledgeFiles(): Promise<KnowledgeListResponse> {
-  const response = await fetch(`${getBackendBaseURL()}/api/knowledge/uploads/list`);
+export async function listKnowledgeFolders(): Promise<KnowledgeFolderListResponse> {
+  const response = await fetch(`${getBackendBaseURL()}/api/knowledge/uploads/folders`);
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ detail: "Failed to list folders" }));
+    throw new Error(error.detail ?? "Failed to list folders");
+  }
+  return (await response.json()) as KnowledgeFolderListResponse;
+}
+
+export async function listKnowledgeFiles(
+  folderPath?: string | null,
+): Promise<KnowledgeListResponse> {
+  const params = new URLSearchParams();
+  if (folderPath) {
+    params.set("folder_path", folderPath);
+  }
+  const query = params.toString();
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/knowledge/uploads/list${query ? `?${query}` : ""}`,
+  );
   if (!response.ok) {
     const error = await response
       .json()
@@ -377,6 +412,125 @@ export async function deleteKnowledgeFolder(
     throw new Error(error.detail ?? "Failed to delete folder");
   }
   return (await response.json()) as { success: boolean; folders: string[]; deleted_path?: string; message: string };
+}
+
+export async function moveKnowledgeFolder(
+  path: string,
+  targetParent: string | null,
+): Promise<{
+  success: boolean;
+  old_path: string;
+  new_path: string;
+  moved_files: number;
+  folders: string[];
+  message: string;
+}> {
+  const response = await fetch(`${getBackendBaseURL()}/api/knowledge/folders/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, target_parent: targetParent }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to move folder" }));
+    throw new Error(error.detail ?? "Failed to move folder");
+  }
+  return (await response.json()) as {
+    success: boolean;
+    old_path: string;
+    new_path: string;
+    moved_files: number;
+    folders: string[];
+    message: string;
+  };
+}
+
+export async function mergeKnowledgeFolder(
+  sourcePath: string,
+  targetPath: string,
+): Promise<{
+  success: boolean;
+  source_path: string;
+  target_path: string;
+  merged_files: number;
+  folders: string[];
+  message: string;
+}> {
+  const response = await fetch(`${getBackendBaseURL()}/api/knowledge/folders/merge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_path: sourcePath, target_path: targetPath }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to merge folder" }));
+    throw new Error(error.detail ?? "Failed to merge folder");
+  }
+  return (await response.json()) as {
+    success: boolean;
+    source_path: string;
+    target_path: string;
+    merged_files: number;
+    folders: string[];
+    message: string;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Folder reorganization agent
+// ---------------------------------------------------------------------------
+
+export type FolderReorganizeOp =
+  | { op: "move"; path: string; target_parent: string | null; reason: string }
+  | { op: "merge"; source_path: string; target_path: string; reason: string }
+  | { op: "rename"; path: string; new_path: string; reason: string };
+
+export type FolderReorganizeEvent =
+  | { type: "analyzing"; folder_count: number }
+  | { type: "plan"; operations: FolderReorganizeOp[]; total: number; raw_response?: string }
+  | { type: "progress"; step: number; total: number; op: FolderReorganizeOp; success: boolean; result?: Record<string, unknown>; error?: string }
+  | { type: "done"; executed: number; skipped: number; message: string }
+  | { type: "error"; message: string };
+
+/**
+ * Call the AI folder-reorganization agent and yield SSE events.
+ * Usage:
+ *   for await (const event of reorganizeKnowledgeFolders({ focusPath: "历史" })) { ... }
+ */
+export async function* reorganizeKnowledgeFolders(options?: {
+  modelName?: string;
+  focusPath?: string;
+}): AsyncGenerator<FolderReorganizeEvent> {
+  const response = await fetch(`${getBackendBaseURL()}/api/knowledge/folders/reorganize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model_name: options?.modelName ?? null,
+      focus_path: options?.focusPath ?? null,
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to start reorganization" }));
+    throw new Error(error.detail ?? "Failed to start reorganization");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        try {
+          yield JSON.parse(line.slice(6)) as FolderReorganizeEvent;
+        } catch {
+          // ignore malformed frames
+        }
+      }
+    }
+  }
 }
 
 export async function deleteKnowledgeFile(

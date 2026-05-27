@@ -9,6 +9,7 @@ import {
   deleteKnowledgeFileArtifactsOnly,
   listKnowledgeDocuments,
   listKnowledgeFiles,
+  listKnowledgeFolders,
   loadKnowledgeStatus,
   reparseKnowledgeFile,
   renameKnowledgeFolder,
@@ -33,6 +34,7 @@ import {
 } from "./chunked-upload";
 
 const KNOWLEDGE_FILES_QUERY_KEY = ["knowledge", "uploads"];
+const KNOWLEDGE_FOLDERS_QUERY_KEY = ["knowledge", "upload-folders"];
 const KNOWLEDGE_STATUS_QUERY_KEY = ["knowledgeStatus"];
 const KNOWLEDGE_DOCS_QUERY_KEY = ["knowledgeDocs"];
 const ACTIVE_KNOWLEDGE_JOB_STATUSES = [
@@ -43,10 +45,17 @@ const ACTIVE_KNOWLEDGE_JOB_STATUSES = [
   "indexing",
 ];
 
-export function useKnowledgeFiles() {
+export function useKnowledgeFolders() {
   return useQuery({
-    queryKey: KNOWLEDGE_FILES_QUERY_KEY,
-    queryFn: listKnowledgeFiles,
+    queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY,
+    queryFn: listKnowledgeFolders,
+  });
+}
+
+export function useKnowledgeFiles(folderPath?: string | null) {
+  return useQuery({
+    queryKey: [...KNOWLEDGE_FILES_QUERY_KEY, folderPath ?? null],
+    queryFn: () => listKnowledgeFiles(folderPath),
     refetchInterval: (query) => {
       const files = query.state.data?.files ?? [];
       const hasActiveJobs = files.some((file) =>
@@ -67,6 +76,7 @@ export function useUploadKnowledgeFiles() {
     mutationFn: ({ files, options }) => uploadKnowledgeFiles(files, options),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
     },
@@ -79,6 +89,7 @@ export function useDeleteKnowledgeFile() {
     mutationFn: (filename: string) => deleteKnowledgeFile(filename),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
     },
@@ -91,6 +102,7 @@ export function useDeleteKnowledgeFileArtifactsOnly() {
     mutationFn: (filename: string) => deleteKnowledgeFileArtifactsOnly(filename),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
     },
@@ -103,6 +115,7 @@ export function useCreateKnowledgeFolder() {
     mutationFn: (path: string) => createKnowledgeFolder(path),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
     },
   });
 }
@@ -114,6 +127,7 @@ export function useRenameKnowledgeFolder() {
       renameKnowledgeFolder(payload.path, payload.newPath),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
     },
   });
 }
@@ -124,6 +138,7 @@ export function useDeleteKnowledgeFolder() {
     mutationFn: (path: string) => deleteKnowledgeFolder(path),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
     },
   });
 }
@@ -134,6 +149,7 @@ export function useRetryKnowledgeFileIndexing() {
     mutationFn: (filename: string) => retryKnowledgeFileIndexing(filename),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
     },
@@ -146,6 +162,7 @@ export function useReparseKnowledgeFile() {
     mutationFn: (filename: string) => reparseKnowledgeFile(filename),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
     },
@@ -163,6 +180,7 @@ export function useUpdateKnowledgeFileMetadata() {
       updateKnowledgeFileMetadata(filename, payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
     },
   });
@@ -178,6 +196,7 @@ export function useRegenerateKnowledgeFileMetadata() {
     mutationFn: (filename: string) => regenerateKnowledgeFileMetadata(filename),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
     },
   });
@@ -198,6 +217,7 @@ export function useReindexKnowledgeBase() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
     },
   });
@@ -215,6 +235,7 @@ export function useUploadKnowledgeDocument() {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
     },
   });
 }
@@ -235,6 +256,7 @@ export function useDeleteKnowledgeDocument() {
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_DOCS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_STATUS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FILES_QUERY_KEY });
+      void queryClient.invalidateQueries({ queryKey: KNOWLEDGE_FOLDERS_QUERY_KEY });
     },
   });
 }

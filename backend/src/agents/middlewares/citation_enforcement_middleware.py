@@ -417,6 +417,14 @@ def _has_supported_body_citation(answer_body: str, messages: list, state: dict |
     return False
 
 
+def _should_mark_ungrounded_answer(answer_body: str, messages: list, state: dict | None = None) -> bool:
+    return (
+        not _is_refusal(answer_body)
+        and len(answer_body.strip()) > UNGROUNDED_SUBSTANTIVE_THRESHOLD
+        and not _has_supported_body_citation(answer_body, messages, state)
+    )
+
+
 def _build_reference_section(answer_body: str) -> str:
     citations = _extract_citations(answer_body)
     if not citations:
@@ -728,19 +736,16 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
             return _fallback_suggested_questions(user_question=user_question, refusal=refusal)
 
     def _compose_content_sync(self, request: ModelRequest, content: str) -> str:
+        state = _request_state(request)
         answer_body = _normalize_answer_citations(
             _strip_generated_sections(content),
             request.messages,
-            _request_state(request),
+            state,
         )
         if not answer_body:
             return content
 
-        is_ungrounded = (
-            not self._turn_used_grounding_tools(request.messages)
-            and not _is_refusal(answer_body)
-            and len(answer_body.strip()) > UNGROUNDED_SUBSTANTIVE_THRESHOLD
-        )
+        is_ungrounded = _should_mark_ungrounded_answer(answer_body, request.messages, state)
 
         reference_section = "" if _is_refusal(answer_body) else _build_reference_section(answer_body)
         suggestions = self._generate_suggested_questions_sync(
@@ -761,19 +766,16 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         return composed
 
     async def _compose_content_async(self, request: ModelRequest, content: str) -> str:
+        state = _request_state(request)
         answer_body = _normalize_answer_citations(
             _strip_generated_sections(content),
             request.messages,
-            _request_state(request),
+            state,
         )
         if not answer_body:
             return content
 
-        is_ungrounded = (
-            not self._turn_used_grounding_tools(request.messages)
-            and not _is_refusal(answer_body)
-            and len(answer_body.strip()) > UNGROUNDED_SUBSTANTIVE_THRESHOLD
-        )
+        is_ungrounded = _should_mark_ungrounded_answer(answer_body, request.messages, state)
 
         reference_section = "" if _is_refusal(answer_body) else _build_reference_section(answer_body)
         suggestions = await self._generate_suggested_questions_async(

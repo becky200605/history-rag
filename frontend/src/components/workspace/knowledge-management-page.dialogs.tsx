@@ -532,7 +532,7 @@ export function BatchGenerateSummaryDialog({
           </DialogTitle>
           <DialogDescription className="text-slate-600">
             {isRunning
-              ? `正在处理第 ${current} / ${total} 本，请稍候…`
+              ? `正在处理第 ${current} / ${total} 本（每本最多重试 3 次），请稍候…`
               : current === 0
               ? "准备就绪"
               : `完成：成功 ${successCount} 本${failCount > 0 ? `，失败 ${failCount} 本` : ""}`}

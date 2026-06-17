@@ -81,6 +81,17 @@ def test_build_book_metadata_prompt_bundle_only_uses_front_pages() -> None:
     assert "existing.pdf" in bundle.user_prompt
 
 
+def test_parse_book_metadata_suggestion_coerces_dict_title() -> None:
+    """AI occasionally wraps title in a MetadataField-like dict — must be coerced to str."""
+    suggestion = parse_book_metadata_suggestion(
+        {
+            "title": {"value": "行政院工作报告", "confidence": 0.95, "evidence": "封面"},
+        }
+    )
+
+    assert suggestion.title == "行政院工作报告"
+
+
 def test_parse_book_metadata_suggestion_accepts_json_string() -> None:
     payload = json.dumps(
         {

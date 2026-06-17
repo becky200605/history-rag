@@ -180,6 +180,11 @@ def _coerce_metadata_fields(values: Any) -> list[MetadataField]:
 
 def _normalize_book_metadata_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
+    # title must be a plain string; coerce dict/non-string values gracefully.
+    raw_title = payload.get("title")
+    if isinstance(raw_title, Mapping):
+        raw_title = raw_title.get("value") or raw_title.get("text") or raw_title.get("content") or ""
+    normalized["title"] = str(raw_title).strip() if raw_title else None
     normalized["author"] = _coerce_metadata_field(payload.get("author"))
     normalized["publisher"] = _coerce_metadata_field(payload.get("publisher"))
     normalized["type"] = _coerce_book_type(payload.get("type"))

@@ -778,20 +778,30 @@ export default function KnowledgeManagementPage() {
     setIsBatchGeneratingSummary(true);
 
     for (const file of noSummaryFiles) {
-      try {
-        await regenerateMetadataMutation.mutateAsync(file.filename);
+      let lastErr: unknown;
+      let succeeded = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await regenerateMetadataMutation.mutateAsync(file.filename);
+          succeeded = true;
+          break;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      if (succeeded) {
         setBatchSummaryResults((prev) => [
           ...prev,
           { filename: file.filename, title: file.title, success: true },
         ]);
-      } catch (err) {
+      } else {
         setBatchSummaryResults((prev) => [
           ...prev,
           {
             filename: file.filename,
             title: file.title,
             success: false,
-            error: err instanceof Error ? err.message : "生成失败",
+            error: lastErr instanceof Error ? lastErr.message : "生成失败",
           },
         ]);
       }

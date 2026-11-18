@@ -17,6 +17,7 @@ from src.gateway.routers import (
     memory,
     models,
     skills,
+    suggestions,
     uploads,
     user_knowledge,
 )
@@ -158,6 +159,7 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
     # Include routers
     # Models API is mounted at /api/models
     app.include_router(models.router)
+    app.include_router(suggestions.router)
 
     # MCP API is mounted at /api/mcp
     app.include_router(mcp.router)

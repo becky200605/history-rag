@@ -1,6 +1,7 @@
 import json
 import logging
 import mimetypes
+import os
 import threading
 import time
 from collections.abc import Generator
@@ -29,6 +30,7 @@ from src.community.knowledge_base.book_metadata_runtime import (
     generate_book_metadata_record,
     maybe_generate_book_metadata,
 )
+from src.community.knowledge_base.book_outline import load_book_outline
 from src.community.knowledge_base.catalog import list_book_catalog
 from src.community.knowledge_base.citations import (
     encode_source_url,
@@ -753,6 +755,7 @@ def _load_global_book_metadata(filename: str, ingestion_record: dict[str, Any] |
         fallback_tags=tags,
     )
     return {
+        "title": getattr(suggestion, "title", None),
         "type": book_type,
         "folder": folder,
         "categories": categories,
@@ -1299,9 +1302,10 @@ def _list_global_knowledge_files_all() -> dict:
     files: list[dict[str, Any]] = []
 
     if catalog_entries is not None:
-        # ── 主路径：纯 SQLite，零文件 I/O ────────────────────────────────────────
-        # catalog SQLite 已包含所有展示所需字段，无需读 .ingestion/ 下任何文件。
+        # SQLite supplies display metadata. One directory scan checks which originals are still served.
         # 只有正在 OCR 队列中的文件才需要额外读一次 ingestion record 获取实时状态。
+        with os.scandir(docs_dir) as entries:
+            originals = {entry.name for entry in entries if entry.is_file()}
         for cat_entry in sorted(catalog_entries, key=lambda e: e.filename):
             filename = cat_entry.filename
             if not filename:
@@ -1322,10 +1326,12 @@ def _list_global_knowledge_files_all() -> dict:
                 "doc_id": cat_entry.doc_id,
                 "scope": "global",
                 "filename": filename,
+                "title": cat_entry.title,
                 "size": 0,
                 "extension": Path(filename).suffix,
                 "modified": None,
                 "artifact_url": cat_entry.source_url or _build_global_urls(filename)["source_url"],
+                "original_available": filename in originals,
                 "type": cat_entry.type if cat_entry.type and cat_entry.type != "unknown" else None,
                 "folder": cat_entry.folder_path,
                 "categories": cat_entry.categories,
@@ -1382,6 +1388,7 @@ def _list_global_knowledge_files_all() -> dict:
                 "extension": file_path.suffix,
                 "modified": stat.st_mtime,
                 "artifact_url": _build_global_urls(file_path.name)["source_url"],
+                "original_available": True,
             }
             entry.update(_load_global_book_metadata(file_path.name, ingestion_record=record))
             if record:
@@ -1480,13 +1487,23 @@ def list_global_knowledge_upload_folders() -> dict:
 @router.get("/uploads/list", response_model=dict, summary="List Global Knowledge Uploads In Folder")
 def list_global_knowledge_files(
     folder_path: str | None = Query(default=None, description="Logical folder path to list; omitted means root"),
+    include_descendants: bool = False,
 ) -> dict:
-    """List only the files directly visible in the requested global folder."""
+    """List a folder, optionally including its descendants or the entire collection."""
     normalized_folder_path = normalize_folder_path(folder_path)
+    all_files = _list_global_knowledge_files_all().get("files", [])
+    if include_descendants and normalized_folder_path is None:
+        return {"files": all_files, "folder_path": None, "count": len(all_files)}
+
     files = [
         file_info
-        for file_info in _list_global_knowledge_files_all().get("files", [])
+        for file_info in all_files
         if _is_direct_folder_match(file_info.get("folder"), normalized_folder_path)
+        or (
+            include_descendants
+            and normalized_folder_path
+            and (normalize_folder_path(file_info.get("folder")) or "").startswith(f"{normalized_folder_path}/")
+        )
     ]
     return {"files": files, "folder_path": normalized_folder_path, "count": len(files)}
 
@@ -2628,6 +2645,24 @@ def get_knowledge_document(
         path=file_path,
         media_type="text/markdown"
     )
+
+
+@router.get(
+    "/docs/{filename}/outline",
+    summary="Get book chapters from PDF bookmarks or known contents pages",
+)
+def get_knowledge_book_outline(filename: str):
+    if not get_knowledge_base_config().enabled:
+        raise HTTPException(status_code=400, detail="Knowledge base is not enabled")
+    if "/" in filename or "\\" in filename or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    docs_dir = get_global_docs_dir()
+    source = (docs_dir / filename).resolve()
+    if not source.is_relative_to(docs_dir.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    metadata = load_book_metadata_for_source(docs_dir, filename)
+    return {"entries": load_book_outline(source, metadata)}
 
 
 @router.get(

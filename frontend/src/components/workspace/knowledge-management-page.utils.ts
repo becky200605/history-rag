@@ -1,6 +1,8 @@
+import { getBackendBaseURL } from "@/core/config";
 import {
   buildKnowledgePageImageURLForDocumentUrl,
   buildKnowledgeDocumentUrl,
+  resolveKnowledgeDocumentUrl,
   type KnowledgeFileInfo,
   type KnowledgeFolderSummary,
   type KnowledgeMetadataUpdateInput,
@@ -26,6 +28,70 @@ export type FolderTreeNode = {
   deletable?: boolean;
 };
 
+export const FISCAL_ECONOMY_PATH = "collection:fiscal-economy";
+export const FISCAL_HISTORY_PATH = "collection:fiscal-history";
+export const REPUBLIC_FISCAL_HISTORY_PATH = "collection:republic-fiscal-history";
+export const ORIGINAL_FOLDERS_PATH = "collection:original-folders";
+
+export function isRepublicFiscalHistoryFile(file: ManagedKnowledgeFile) {
+  if (file.source !== "global") return false;
+
+  const normalizeName = (value: string) => value.trim().replaceAll("國", "国").replaceAll("財", "财");
+  const folderParts = file.folderDisplay.split("/").map(normalizeName);
+  if (folderParts.some((part, index) => part === "民国" && folderParts[index - 1] === "财政史")) {
+    return true;
+  }
+
+  return [
+    ...folderParts,
+    ...(file.categories ?? []),
+    file.title.replace(/\s*[（(].*[）)]$/, ""),
+  ].some((name) => normalizeName(name) === "民国财政史");
+}
+
+export function buildSystemLibraryTree(
+  folders: FolderTreeNode[],
+  total: number,
+  pilotCount: number,
+): FolderTreeNode {
+  const pilot: FolderTreeNode = {
+    name: "民国财政史",
+    path: REPUBLIC_FISCAL_HISTORY_PATH,
+    fileCount: pilotCount,
+    children: [],
+    source: "global",
+  };
+
+  return {
+    name: "系统知识库",
+    path: "system-root",
+    fileCount: total,
+    source: "global",
+    children: [
+      {
+        name: "财政与经济",
+        path: FISCAL_ECONOMY_PATH,
+        fileCount: pilotCount,
+        source: "global",
+        children: [{
+          name: "财政史",
+          path: FISCAL_HISTORY_PATH,
+          fileCount: pilotCount,
+          source: "global",
+          children: [pilot],
+        }],
+      },
+      {
+        name: "原始目录",
+        path: ORIGINAL_FOLDERS_PATH,
+        fileCount: total,
+        source: "global",
+        children: folders,
+      },
+    ],
+  };
+}
+
 export type ManagedKnowledgeFile = {
   rowId: string;
   source: "global" | "personal";
@@ -42,6 +108,7 @@ export type ManagedKnowledgeFile = {
   indexable?: boolean;
   documentUrl?: string | null;
   artifactUrl?: string | null;
+  originalAvailable?: boolean;
   extension?: string | null;
   previewFilename?: string | null;
   previewArtifactUrl?: string | null;
@@ -580,6 +647,17 @@ export function buildManagedFileReaderHref(file: ManagedKnowledgeFile) {
   return `/workspace/knowledge/view?${params.toString()}`;
 }
 
+export function buildManagedFileOriginalHref(file: ManagedKnowledgeFile, pdfPageNo?: number | null) {
+  if (file.originalAvailable === false) return null;
+  const documentUrl = file.documentUrl ?? file.artifactUrl;
+  if (!documentUrl) return null;
+
+  const href = resolveKnowledgeDocumentUrl(documentUrl)?.scope === "global" && documentUrl.startsWith("/")
+    ? `${getBackendBaseURL()}${documentUrl}`
+    : documentUrl;
+  return pdfPageNo ? `${href.split("#")[0]}#page=${pdfPageNo}` : href;
+}
+
 export function buildKnowledgeSummary(
   globalFiles: KnowledgeFileInfo[],
   personalRecords: UserKnowledgeRecord[],
@@ -627,7 +705,7 @@ export function buildManagedFiles(params: {
     scope: "global",
     docId: file.doc_id ?? null,
     filename: file.filename,
-    title: file.filename.replace(/\.[^.]+$/, ""),
+    title: file.title?.trim() ? file.title.trim() : file.filename.replace(/\.[^.]+$/, ""),
     folderPath: `system:${getFileFolderPath(file)}`,
     folderDisplay: getFileFolderPath(file),
     size: file.size,
@@ -637,6 +715,7 @@ export function buildManagedFiles(params: {
     indexable: file.indexable,
     documentUrl: buildKnowledgeDocumentUrl("global", file.filename),
     artifactUrl: file.artifact_url,
+    originalAvailable: file.original_available,
     extension: file.extension,
     previewFilename: file.preview_filename,
     previewArtifactUrl: file.preview_artifact_url,
@@ -858,7 +937,7 @@ export function canEditManagedMetadata(file: ManagedKnowledgeFile) {
 
 export function getManagedFileCoverImageUrl(file: ManagedKnowledgeFile) {
   const extension = (file.extension ?? "").toLowerCase();
-  if (extension !== ".pdf" || !file.documentUrl) {
+  if (extension !== ".pdf" || !file.documentUrl || file.originalAvailable === false) {
     return null;
   }
 

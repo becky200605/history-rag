@@ -24,13 +24,13 @@ import type { KnowledgeCitationRegistryItem } from "@/core/threads";
 import { cn } from "@/lib/utils";
 
 import { ArtifactFileList } from "../artifacts/artifact-file-list";
-import { StreamingIndicator } from "../streaming-indicator";
 
 import { MarkdownContent } from "./markdown-content";
 import { MessageGroup } from "./message-group";
 import { MessageListItem } from "./message-list-item";
 import { MessageListSkeleton } from "./skeleton";
 import { SubtaskCard } from "./subtask-card";
+import { SuggestedQuestions } from "./suggested-questions";
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -44,6 +44,7 @@ export function MessageList({
   threadId,
   thread,
   messagesOverride,
+  isSubmitting = false,
   citationRegistryOverride,
   paddingBottom = 160,
   runElapsedSeconds,
@@ -53,6 +54,7 @@ export function MessageList({
   thread: UseStream<AgentThreadState>;
   /** When set (e.g. from onFinish), use instead of thread.messages so SSE end shows complete state. */
   messagesOverride?: Message[];
+  isSubmitting?: boolean;
   /** Keep messages and citation registry from the same completed state snapshot. */
   citationRegistryOverride?: KnowledgeCitationRegistryItem[];
   paddingBottom?: number;
@@ -62,12 +64,21 @@ export function MessageList({
   const rehypePlugins = useRehypeSplitWordsIntoSpans(thread.isLoading);
   const updateSubtask = useUpdateSubtask();
   const messages = messagesOverride ?? thread.messages;
+  const latestQuestion = [...messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.type === "human" &&
+        !extractTextFromMessage(message).includes("<task_memory_matches>"),
+    );
+  const question = latestQuestion ? extractTextFromMessage(latestQuestion) : "";
+  const awaitingReply =
+    (thread.isLoading || isSubmitting) &&
+    latestQuestion &&
+    !messages.slice(messages.lastIndexOf(latestQuestion) + 1).some((message) => message.type === "ai");
   const citationRegistry =
-    citationRegistryOverride ??
-    (thread.values.knowledge_citation_registry as
-      | KnowledgeCitationRegistryItem[]
-      | undefined) ?? [];
-  if (thread.isThreadLoading) {
+    citationRegistryOverride ?? thread.values.knowledge_citation_registry ?? [];
+  if (thread.isThreadLoading && messages.length === 0) {
     return <MessageListSkeleton />;
   }
   return (
@@ -78,12 +89,23 @@ export function MessageList({
         {groupMessages(messages, (group) => {
           if (group.type === "human" || group.type === "assistant") {
             return (
-              <MessageListItem
-                key={group.id}
-                message={group.messages[0]!}
-                isLoading={thread.isLoading}
-                citationRegistry={citationRegistry}
-              />
+              <div key={group.id} className="w-full">
+                <MessageListItem
+                  message={group.messages[0]!}
+                  isLoading={thread.isLoading}
+                  citationRegistry={citationRegistry}
+                />
+                {group.type === "assistant" &&
+                  group.messages[0] === messages.at(-1) && (
+                    <SuggestedQuestions
+                      threadId={threadId}
+                      messageId={group.id ?? "latest"}
+                      question={question}
+                      answer={extractTextFromMessage(group.messages[0]!)}
+                      enabled={!thread.isLoading && !thread.isThreadLoading}
+                    />
+                  )}
+              </div>
             );
           } else if (group.type === "assistant:clarification") {
             const message = group.messages[0];
@@ -225,8 +247,12 @@ export function MessageList({
             />
           );
         })}
-        {thread.isLoading && <StreamingIndicator className="my-4" />}
-        {!thread.isLoading && runElapsedSeconds != null && (
+        {awaitingReply && (
+          <p role="status" className={cn("text-muted-foreground py-1 text-sm", isSubmitting ? "self-end pr-4" : "self-start")}>
+            {isSubmitting ? "正在发送…" : "正在等待回复…"}
+          </p>
+        )}
+        {!thread.isLoading && !isSubmitting && runElapsedSeconds != null && (
           <div className="text-muted-foreground flex items-center gap-1.5 py-1 text-xs">
             <ClockIcon className="size-3.5" />
             <span>耗时 {formatDuration(runElapsedSeconds)}</span>

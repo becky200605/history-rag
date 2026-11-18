@@ -357,3 +357,17 @@ memory:
 #     use_tls: $TRANSLATION_RPC_USE_TLS
 #     api_token: $TRANSLATION_RPC_API_TOKEN
 #     request_timeout: 60
+
+# Optional work is kept outside the main answer completion path.
+suggestions:
+  mode: deferred # inline / deferred / disabled
+  model_name: null # non-thinking; falls back to the default model
+  timeout_seconds: 10
+
+task_memory:
+  enabled: true # independent of personal-profile memory.enabled
+  retrieval_enabled: true
+  timeout_seconds: 3
+  first_turn_timeout_seconds: 0.45
+  cache_ttl_seconds: 60
+  cache_max_entries: 128

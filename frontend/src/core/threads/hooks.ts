@@ -136,13 +136,14 @@ export function useThreadStream({
         const msg = state.values.messages?.find((m) => m.type === "human");
         if (!msg) return undefined;
         const content = msg.content;
-        if (typeof content === "string") return content.slice(0, 60) || undefined;
+        if (typeof content === "string") return content ? content.slice(0, 60) : undefined;
         if (Array.isArray(content)) {
           const part = content.find(
             (p): p is { type: "text"; text: string } =>
               typeof p === "object" && p !== null && "type" in p && p.type === "text" && "text" in p,
           );
-          return part?.text?.slice(0, 60) || undefined;
+          const text = part?.text;
+          return text ? text.slice(0, 60) : undefined;
         }
         return undefined;
       })();
@@ -233,7 +234,7 @@ export function useSubmitThread({
   );
 
   const callback = useCallback(
-    async (message: PromptInputMessage) => {
+    async (message: PromptInputMessage, messageId: string) => {
       const text = message.text.trim();
       const userId = session?.user.id;
       const effectiveSelection = buildEffectiveSelection(
@@ -273,6 +274,7 @@ export function useSubmitThread({
         {
           messages: [
             {
+              id: messageId,
               type: "human",
               content: [
                 {

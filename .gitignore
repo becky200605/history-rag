@@ -19,9 +19,14 @@ __pycache__/
 venv/
 
 # Environment variables
-#.env
+.env
 backend/.env
 frontend/.env
+**/.production.env
+**/.production.env.bak*
+
+# Document rendering scratch files stay local; final reports and previews may be tracked.
+outputs/**/.work/
 
 # Configuration files
 #config.yaml

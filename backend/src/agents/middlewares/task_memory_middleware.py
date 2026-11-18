@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import threading
 from typing import Any, NotRequired, override
-
-logger = logging.getLogger(__name__)
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
@@ -21,7 +20,10 @@ from src.community.knowledge_base.task_memory import (
     search_and_prepare_task_memory,
     upsert_task_memory_record,
 )
+from src.config.task_memory_config import get_task_memory_config
 from src.models import create_chat_model
+
+logger = logging.getLogger(__name__)
 
 TASK_MEMORY_DECISION_SYSTEM_PROMPT = (
     "你是任务记忆写入判定器，只决定当前对话是否应该写入长期任务记忆库。\n"
@@ -249,6 +251,7 @@ class TaskMemoryMiddleware(AgentMiddleware[TaskMemoryMiddlewareState]):
                 title=current_task_title,
                 target_state=state,
                 top_k=3,
+                first_turn=_latest_human_message(messages[:human_index]) is None,
             )
         except Exception:
             prepared_matches = []
@@ -277,7 +280,13 @@ class TaskMemoryMiddleware(AgentMiddleware[TaskMemoryMiddlewareState]):
         return updates
 
     @override
+    async def abefore_model(self, state: TaskMemoryMiddlewareState, runtime: Runtime) -> dict | None:
+        return await asyncio.to_thread(self.before_model, state, runtime)
+
+    @override
     def after_agent(self, state: TaskMemoryMiddlewareState, runtime: Runtime) -> dict | None:
+        if not get_task_memory_config().enabled:
+            return None
         current_task_title = str(state.get("current_task_title") or "").strip()
         current_task_human_index = state.get("current_task_human_index")
         if not current_task_title or current_task_human_index is None:

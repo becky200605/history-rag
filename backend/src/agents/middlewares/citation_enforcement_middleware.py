@@ -13,6 +13,7 @@ from langchain.agents.middleware.types import ModelCallResult, ModelRequest, Mod
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY
+from src.config.suggestions_config import get_suggestions_config
 from src.models.minimax_thinking import sanitize_minimax_anthropic_thinking_text
 
 logger = logging.getLogger(__name__)
@@ -748,7 +749,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         is_ungrounded = _should_mark_ungrounded_answer(answer_body, request.messages, state)
 
         reference_section = "" if _is_refusal(answer_body) else _build_reference_section(answer_body)
-        suggestions = self._generate_suggested_questions_sync(
+        suggestions = [] if get_suggestions_config().mode != "inline" else self._generate_suggested_questions_sync(
             request=request,
             user_question=_latest_human_message(request.messages),
             answer_body=answer_body,
@@ -778,7 +779,7 @@ class CitationEnforcementMiddleware(AgentMiddleware[AgentState]):
         is_ungrounded = _should_mark_ungrounded_answer(answer_body, request.messages, state)
 
         reference_section = "" if _is_refusal(answer_body) else _build_reference_section(answer_body)
-        suggestions = await self._generate_suggested_questions_async(
+        suggestions = [] if get_suggestions_config().mode != "inline" else await self._generate_suggested_questions_async(
             request=request,
             user_question=_latest_human_message(request.messages),
             answer_body=answer_body,

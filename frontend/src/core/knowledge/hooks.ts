@@ -52,10 +52,10 @@ export function useKnowledgeFolders() {
   });
 }
 
-export function useKnowledgeFiles(folderPath?: string | null) {
+export function useKnowledgeFiles(folderPath?: string | null, includeDescendants = false) {
   return useQuery({
-    queryKey: [...KNOWLEDGE_FILES_QUERY_KEY, folderPath ?? null],
-    queryFn: () => listKnowledgeFiles(folderPath),
+    queryKey: [...KNOWLEDGE_FILES_QUERY_KEY, folderPath ?? null, includeDescendants],
+    queryFn: () => listKnowledgeFiles(folderPath, includeDescendants),
     refetchInterval: (query) => {
       const files = query.state.data?.files ?? [];
       const hasActiveJobs = files.some((file) =>

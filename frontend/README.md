@@ -138,3 +138,11 @@ src/
 ## License
 
 MIT License. See [LICENSE](../LICENSE) for details.
+
+## Book browsing and chat messages
+
+Knowledge management now presents books as folder-filtered cards with a dedicated details view for summaries and chapter outlines. PDF navigation uses verified physical page mappings from the backend. Chat submission keeps a stable human-message ID so optimistic messages can be reconciled with streamed state.
+
+## Follow-up questions
+
+After the last assistant answer completes, follow-up questions load independently through `/api/secure-suggestions`. The answer and input box remain usable during this request. Results are cached in the page's query cache; older answers that already contain a `建议问题` section are not requested again. Deferred questions are displayed separately and are not added to saved answer text. The backend `suggestions.mode` setting selects `deferred` (default), `inline` (legacy saved-text behavior), or `disabled`.

@@ -28,7 +28,7 @@ models:
     use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
     model: MiniMax-M3
     base_url: https://api.minimaxi.com/v1
-    api_key: sk-cp-r1RLEOXiiPhLR7R_VNQE4CfaXSXAq9RcxsLnPUuQi9b2LUsW_hCogwwGPQ75WMcEhvVcbC3U4aoIRw-I5Z43jWVzV-TL_j_bd4mt3mASE7OZ4u9sOGPObGA
+    api_key: $MINIMAX_API_KEY
     max_tokens: 8192
     timeout: 18000
     extra_body:
@@ -86,7 +86,7 @@ models:
     use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
     model: deepseek-v4-flash
     base_url: https://api.deepseek.com
-    api_key: sk-e5fb0c729e034256b7980fd387abf759
+    api_key: $DEEPSEEK_MODEL_API_KEY
     max_tokens: 8192
     request_timeout: 18000
     supports_thinking: true
@@ -104,7 +104,7 @@ models:
   #   display_name: gpt-5.4-mini
   #   use: src.models.patched_openai_reasoning:PatchedChatOpenAIReasoning
   #   model: gpt-5.4-mini
-  #   api_key: sk-tjPmJVSJ1aN5SHplCNvOMhsRCQjulrkn
+  #   api_key: $OPENAI_API_KEY
   #   base_url: https://api.univibe.cc/openai/v1
   #   supports_thinking: true
 
@@ -430,3 +430,17 @@ knowledge_base:
     use_tls: $TRANSLATION_GRPC_USE_TLS
     api_token: null
     request_timeout: 60
+
+# Optional work is kept outside the main answer completion path.
+suggestions:
+  mode: deferred # inline / deferred / disabled
+  model_name: null # non-thinking; falls back to the default model
+  timeout_seconds: 10
+
+task_memory:
+  enabled: true # independent of personal-profile memory.enabled
+  retrieval_enabled: true
+  timeout_seconds: 3
+  first_turn_timeout_seconds: 0.45
+  cache_ttl_seconds: 60
+  cache_max_entries: 128

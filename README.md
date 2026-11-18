@@ -273,3 +273,15 @@ Your unwavering commitment and expertise have been the driving force behind 财�
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=bytedance/deer-flow&type=Date)](https://star-history.com/#bytedance/deer-flow&Date)
+
+## 对话响应速度配置
+
+默认在正文与参考文献完成后结束回答，再由页面独立请求建议问题；建议问题失败不会阻塞下一次提问。`config.yaml` 的 `suggestions.mode` 支持 `deferred`（默认）、`inline`（建议问题写入回答文本，兼容旧客户端）和 `disabled`。独立请求使用关闭思考的模型，`suggestions.model_name` 可单独指定，等待上限由 `timeout_seconds` 控制（默认 10 秒）。
+
+任务记忆独立于个人记忆 `memory`：`task_memory.enabled` 控制任务成果读写，`retrieval_enabled` 只控制召回；首轮默认最多等待 450 毫秒，后续召回最多等待 3 秒，超时继续正常检索原始史料。相同查询缓存 60 秒（最多 128 项），当前进程写入任务成果后自动失效。缓存只保存原始结果，每次召回重新映射当前会话的引用编号。
+
+## 知识库浏览与生产发布
+
+知识库支持按目录浏览书籍卡片，在书籍详情中查看摘要、PDF 书签和已识别的章节目录。章节链接只使用能够核对的 PDF 页码；缺少对应关系时保留印刷页码，不猜测跳转位置。
+
+模型密钥通过环境变量提供；本地配置中的 `MINIMAX_API_KEY` 和 `DEEPSEEK_MODEL_API_KEY` 可放入 `backend/.env`。生产环境文件 `backend/.production.env`、`frontend/.production.env` 留在服务器上，不纳入版本控制。发布代码时保留服务器维护的模型列表、环境变量、数据库、知识库文件和 LangGraph 检查点挂载。

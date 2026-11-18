@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import pytest
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
@@ -11,6 +12,15 @@ from src.agents.middlewares.citation_enforcement_middleware import (
     CitationEnforcementMiddleware,
 )
 from src.community.knowledge_base.citations import KNOWLEDGE_CITATION_REGISTRY_KEY
+from src.config.suggestions_config import SuggestionsConfig, get_suggestions_config, set_suggestions_config
+
+
+@pytest.fixture(autouse=True)
+def inline_suggestions():
+    previous = get_suggestions_config()
+    set_suggestions_config(SuggestionsConfig(mode="inline"))
+    yield
+    set_suggestions_config(previous)
 
 
 class _SuggestionModel:

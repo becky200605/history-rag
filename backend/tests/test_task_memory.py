@@ -423,7 +423,7 @@ def test_task_memory_middleware_before_model_returns_merged_registry_in_updates(
     historical_label = "档案 第9页第1段"
     historical_url = "/api/knowledge/docs/foo.pdf?page_no=9&paragraph_no=1"
 
-    def _fake_search_and_prepare(*, query: str, title: str | None, target_state: dict[str, Any] | None, top_k: int, task_level: str | None = None) -> list[dict[str, Any]]:
+    def _fake_search_and_prepare(*, query: str, title: str | None, target_state: dict[str, Any] | None, top_k: int, task_level: str | None = None, first_turn: bool = False) -> list[dict[str, Any]]:
         # Mimic the production helper's side effect: merge the saved registry
         # into ``target_state`` and return the prepared matches.
         if isinstance(target_state, dict):

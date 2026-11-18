@@ -1,9 +1,12 @@
 "use client";
 
+import { AlertCircleIcon, ChevronRightIcon, Loader2Icon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import {
   WorkspaceBody,
   WorkspaceContainer,
@@ -38,6 +41,7 @@ import {
   useUserKnowledgeRecords,
 } from "@/core/knowledge/user-hooks";
 
+import { KnowledgeBookDetails } from "./knowledge-book-details";
 import {
   BatchGenerateSummaryDialog,
   type BatchSummaryResult,
@@ -49,15 +53,13 @@ import {
 } from "./knowledge-management-page.dialogs";
 import {
   KnowledgeEmptyState,
-  KnowledgeErrorState,
   KnowledgeFileCard,
-  KnowledgeFolderGrid,
-  KnowledgeLoadingState,
-  KnowledgeManagementHero,
+  KnowledgeManagementSidebar,
   KnowledgeManagementToolbar,
 } from "./knowledge-management-page.sections";
 import {
   buildScopedFolderTreeFromSummaries,
+  buildSystemLibraryTree,
   buildFolderBreadcrumbs,
   buildManagedFileReaderHref,
   buildManagedFiles,
@@ -70,21 +72,36 @@ import {
   filterManagedFiles,
   findFolderNode,
   getFolderDisplayName,
-  isFileDirectlyInFolder,
   isFileInFolderScope,
+  isRepublicFiscalHistoryFile,
+  FISCAL_ECONOMY_PATH,
+  FISCAL_HISTORY_PATH,
+  ORIGINAL_FOLDERS_PATH,
+  REPUBLIC_FISCAL_HISTORY_PATH,
   sortGlobalKnowledgeFiles,
   type FolderTreeNode,
   type ManagedKnowledgeFile,
 } from "./knowledge-management-page.utils";
 
+const PAGE_SIZE = 24;
+const initialExpandedPaths = ["system-root", FISCAL_ECONOMY_PATH, FISCAL_HISTORY_PATH];
+
 export default function KnowledgeManagementPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderContextMenuRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const detailTriggerRef = useRef<HTMLButtonElement>(null);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isCreateFolderDialogOpen, setIsCreateFolderDialogOpen] = useState(false);
   const [uploadForm, setUploadForm] = useState(createEmptyUploadFormState);
   const [searchQuery, setSearchQuery] = useState("");
+  const [summaryFilter, setSummaryFilter] = useState("all");
+  const [sortOrder, setSortOrder] = useState("recent");
+  const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE);
+  const [detailsRowId, setDetailsRowId] = useState<string | null>(null);
+  const [expandedPaths, setExpandedPaths] = useState(initialExpandedPaths);
+  const [mobileFoldersOpen, setMobileFoldersOpen] = useState(false);
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [deletingFilename, setDeletingFilename] = useState<string | null>(null);
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
@@ -103,7 +120,7 @@ export default function KnowledgeManagementPage() {
   } | null>(null);
   const [editingFile, setEditingFile] = useState<KnowledgeFileInfo | null>(null);
   const [metadataForm, setMetadataForm] = useState(createEmptyMetadataFormState);
-  const [selectedFolderPath, setSelectedFolderPath] = useState("all");
+  const [selectedFolderPath, setSelectedFolderPath] = useState(REPUBLIC_FISCAL_HISTORY_PATH);
   const [isReorganizeDialogOpen, setIsReorganizeDialogOpen] = useState(false);
   const [isReorganizing, setIsReorganizing] = useState(false);
   const [reorganizeEvents, setReorganizeEvents] = useState<FolderReorganizeEvent[]>([]);
@@ -112,12 +129,8 @@ export default function KnowledgeManagementPage() {
   const [batchSummaryResults, setBatchSummaryResults] = useState<BatchSummaryResult[]>([]);
   const [batchSummaryTotal, setBatchSummaryTotal] = useState(0);
 
-  const selectedGlobalFolderPath =
-    selectedFolderPath.startsWith("system:")
-      ? selectedFolderPath.slice("system:".length)
-      : null;
   const globalFoldersQuery = useKnowledgeFolders();
-  const globalFilesQuery = useKnowledgeFiles(selectedGlobalFolderPath);
+  const globalFilesQuery = useKnowledgeFiles(undefined, true);
   const personalRecordsQuery = useUserKnowledgeRecords();
   const uploadMutation = useUploadKnowledgeFiles();
   const uploadUserMutation = useUploadUserKnowledgeFiles();
@@ -205,15 +218,6 @@ export default function KnowledgeManagementPage() {
     [personalRecords, sortedGlobalFiles],
   );
 
-  const filteredFiles = useMemo(
-    () =>
-      filterManagedFiles({
-        files: managedFiles,
-        searchQuery,
-      }),
-    [managedFiles, searchQuery],
-  );
-
   const systemFolderTree = useMemo(
     () =>
       buildScopedFolderTreeFromSummaries({
@@ -227,55 +231,48 @@ export default function KnowledgeManagementPage() {
     () => buildPersonalFolderTree(managedFiles, personalFolderPaths),
     [managedFiles, personalFolderPaths],
   );
+  const pilotFiles = useMemo(() => managedFiles.filter(isRepublicFiscalHistoryFile), [managedFiles]);
   const folderTree = useMemo(
     () => [
+      buildSystemLibraryTree(systemFolderTree, globalFiles.length, pilotFiles.length),
       {
-        name: "个人",
+        name: "个人知识库",
         path: "personal-root",
         fileCount: managedFiles.filter((file) => file.source === "personal").length,
         children: personalFolderTree,
         source: "personal" as const,
       },
-      {
-        name: "系统",
-        path: "system-root",
-        fileCount: globalFoldersQuery.data?.total_file_count ?? 0,
-        children: systemFolderTree,
-        source: "global" as const,
-      },
     ],
-    [globalFoldersQuery.data?.total_file_count, managedFiles, personalFolderTree, systemFolderTree],
+    [globalFiles.length, managedFiles, personalFolderTree, pilotFiles.length, systemFolderTree],
   );
 
   useEffect(() => {
-    if (selectedFolderPath === "all") {
-      return;
-    }
-    const availablePaths = new Set<string>();
-    const collectPaths = (nodes: FolderTreeNode[]) => {
-      for (const node of nodes) {
-        availablePaths.add(node.path);
-        collectPaths(node.children);
-      }
-    };
-    collectPaths(folderTree);
-    if (!availablePaths.has(selectedFolderPath)) {
+    if (selectedFolderPath !== "all" && !findFolderNode(folderTree, selectedFolderPath)) {
       setSelectedFolderPath("all");
     }
   }, [folderTree, selectedFolderPath]);
 
   const scopedFilteredFiles = useMemo(
-    () => filteredFiles.filter((file) => isFileInFolderScope(file, selectedFolderPath)),
-    [filteredFiles, selectedFolderPath],
+    () => {
+      if ([FISCAL_ECONOMY_PATH, FISCAL_HISTORY_PATH, REPUBLIC_FISCAL_HISTORY_PATH].includes(selectedFolderPath)) {
+        return pilotFiles;
+      }
+      const folderPath = selectedFolderPath === ORIGINAL_FOLDERS_PATH ? "system-root" : selectedFolderPath;
+      return managedFiles.filter((file) => isFileInFolderScope(file, folderPath));
+    },
+    [managedFiles, pilotFiles, selectedFolderPath],
   );
   const folderFilteredFiles = useMemo(() => {
-    if (searchQuery.trim()) {
-      return scopedFilteredFiles;
-    }
-    return scopedFilteredFiles.filter((file) =>
-      isFileDirectlyInFolder(file, selectedFolderPath),
+    const results = filterManagedFiles({ files: scopedFilteredFiles, searchQuery }).filter((file) =>
+      summaryFilter === "all" || Boolean(file.summary?.trim()) === (summaryFilter === "available"),
     );
-  }, [scopedFilteredFiles, searchQuery, selectedFolderPath]);
+    return sortOrder === "title" ? results.sort((a, b) => a.title.localeCompare(b.title, "zh-CN")) : results;
+  }, [scopedFilteredFiles, searchQuery, sortOrder, summaryFilter]);
+
+  useEffect(() => {
+    setVisibleLimit(PAGE_SIZE);
+    resultsRef.current?.scrollTo({ top: 0 });
+  }, [searchQuery, selectedFolderPath, sortOrder, summaryFilter]);
 
   useEffect(() => {
     const visibleRowIds = new Set(folderFilteredFiles.map((file) => file.rowId));
@@ -296,7 +293,7 @@ export default function KnowledgeManagementPage() {
   );
 
   const uploadTargetMode =
-    selectedFolderPath === "system-root" || selectedFolderPath.startsWith("system:")
+    selectedFolderPath === "system-root" || selectedFolderPath.startsWith("system:") || selectedFolderPath.startsWith("collection:")
       ? "global"
       : "personal";
   const selectedFolderNode = useMemo(
@@ -310,12 +307,13 @@ export default function KnowledgeManagementPage() {
     if (selectedFolderPath.startsWith("personal:")) {
       return selectedFolderPath.slice("personal:".length);
     }
+    if (selectedFolderPath === REPUBLIC_FISCAL_HISTORY_PATH) {
+      return "民国财政史";
+    }
     return "";
   }, [selectedFolderPath]);
   const uploadTargetFolderPath = selectedLogicalFolderPath || null;
-  const selectedFolderScope = selectedFolderPath.startsWith("system:") || selectedFolderPath === "system-root"
-    ? "global"
-    : "personal";
+  const selectedFolderScope = uploadTargetMode;
   const uploadTargetFolderLabel = selectedFolderNode
     ? getFolderDisplayName(selectedFolderNode.name)
     : uploadTargetMode === "global"
@@ -325,12 +323,30 @@ export default function KnowledgeManagementPage() {
     () => buildFolderBreadcrumbs(folderTree, selectedFolderPath),
     [folderTree, selectedFolderPath],
   );
-  const currentLevelFolderNodes = useMemo(
-    () => (selectedFolderPath === "all" ? folderTree : selectedFolderNode?.children ?? []),
-    [folderTree, selectedFolderNode?.children, selectedFolderPath],
-  );
-  const hasCurrentLevelEntries =
-    currentLevelFolderNodes.length > 0 || folderFilteredFiles.length > 0;
+  const detailsFile = managedFiles.find((file) => file.rowId === detailsRowId) ?? null;
+
+  const selectFolder = (path: string) => {
+    const ancestors = buildFolderBreadcrumbs(folderTree, path).slice(0, -1).map((item) => item.path);
+    setExpandedPaths((current) => [...new Set([...current, ...ancestors])]);
+    setSelectedFolderPath(path);
+    setMobileFoldersOpen(false);
+  };
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setSummaryFilter("all");
+  };
+
+  const folderNavigation = {
+    folders: folderTree,
+    count: managedFiles.length,
+    selectedPath: selectedFolderPath,
+    expandedPaths,
+    onSelect: selectFolder,
+    onToggle: (path: string) => setExpandedPaths((current) =>
+      current.includes(path) ? current.filter((item) => item !== path) : [...current, path],
+    ),
+  };
 
   const openFolderContextMenu = (
     folder: FolderTreeNode,
@@ -536,6 +552,12 @@ export default function KnowledgeManagementPage() {
       setSelectedFolderPath(
         selectedFolderScope === "global" ? `system:${nextPath}` : `personal:${nextPath}`,
       );
+      const parts = nextPath.split("/");
+      setExpandedPaths((current) => [...new Set([
+        ...current,
+        ...(selectedFolderScope === "global" ? ["system-root", ORIGINAL_FOLDERS_PATH] : ["personal-root"]),
+        ...parts.slice(0, -1).map((_, index) => `${selectedFolderScope === "global" ? "system" : "personal"}:${parts.slice(0, index + 1).join("/")}`),
+      ])]);
     } catch (createError) {
       toast.error(createError instanceof Error ? createError.message : "创建文件夹失败");
     }
@@ -592,31 +614,25 @@ export default function KnowledgeManagementPage() {
     }
   };
 
-  const handleContextRenameFolder = () => {
-    if (!folderContextMenu) {
-      return;
-    }
-    setSelectedFolderPath(folderContextMenu.folder.path);
-    setRenamingFolderName(folderContextMenu.folder.name);
+  const openRenameFolder = (folder: FolderTreeNode) => {
+    selectFolder(folder.path);
+    setRenamingFolderName(folder.name);
     setIsRenameFolderDialogOpen(true);
     setFolderContextMenu(null);
   };
 
-  const handleContextDeleteFolder = async () => {
-    if (!folderContextMenu) {
-      return;
-    }
-    setSelectedFolderPath(folderContextMenu.folder.path);
+  const handleDeleteFolder = async (folder: FolderTreeNode) => {
     setFolderContextMenu(null);
-    const logicalPath = folderContextMenu.folder.path.replace(/^(system:|personal:)/, "");
+    if (!window.confirm(`确定删除文件夹「${folder.name}」吗？`)) return;
+    const logicalPath = folder.path.replace(/^(system:|personal:)/, "");
     try {
       const result =
-        folderContextMenu.folder.path.startsWith("system:")
+        folder.path.startsWith("system:")
           ? await deleteKnowledgeFolderMutation.mutateAsync(logicalPath)
           : await deleteUserFolderMutation.mutateAsync(logicalPath);
       toast.success(result.message);
       setSelectedFolderPath(
-        folderContextMenu.folder.path.startsWith("system:") ? "system-root" : "personal-root",
+        folder.path.startsWith("system:") ? "system-root" : "personal-root",
       );
       await handleRefresh();
     } catch (deleteError) {
@@ -648,14 +664,14 @@ export default function KnowledgeManagementPage() {
         <button
           type="button"
           className="flex h-9 w-full items-center rounded-xl px-3 text-sm text-stone-800 transition hover:bg-stone-100"
-          onClick={handleContextRenameFolder}
+          onClick={() => openRenameFolder(folderContextMenu.folder)}
         >
           重命名文件夹
         </button>
         <button
           type="button"
           className="flex h-9 w-full items-center rounded-xl px-3 text-sm text-red-700 transition hover:bg-red-50"
-          onClick={() => void handleContextDeleteFolder()}
+          onClick={() => void handleDeleteFolder(folderContextMenu.folder)}
         >
           删除文件夹
         </button>
@@ -909,65 +925,123 @@ export default function KnowledgeManagementPage() {
           onSave={() => void handleSaveMetadata()}
         />
 
-        <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col">
-          <KnowledgeManagementHero
-            searchQuery={searchQuery}
-            onSearchQueryChange={setSearchQuery}
-            selectedFolderPath={selectedFolderPath}
-            systemFolderTree={systemFolderTree}
-            onSelectFolder={setSelectedFolderPath}
-          />
+        <div className="flex h-full min-h-0 w-full min-w-0 flex-1 bg-[#faf7ef]">
+          <aside className="hidden w-[252px] shrink-0 flex-col border-r border-[#e9e0d3] bg-[#f6f1e7] lg:flex">
+            <h2 className="px-7 pt-6 pb-4 font-serif text-lg font-semibold text-[#3b2e23]">馆藏分类</h2>
+            <KnowledgeManagementSidebar {...folderNavigation} onContextMenu={openFolderContextMenu} />
+          </aside>
+          <Sheet open={mobileFoldersOpen} onOpenChange={setMobileFoldersOpen}>
+            <SheetContent side="left" className="w-[min(320px,90vw)] gap-2 bg-[#f6f1e7]">
+              <SheetTitle className="px-7 pt-5 font-serif text-xl">馆藏分类</SheetTitle>
+              <SheetDescription className="sr-only">选择要浏览的目录</SheetDescription>
+              <KnowledgeManagementSidebar {...folderNavigation} />
+            </SheetContent>
+          </Sheet>
 
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-              <div className="flex w-full flex-col gap-4">
-                <KnowledgeManagementToolbar
-                  breadcrumbs={breadcrumbs}
-                  onSelectFolder={setSelectedFolderPath}
-                  onOpenUpload={() => setIsUploadDialogOpen(true)}
-                  onOpenCreateFolder={() => setIsCreateFolderDialogOpen(true)}
-                  onOpenReorganize={() => void handleReorganize()}
-                  onOpenBatchGenerateSummary={() => void handleBatchGenerateSummary()}
-                  noSummaryCount={noSummaryFiles.length}
-                  onRefresh={() => void handleRefresh()}
-                  isRefreshing={isRefreshing}
-                  onStartChat={handleStartChat}
-                  selectedCount={selectedRowIds.length}
-                  onToggleAllVisible={handleToggleAllVisible}
-                  allVisibleSelected={allVisibleSelected}
-                  onBatchDelete={() => void handleBatchDelete()}
-                  isBatchDeleting={isBatchDeleting}
-                />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <KnowledgeManagementToolbar
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              onOpenFolders={() => setMobileFoldersOpen(true)}
+              onOpenUpload={() => setIsUploadDialogOpen(true)}
+              onOpenCreateFolder={() => setIsCreateFolderDialogOpen(true)}
+              onRenameFolder={selectedFolderNode?.deletable ? () => openRenameFolder(selectedFolderNode) : undefined}
+              onDeleteFolder={selectedFolderNode?.deletable ? () => void handleDeleteFolder(selectedFolderNode) : undefined}
+              onOpenReorganize={() => void handleReorganize()}
+              onOpenBatchGenerateSummary={noSummaryFiles.length > 0 ? () => void handleBatchGenerateSummary() : undefined}
+              onRefresh={() => void handleRefresh()}
+              isRefreshing={isRefreshing}
+            />
 
-                {isLoading ? <KnowledgeLoadingState /> : null}
-                {!isLoading && error ? <KnowledgeErrorState message={error.message} /> : null}
+            <div ref={resultsRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+              <div className="mx-auto w-full max-w-[1520px] px-4 pt-5 pb-12 sm:px-7 sm:pt-7 2xl:px-10">
+                {breadcrumbs.length > 0 && (
+                  <nav aria-label="当前分类路径" className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#756859]">
+                    {breadcrumbs.map((item, index) => (
+                      <React.Fragment key={item.path}>
+                        {index > 0 && <ChevronRightIcon className="size-3 text-[#a59076]" />}
+                        {item.path === selectedFolderPath ? (
+                          <span aria-current="page" className="font-semibold text-[#793b32]">{item.name}</span>
+                        ) : (
+                          <button type="button" onClick={() => selectFolder(item.path)} className="cursor-pointer rounded hover:text-[#793b32] hover:underline">
+                            {item.name}
+                          </button>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </nav>
+                )}
+                <h1 className="font-serif text-[30px] leading-tight font-semibold tracking-tight text-[#34261f] sm:text-4xl">
+                  {selectedFolderNode?.name ?? "全部馆藏"}
+                </h1>
+                {selectedFolderPath === REPUBLIC_FISCAL_HISTORY_PATH && (
+                  <p className="mt-3 max-w-2xl text-sm leading-7 text-[#685849]">
+                    收录民国时期财政制度及其运行相关的资料，可查阅税收、公债、财政收支和地方财政等主题。
+                  </p>
+                )}
 
-                {!isLoading && !error ? (
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-y border-[#e9e0d3] py-2.5">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-[#685849]" aria-live="polite">
+                    <span className="font-medium text-[#49392d]">{isLoading ? "正在读取馆藏" : `${folderFilteredFiles.length} 份资料`}</span>
+                    {scopedFilteredFiles.length !== folderFilteredFiles.length && <span className="text-xs">共 {scopedFilteredFiles.length} 份</span>}
+                    {selectedFolderNode && selectedFolderNode.children.length > 0 && <span className="text-xs">含子目录</span>}
+                    {selectedFolderPath !== "all" && searchQuery.trim() && (
+                      <button type="button" onClick={() => selectFolder("all")} className="cursor-pointer rounded text-xs font-medium text-[#793b32] hover:underline">
+                        搜索全部馆藏
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select aria-label="摘要筛选" value={summaryFilter} onChange={(event) => setSummaryFilter(event.target.value)} className="h-8 rounded-md border border-[#e7ded1] bg-[#fffefa] px-2 text-xs text-[#594a3a]">
+                      <option value="all">全部摘要状态</option>
+                      <option value="available">有摘要</option>
+                      <option value="missing">无摘要</option>
+                    </select>
+                    <select aria-label="排序" value={sortOrder} onChange={(event) => setSortOrder(event.target.value)} className="h-8 rounded-md border border-[#e7ded1] bg-[#fffefa] px-2 text-xs text-[#594a3a]">
+                      <option value="recent">按最近更新</option>
+                      <option value="title">按书名</option>
+                    </select>
+                  </div>
+                </div>
+
+                {isLoading && (
+                  <div role="status" className="flex items-center justify-center gap-2 py-14 text-sm text-[#685849]">
+                    <Loader2Icon className="size-4 animate-spin text-[#793b32]" /> 正在加载资料
+                  </div>
+                )}
+                {!isLoading && error && (
+                  <div role="alert" className="mt-5 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                    <AlertCircleIcon className="size-4 shrink-0" /> {error.message}
+                    <Button size="sm" variant="link" onClick={() => void handleRefresh()}>重试</Button>
+                  </div>
+                )}
+
+                {!isLoading && folderFilteredFiles.length > 0 && (
                   <>
-                    <KnowledgeFolderGrid
-                      folders={currentLevelFolderNodes}
-                      onSelectFolder={setSelectedFolderPath}
-                      onOpenFolderMenu={openFolderContextMenu}
-                    />
-
-                    {folderFilteredFiles.length > 0 ? (
-                      <div className="flex flex-col gap-4 px-6 pb-12">
-                        {folderFilteredFiles.map((file) => {
-                          const readerHref = buildManagedFileReaderHref(file);
+                    <div className="mt-4 flex min-h-8 flex-wrap items-center justify-between gap-2 text-xs text-[#685849]">
+                      <label className="inline-flex cursor-pointer items-center gap-2">
+                        <input type="checkbox" checked={allVisibleSelected} onChange={handleToggleAllVisible} className="size-4 accent-[#793b32]" />
+                        全选结果
+                      </label>
+                      {selectedRowIds.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>已选 {selectedRowIds.length} 份</span>
+                          <Button type="button" size="sm" variant="secondary" onClick={handleStartChat}>选中提问</Button>
+                          <Button type="button" size="sm" variant="ghost" onClick={() => void handleBatchDelete()} disabled={isBatchDeleting} className="text-red-700 hover:bg-red-50 hover:text-red-800">
+                            {isBatchDeleting ? "正在删除" : "批量删除"}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="@container mt-3">
+                      <div className="grid grid-cols-1 gap-4 @min-[640px]:grid-cols-2 @min-[1120px]:grid-cols-3">
+                        {folderFilteredFiles.slice(0, visibleLimit).map((file) => {
                           const sourceFile = globalFileMap.get(file.filename);
                           const isDeleting =
-                            (file.source === "global" &&
-                              deleteMutation.isPending &&
-                              deletingFilename === file.filename) ||
-                            (file.source === "personal" &&
-                              deleteUserRecordMutation.isPending &&
-                              deletingRecordId === file.userRecordId);
-                          const isRetrying =
-                            (file.source === "global" && retryMutation.isPending) ||
-                            (file.source === "personal" && retryUserRecordMutation.isPending);
-                          const isReparsing =
-                            (file.source === "global" && reparseMutation.isPending) ||
-                            (file.source === "personal" && reparseUserRecordMutation.isPending);
+                            (file.source === "global" && deleteMutation.isPending && deletingFilename === file.filename) ||
+                            (file.source === "personal" && deleteUserRecordMutation.isPending && deletingRecordId === file.userRecordId);
+                          const isRetrying = file.source === "global" ? retryMutation.isPending : retryUserRecordMutation.isPending;
+                          const isReparsing = file.source === "global" ? reparseMutation.isPending : reparseUserRecordMutation.isPending;
 
                           return (
                             <KnowledgeFileCard
@@ -975,6 +1049,10 @@ export default function KnowledgeManagementPage() {
                               file={file}
                               isSelected={selectedRowIds.includes(file.rowId)}
                               onToggleSelection={() => toggleFileSelection(file.rowId)}
+                              onOpenDetails={(trigger) => {
+                                detailTriggerRef.current = trigger;
+                                setDetailsRowId(file.rowId);
+                              }}
                               onOpenMetadata={() => sourceFile && openEditDialog(sourceFile)}
                               onMoveFile={() => {
                                 setMovingRecord(file);
@@ -987,7 +1065,7 @@ export default function KnowledgeManagementPage() {
                                   ? void handleDelete(file.filename)
                                   : void handleDeletePersonalRecord(file.userRecordId ?? "")
                               }
-                              readerHref={readerHref}
+                              readerHref={buildManagedFileReaderHref(file)}
                               personalSpacesCount={personalFolderPaths.length}
                               isDeleting={isDeleting}
                               isRetrying={isRetrying && retryingRowId === file.rowId}
@@ -996,15 +1074,24 @@ export default function KnowledgeManagementPage() {
                           );
                         })}
                       </div>
-                    ) : (
-                      <KnowledgeEmptyState hasCurrentLevelEntries={hasCurrentLevelEntries} />
+                    </div>
+                    {folderFilteredFiles.length > visibleLimit && (
+                      <div className="mt-6 flex justify-center">
+                        <Button type="button" variant="outline" onClick={() => setVisibleLimit((current) => current + PAGE_SIZE)}>加载更多资料</Button>
+                      </div>
                     )}
                   </>
-                ) : null}
+                )}
+                {!isLoading && !error && folderFilteredFiles.length === 0 && (
+                  <div className="mt-5">
+                    <KnowledgeEmptyState onClear={searchQuery.trim() || summaryFilter !== "all" ? clearFilters : undefined} />
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </div>
+        <KnowledgeBookDetails file={detailsFile} onClose={() => setDetailsRowId(null)} restoreFocus={() => detailTriggerRef.current?.focus()} />
         <ReorganizeFolderDialog
           open={isReorganizeDialogOpen}
           onOpenChange={setIsReorganizeDialogOpen}

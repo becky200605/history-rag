@@ -412,3 +412,17 @@ See `docs/` directory for detailed documentation:
 - [PATH_EXAMPLES.md](docs/PATH_EXAMPLES.md) - Path types and usage
 - [summarization.md](docs/summarization.md) - Context summarization
 - [plan_mode_usage.md](docs/plan_mode_usage.md) - Plan mode with TodoList
+
+### Book outlines and production releases
+
+Book outlines are implemented in `community/knowledge_base/book_outline.py` and exposed by `GET /api/knowledge/docs/{filename}/outline`. Printed contents and PDF bookmarks are reconciled only when chapter titles match. PDF page labels must resolve uniquely before a section gets a PDF-page link. Regression coverage is in `tests/test_book_outline.py`.
+
+For production releases, keep environment files on the deployment host and preserve its model configuration and persistent data mounts. Backend dependency manifests can be compared with the running image before deciding whether dependency installation is needed.
+
+### Optional work outside answer completion
+
+- `src/config/suggestions_config.py` loads top-level `suggestions` (`mode`, `model_name`, `timeout_seconds`). Default `deferred` skips the middleware suggestion call while retaining citation enforcement and references. `inline` preserves legacy answer composition; `disabled` suppresses questions.
+- `src/gateway/routers/suggestions.py` exposes `POST /api/models/suggestions`. The frontend invokes it after answer completion via its authenticated proxy. Generation has a total deadline (including semaphore admission), four concurrent slots, non-thinking mode, 256 output tokens, and local fallback questions. Deferred questions are displayed separately and are not written back to LangGraph history.
+- `src/config/task_memory_config.py` loads independent task-memory enable/recall switches, deadline, TTL and size bound. `search_and_prepare_task_memory` caches raw matches and rewrites citations only on a copied result for the current state. Two worker slots bound outstanding searches; only the caller merges completed results into state. Cache and vector-runtime locks are separate so background I/O cannot hold the recall admission/cache lock. Writes invalidate cached matches in this process.
+- `TaskMemoryMiddleware.abefore_model` offloads the bounded synchronous recall to a worker, keeping the event loop responsive. Qdrant clients/embedding models are reused; vector stores validate once per collection/runtime. Local clients enable cross-thread SQLite access with task-memory operations serialized. The shared local-client registry uses weak references so idle gateway/indexer clients can release their exclusive storage lock.
+- Latency regression coverage: `tests/test_chat_latency.py` (deferred sync/async answers, endpoint deadline/disabled mode/input validation, late results, cache expiry/eviction/copying, saturation and vector-store reuse). Existing citation middleware tests explicitly cover `inline` compatibility.

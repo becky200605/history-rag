@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from copy import deepcopy
 from datetime import UTC, datetime
-from time import sleep
+from threading import BoundedSemaphore, RLock
+from time import monotonic, sleep
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 from uuid import NAMESPACE_URL, uuid5
@@ -20,8 +24,32 @@ from src.community.knowledge_base.citations import (
 )
 from src.community.knowledge_base.retriever import get_embedding_model, get_qdrant_client
 from src.config.knowledge_base_config import get_knowledge_base_config
+from src.config.task_memory_config import get_task_memory_config
 
 logger = logging.getLogger(__name__)
+_runtime_lock = RLock()
+_cache_lock = RLock()
+_vector_stores: dict[tuple, QdrantVectorStore] = {}
+_search_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="task-memory-search")
+_search_slots = BoundedSemaphore(2)
+_search_cache: OrderedDict[tuple, tuple[float, list]] = OrderedDict()
+_cache_generation = 0
+
+
+def _get_vector_store(client, embeddings, collection_name):
+    key = (id(client), id(embeddings), collection_name, QdrantVectorStore)
+    with _runtime_lock:
+        if key not in _vector_stores:
+            _vector_stores[key] = QdrantVectorStore(client=client, collection_name=collection_name, embedding=embeddings)
+        return _vector_stores[key]
+
+
+def _invalidate_search_cache():
+    global _cache_generation
+    with _cache_lock:
+        _cache_generation += 1
+        _search_cache.clear()
+
 
 _EMBED_RETRY_ATTEMPTS = 3
 _EMBED_RETRY_DELAY_SECONDS = 2.0
@@ -249,6 +277,7 @@ def search_and_prepare_task_memory(
     target_state: dict[str, Any] | None,
     top_k: int = TASK_MEMORY_TOP_K,
     task_level: str | None = None,
+    first_turn: bool = False,
 ) -> list[dict[str, Any]]:
     """Search task memory and merge any saved citation registries into ``target_state``.
 
@@ -257,10 +286,53 @@ def search_and_prepare_task_memory(
     into the live state so that ``[citation:N]`` markers in the rendered text point at
     valid IDs in ``state["knowledge_citation_registry"]``. Skipping the second step
     leaves the model with orphan citation numbers that the frontend cannot resolve.
+    First turns wait briefly for recall. A late search can cache raw results without
+    changing the state of the answer already in progress.
     """
 
-    matches = search_task_memory(query, title=title, top_k=top_k, task_level=task_level)
-    return prepare_task_memory_matches_for_injection(matches, target_state=target_state)
+    config = get_task_memory_config()
+    if not config.enabled or not config.retrieval_enabled:
+        return []
+    wait_seconds = min(config.first_turn_timeout_seconds, config.timeout_seconds) if first_turn else config.timeout_seconds
+    namespace = get_knowledge_base_config().model_dump_json()
+    with _cache_lock:
+        generation = _cache_generation
+        key = (namespace, query, title, top_k, task_level, generation)
+        cached = _search_cache.get(key)
+        if cached and cached[0] > monotonic():
+            _search_cache.move_to_end(key)
+            matches = deepcopy(cached[1])
+        else:
+            matches = None
+    if matches is None:
+        def search_and_cache() -> list[dict[str, Any]]:
+            results = search_task_memory(query, title=title, top_k=top_k, task_level=task_level)
+            with _cache_lock:
+                if generation == _cache_generation and config.cache_ttl_seconds > 0:
+                    _search_cache[key] = (monotonic() + config.cache_ttl_seconds, deepcopy(results))
+                    while len(_search_cache) > config.cache_max_entries:
+                        _search_cache.popitem(last=False)
+            return results
+
+        # Bound both active and queued work. A hung provider cannot grow a queue.
+        if not _search_slots.acquire(blocking=False):
+            return []
+        try:
+            future = _search_pool.submit(search_and_cache)
+        except BaseException:
+            _search_slots.release()
+            raise
+        future.add_done_callback(lambda _, slots=_search_slots: slots.release())
+        try:
+            matches = future.result(timeout=wait_seconds)
+        except TimeoutError:
+            if first_turn:
+                logger.debug("Task-memory retrieval exceeded the %.2fs first-turn wait; continuing in background", wait_seconds)
+            else:
+                future.cancel()
+                logger.warning("Task-memory retrieval exceeded %.2fs; continuing without recall", wait_seconds)
+            return []
+    return prepare_task_memory_matches_for_injection(deepcopy(matches), target_state=target_state)
 
 
 def _compact_query_for_storage(query: str, *, task_level: str) -> str:
@@ -349,24 +421,26 @@ def _build_task_memory_embedding_text(
 
 def _ensure_task_memory_collection() -> tuple[Any, Any, str]:
     config = get_knowledge_base_config()
-    if not config.enabled or config.embedding is None:
+    if not get_task_memory_config().enabled or not config.enabled or config.embedding is None:
         raise ValueError("Task memory requires the knowledge base and embedding model to be enabled")
 
-    client = get_qdrant_client()
-    embeddings = get_embedding_model()
+    timeout = get_task_memory_config().timeout_seconds
+    client = get_qdrant_client(timeout_seconds=timeout)
+    embeddings = get_embedding_model(timeout_seconds=timeout)
     collection_name = get_task_memory_collection_name()
 
-    try:
-        client.get_collection(collection_name=collection_name)
-    except Exception:
-        sample_embedding = embeddings.embed_query("task-memory-collection-probe")
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(
-                size=len(sample_embedding),
-                distance=Distance.COSINE,
-            ),
-        )
+    with _runtime_lock:
+        try:
+            client.get_collection(collection_name=collection_name)
+        except Exception:
+            sample_embedding = embeddings.embed_query("task-memory-collection-probe")
+            client.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(
+                    size=len(sample_embedding),
+                    distance=Distance.COSINE,
+                ),
+            )
 
     return client, embeddings, collection_name
 
@@ -410,11 +484,7 @@ def upsert_task_memory_record(
         client, embeddings, collection_name = _ensure_task_memory_collection()
     except Exception:
         return None
-    vector_store = QdrantVectorStore(
-        client=client,
-        collection_name=collection_name,
-        embedding=embeddings,
-    )
+    vector_store = _get_vector_store(client, embeddings, collection_name)
 
     content = _build_task_memory_embedding_text(
         title=title,
@@ -448,7 +518,9 @@ def upsert_task_memory_record(
             "updated_at": _utc_now(),
         },
     )
-    vector_store.add_documents([document], ids=[record_id])
+    with _runtime_lock:
+        vector_store.add_documents([document], ids=[record_id])
+        _invalidate_search_cache()
     return record_id
 
 
@@ -468,11 +540,7 @@ def search_task_memory(
         client, embeddings, collection_name = _ensure_task_memory_collection()
     except Exception:
         return []
-    vector_store = QdrantVectorStore(
-        client=client,
-        collection_name=collection_name,
-        embedding=embeddings,
-    )
+    vector_store = _get_vector_store(client, embeddings, collection_name)
 
     search_text = "\n".join(
         part
@@ -485,11 +553,12 @@ def search_task_memory(
     results: list = []
     for _attempt in range(1, _EMBED_RETRY_ATTEMPTS + 1):
         try:
-            results = vector_store.similarity_search_with_score(
-                search_text,
-                k=max(top_k, 3),
-                score_threshold=0.0,
-            )
+            with _runtime_lock:
+                results = vector_store.similarity_search_with_score(
+                    search_text,
+                    k=max(top_k, 3),
+                    score_threshold=0.0,
+                )
             break
         except Exception as exc:
             if not _retryable_embedding_exception(exc) or _attempt >= _EMBED_RETRY_ATTEMPTS:

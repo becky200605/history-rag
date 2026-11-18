@@ -330,6 +330,20 @@ def test_load_global_book_metadata_falls_back_to_first_tag_for_legacy_records(mo
     assert result["folder"] == "制度史"
 
 
+def test_list_global_knowledge_files_can_include_descendants(monkeypatch) -> None:
+    root = {"filename": "root.pdf", "folder": None}
+    direct = {"filename": "one.pdf", "folder": "财政史"}
+    descendant = {"filename": "two.pdf", "folder": "财政史/民国"}
+    unrelated = {"filename": "three.pdf", "folder": "财政史料"}
+    files = [root, direct, descendant, unrelated]
+    monkeypatch.setattr(knowledge_router, "_list_global_knowledge_files_all", lambda: {"files": files})
+
+    assert knowledge_router.list_global_knowledge_files(None)["files"] == [root]
+    assert knowledge_router.list_global_knowledge_files("财政史")["files"] == [direct]
+    assert knowledge_router.list_global_knowledge_files("财政史", include_descendants=True)["files"] == [direct, descendant]
+    assert knowledge_router.list_global_knowledge_files(None, include_descendants=True)["files"] == files
+
+
 def test_list_debug_search_books_returns_catalog_entries_with_metadata(monkeypatch) -> None:
     monkeypatch.setattr(
         knowledge_router,
@@ -338,7 +352,7 @@ def test_list_debug_search_books_returns_catalog_entries_with_metadata(monkeypat
     )
     monkeypatch.setattr(
         knowledge_router,
-        "list_global_knowledge_files",
+        "_list_global_knowledge_files_all",
         lambda: {
             "files": [
                 {

@@ -16,8 +16,10 @@ export interface KnowledgeFileInfo {
   doc_id?: string | null;
   scope?: "global" | "thread" | "user" | null;
   filename: string;
+  title?: string | null;
   size: number;
   artifact_url: string;
+  original_available?: boolean;
   extension?: string;
   modified?: number;
   parse_method?: string;
@@ -92,6 +94,13 @@ export interface KnowledgeFolderListResponse {
   count: number;
   root_file_count: number;
   total_file_count: number;
+}
+
+export interface KnowledgeBookOutlineEntry {
+  title: string;
+  level: number;
+  book_page_no: number | null;
+  pdf_page_no: number | null;
 }
 
 export interface KnowledgeParagraphLocation {
@@ -347,10 +356,14 @@ export async function listKnowledgeFolders(): Promise<KnowledgeFolderListRespons
 
 export async function listKnowledgeFiles(
   folderPath?: string | null,
+  includeDescendants = false,
 ): Promise<KnowledgeListResponse> {
   const params = new URLSearchParams();
   if (folderPath) {
     params.set("folder_path", folderPath);
+  }
+  if (includeDescendants) {
+    params.set("include_descendants", "true");
   }
   const query = params.toString();
   const response = await fetch(
@@ -363,6 +376,21 @@ export async function listKnowledgeFiles(
     throw new Error(error.detail ?? "Failed to list files");
   }
   return (await response.json()) as KnowledgeListResponse;
+}
+
+export async function getKnowledgeBookOutline(
+  filename: string,
+  signal?: AbortSignal,
+): Promise<KnowledgeBookOutlineEntry[]> {
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/knowledge/docs/${encodeURIComponent(filename)}/outline`,
+    { signal },
+  );
+  if (!response.ok) {
+    throw new Error("书内目录加载失败");
+  }
+  const { entries } = (await response.json()) as { entries: KnowledgeBookOutlineEntry[] };
+  return entries;
 }
 
 export async function createKnowledgeFolder(

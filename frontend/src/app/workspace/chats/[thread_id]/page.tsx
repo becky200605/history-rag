@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FilesIcon, XIcon } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { usePromptInputController } from "@/components/ai-elements/prompt-input";
@@ -63,6 +64,8 @@ import { authClient } from "@/server/better-auth/client";
 const THREAD_ROUTE_HANDOFF_KEY = "workspace:thread-route-handoff";
 const THREAD_ROUTE_HANDOFF_TTL_MS = 15_000;
 
+type PendingHumanMessage = { id: string; text: string };
+
 function readThreadRouteHandoff() {
   if (typeof window === "undefined") {
     return null;
@@ -78,6 +81,7 @@ function readThreadRouteHandoff() {
       createdAt?: number;
       context?: ThreadDisplayContextSnapshot;
       threadId?: string;
+      pendingMessage?: PendingHumanMessage;
     };
     if (
       typeof parsed.threadId !== "string" ||
@@ -102,6 +106,7 @@ function readThreadRouteHandoff() {
 function rememberThreadRouteHandoff(
   threadId: string,
   context?: ThreadDisplayContextSnapshot,
+  pendingMessage?: PendingHumanMessage | null,
 ) {
   if (typeof window === "undefined") {
     return;
@@ -112,6 +117,7 @@ function rememberThreadRouteHandoff(
     JSON.stringify({
       context,
       threadId,
+      pendingMessage,
       createdAt: Date.now(),
     }),
   );
@@ -576,6 +582,14 @@ function ChatPageContent({
     const handoff = readThreadRouteHandoff();
     return handoff?.threadId === initialThreadIdFromPath ? handoff : null;
   }, [initialThreadIdFromPath]);
+  const [pendingMessage, setPendingMessage] = useState(
+    initialRouteHandoff?.pendingMessage ?? null,
+  );
+  const pendingMessageRef = useRef(pendingMessage);
+  const clearPendingMessage = useCallback(() => {
+    pendingMessageRef.current = null;
+    setPendingMessage(null);
+  }, []);
   const [threadId, setThreadId] = useState<string | null>(null);
   useEffect(() => {
     if (initialThreadIdFromPath !== "new") {
@@ -639,7 +653,11 @@ function ChatPageContent({
         return;
       }
       didNavigateForCreatedRunRef.current = true;
-      rememberThreadRouteHandoff(run.thread_id, resolvedContext);
+      rememberThreadRouteHandoff(
+        run.thread_id,
+        resolvedContext,
+        pendingMessageRef.current,
+      );
       if (
         env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
         session?.user.id
@@ -781,6 +799,33 @@ function ChatPageContent({
       }
     },
   }) as unknown as UseStream<AgentThreadState>;
+
+  const confirmedMessages =
+    !thread.isLoading && finalState?.messages
+      ? (finalState.messages as Message[])
+      : thread.messages;
+  const pendingAcknowledged = Boolean(
+    pendingMessage && confirmedMessages.some((message) => message.id === pendingMessage.id),
+  );
+  const showNewChatLanding =
+    isNewThread && !thread.isLoading && !pendingMessage && confirmedMessages.length === 0;
+  const displayedMessages: Message[] =
+    pendingMessage && !pendingAcknowledged
+      ? [...confirmedMessages, { id: pendingMessage.id, type: "human", content: pendingMessage.text }]
+      : confirmedMessages;
+  const isSubmitting = Boolean(pendingMessage && !pendingAcknowledged);
+
+  useEffect(() => {
+    if (pendingAcknowledged) clearPendingMessage();
+  }, [clearPendingMessage, pendingAcknowledged]);
+
+  useEffect(() => {
+    if (thread.error && pendingMessageRef.current) {
+      clearPendingMessage();
+      toast.error("消息发送失败，请重试");
+    }
+  }, [clearPendingMessage, thread.error]);
+
   useEffect(() => {
     if (thread.isLoading) setFinalState(null);
   }, [thread.isLoading]);
@@ -1017,13 +1062,25 @@ function ChatPageContent({
     displayContext: resolvedContext,
   });
   const handleSubmit = useCallback(
-    async (...args: Parameters<typeof submitThread>) => {
+    async (message: Parameters<typeof submitThread>[0]) => {
+      if (pendingMessageRef.current) return;
       setLiveTodos(null);
-      await submitThread(...args);
+      const pending = { id: uuid(), text: message.text.trim() };
+      pendingMessageRef.current = pending;
+      setPendingMessage(pending);
+      try {
+        await submitThread(message, pending.id);
+      } catch {
+        if (pendingMessageRef.current?.id === pending.id) {
+          clearPendingMessage();
+          toast.error("消息发送失败，请重试");
+        }
+      }
     },
-    [submitThread],
+    [clearPendingMessage, submitThread],
   );
   const handleStop = useCallback(async () => {
+    clearPendingMessage();
     const activeRun = activeRunRef.current;
     const currentThreadId = activeRun?.threadId ?? threadId;
     const currentRunId =
@@ -1058,7 +1115,7 @@ function ChatPageContent({
       activeRunRef.current = null;
       await stopPromise;
     }
-  }, [thread, threadId]);
+  }, [clearPendingMessage, thread, threadId]);
 
   const handleSelectTodo = useCallback((todo: Todo) => {
     selectTodo(todo);
@@ -1299,11 +1356,8 @@ function ChatPageContent({
                     className={cn("size-full", !isNewThread && "pt-14")}
                     threadId={threadId}
                     thread={thread}
-                    messagesOverride={
-                      !thread.isLoading && finalState?.messages
-                        ? (finalState.messages as Message[])
-                        : undefined
-                    }
+                    messagesOverride={displayedMessages}
+                    isSubmitting={isSubmitting}
                     citationRegistryOverride={
                       !thread.isLoading && finalState?.knowledge_citation_registry
                         ? finalState.knowledge_citation_registry
@@ -1317,8 +1371,8 @@ function ChatPageContent({
                   <div
                     className={cn(
                       "relative w-full mb-4",
-                      isNewThread && "-translate-y-[calc(50vh-96px)]",
-                      isNewThread
+                      showNewChatLanding && "-translate-y-[calc(50vh-96px)]",
+                      showNewChatLanding
                         ? "max-w-(--container-width-sm)"
                         : "max-w-(--container-width-md)",
                     )}
@@ -1339,12 +1393,12 @@ function ChatPageContent({
                       className={cn("w-full shadow-2xl")}
                     isNewThread={isNewThread}
                     autoFocus={isNewThread}
-                    status={thread.isLoading ? "streaming" : "ready"}
+                    status={thread.isLoading ? "streaming" : isSubmitting ? "submitted" : "ready"}
                     context={resolvedContext}
                     threadId={threadId}
                     selectedMaterials={selectedMaterials}
                     extraHeader={
-                      isNewThread && (
+                      showNewChatLanding && (
                         <Welcome
                           scenario={resolvedContext.scenario}
                           tier={resolvedContext.tier}
@@ -1366,7 +1420,7 @@ function ChatPageContent({
                 </div>
               </div>
               
-              {isNewThread && <SilkRibbon />}
+              {showNewChatLanding && <SilkRibbon />}
             </main>
           </div>
         </div>

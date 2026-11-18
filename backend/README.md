@@ -350,3 +350,17 @@ See the [LICENSE](../LICENSE) file in the project root.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+
+## Chat latency controls
+
+`suggestions.mode: deferred` removes the follow-up LLM call from final-answer middleware. After the stream closes, the frontend calls authenticated `/api/secure-suggestions`, which forwards to `POST /api/models/suggestions` with `{question, answer}`. The endpoint uses a separate non-thinking model, a 256-token output cap, no provider retries, a 10-second total deadline, and at most four concurrent generations. Timeout/provider failure returns three local fallback questions. Use `inline` for clients that need suggestions inside saved answer text, or `disabled` to omit them.
+
+`task_memory` is separate from personal-profile `memory`. Defaults include `enabled: true`, `retrieval_enabled: true`, `first_turn_timeout_seconds: 0.45`, `timeout_seconds: 3`, `cache_ttl_seconds: 60`, and `cache_max_entries: 128`. The first turn waits up to 450 ms for memory recall. An in-flight search can still finish and cache its results for a matching query. Recall has two worker slots. Deadline expiry or saturation lets the current answer proceed with fresh evidence retrieval. Only results received within the wait are applied to live thread state. Cached results are copied before per-thread citation remapping. Successful writes invalidate the current process's cache. Other processes observe changes after their TTL.
+
+Qdrant clients and embedding models are reused by effective configuration; task-memory HTTP clients use the recall timeout and embeddings disable provider retries. Vector-store dimension validation runs once per runtime/collection instead of once per query. Local Qdrant uses one client per storage path with task-memory persistence access serialized across worker threads.
+
+## Book details and outlines
+
+`GET /api/knowledge/docs/{filename}/outline` reads PDF bookmarks and contents-page samples. It returns chapter titles, hierarchy, printed page numbers, and verified PDF page numbers. An absent page mapping stays null. Global file listing also accepts `include_descendants` when browsing a folder and its children.
+
+Production environment files are not versioned. Code releases retain server-specific model settings, credentials, database mounts, knowledge files, and LangGraph checkpoints.

@@ -88,3 +88,13 @@ NEXT_PUBLIC_LANGGRAPH_BASE_URL=http://localhost:2024
 ```
 
 Requires Node.js 22+ and pnpm 10.26.2+.
+
+### Knowledge browsing and chat reconciliation
+
+Knowledge management separates folder/card browsing from the details component in `components/workspace/knowledge-book-details.tsx`. `core/knowledge` exposes the book-outline endpoint and descendant-folder listing option. Chat submission passes the optimistic human-message ID through `core/threads/hooks.ts`; streamed messages and the displayed citation registry use a consistent snapshot.
+
+### Deferred follow-up questions
+
+`messages/suggested-questions.tsx` starts a TanStack Query only for the final assistant message after the agent stream closes. It is separate from `thread.isLoading`, consumes the request abort signal, disables retries, and caches results for the same thread/message/content. An existing `建议问题` section suppresses the request. Results are rendered as plain React text and do not mutate LangGraph history.
+
+`app/api/secure-suggestions/route.ts` validates the session (except static demo mode), bounds question/answer lengths, and forwards only these fields to Gateway `POST /api/models/suggestions`. It uses `BACKEND_BASE_URL` / `NEXT_PUBLIC_BACKEND_BASE_URL`, defaults to port 8001, and forwards client cancellation. The existing nginx frontend catch-all routes this proxy without additional nginx configuration.
